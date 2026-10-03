@@ -35,3 +35,5 @@ jobs:
             OriginalCoreRepair/Tests/build-probe/probe.log
             OriginalCoreRepair/Tests/build-probe/fault-recorder-self-test.json
             OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-fatal.bin
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight-system.log

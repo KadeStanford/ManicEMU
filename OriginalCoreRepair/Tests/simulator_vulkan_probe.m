@@ -1,13 +1,30 @@
 // Public Vulkan loading preflight. No game, plugin, keys or saves are used.
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
+#import <signal.h>
+#import <sys/ucontext.h>
+#import <fcntl.h>
+#import <unistd.h>
 #include <vulkan/vulkan.h>
 
 static NSMutableDictionary *state;
 static NSString *destination;
+static int faultFD=-1;
+static uintptr_t moltenBase;
+static void fatalSignal(int signal,siginfo_t *info,void *context) {
+    ucontext_t *c=context;
+    uint64_t record[]={0x4d414e4943564b31,(uint64_t)signal,(uintptr_t)info->si_addr,moltenBase,
+        c->uc_mcontext->__ss.__pc,c->uc_mcontext->__ss.__lr,c->uc_mcontext->__ss.__sp};
+    if(faultFD>=0){write(faultFD,record,sizeof(record));fsync(faultFD);}
+    _exit(128+signal);
+}
 static void checkpoint(NSString *stage) {
     state[@"stage"]=stage;
     [[NSJSONSerialization dataWithJSONObject:state options:2 error:nil] writeToFile:destination atomically:YES];
+}
+static void uncaughtException(NSException *exception) {
+    state[@"objc_exception"]=exception.name;state[@"exception_reason"]=exception.reason?:@"";
+    state[@"exception_backtrace"]=exception.callStackSymbols;checkpoint(@"objc_exception");
 }
 @interface VulkanProbeApp : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
@@ -20,11 +37,17 @@ static void checkpoint(NSString *stage) {
         destination=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject
             stringByAppendingPathComponent:@"vulkan-preflight.json"];
         state=[@{@"moltenvk_version":@"1.2.8",@"actual_game_executed":@NO,@"plugin_executed":@NO} mutableCopy];
+        NSString *directory=destination.stringByDeletingLastPathComponent;
+        faultFD=open([directory stringByAppendingPathComponent:@"vulkan-fatal.bin"].fileSystemRepresentation,O_CREAT|O_WRONLY|O_EXCL,0600);
+        struct sigaction action={0};action.sa_sigaction=fatalSignal;action.sa_flags=SA_SIGINFO;
+        for(int s=1;s<NSIG;s++)if(s==SIGSEGV||s==SIGBUS||s==SIGABRT||s==SIGILL||s==SIGTRAP)sigaction(s,&action,NULL);
+        NSSetUncaughtExceptionHandler(uncaughtException);
         checkpoint(@"dlopen");
         void *library=dlopen([[NSBundle.mainBundle pathForResource:@"moltenvk-probe" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
         if(!library){state[@"error"]=@(dlerror()?:"dlopen failed");checkpoint(@"failed");return;}
         PFN_vkGetInstanceProcAddr get=(void *)dlsym(library,"vkGetInstanceProcAddr");
         if(!get){checkpoint(@"missing_vkGetInstanceProcAddr");return;}
+        Dl_info location={0};dladdr(get,&location);moltenBase=(uintptr_t)location.dli_fbase;
         PFN_vkCreateInstance create=(void *)get(VK_NULL_HANDLE,"vkCreateInstance");
         const char *extensions[]={"VK_KHR_portability_enumeration","VK_KHR_get_physical_device_properties2"};
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.pApplicationName="Manic Vulkan preflight",.apiVersion=VK_API_VERSION_1_1};

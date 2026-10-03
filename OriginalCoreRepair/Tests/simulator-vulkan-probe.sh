@@ -51,15 +51,21 @@ xcrun simctl install "$device" "$app"
 container="$(xcrun simctl get_app_container "$device" org.manicemu.vulkan-probe data)"
 xcrun simctl launch "$device" org.manicemu.vulkan-probe
 for attempt in {1..30}; do
+  [[ -s "$container/Documents/vulkan-fatal.bin" ]] && break
   if [[ -s "$container/Documents/vulkan-preflight.json" ]] && python3 - "$container/Documents/vulkan-preflight.json" <<'PY'
 import json,sys
-sys.exit(0 if json.load(open(sys.argv[1])).get('stage') in ['completed','failed','missing_vkGetInstanceProcAddr'] else 1)
+sys.exit(0 if json.load(open(sys.argv[1])).get('stage') in ['completed','failed','missing_vkGetInstanceProcAddr','objc_exception'] else 1)
 PY
   then break; fi
   sleep 1
 done
 cp "$container/Documents/vulkan-preflight.json" "$build/vulkan-preflight.json"
-python3 - "$build/vulkan-preflight.json" <<'PY'
-import json,sys
-r=json.load(open(sys.argv[1]));print(json.dumps(r));assert r.get('vulkan_device_verified')
+cp "$container/Documents/vulkan-fatal.bin" "$build/vulkan-fatal.bin"
+xcrun simctl spawn "$device" log show --last 2m --style compact --predicate 'process == "VulkanProbe"' > "$build/vulkan-preflight-system.log" 2>/dev/null || true
+python3 - "$build/vulkan-preflight.json" "$build/vulkan-fatal.bin" <<'PY'
+import json,sys,pathlib,struct
+p=pathlib.Path(sys.argv[1]);r=json.loads(p.read_text());b=pathlib.Path(sys.argv[2]).read_bytes()
+if len(b)==56:
+    x=struct.unpack('<7Q',b);r.update(fatal_signal=x[1],fault_address=hex(x[2]),pc_offset_from_moltenvk=hex(x[4]-x[3]),lr_offset_from_moltenvk=hex(x[5]-x[3]))
+p.write_text(json.dumps(r,indent=2));print(json.dumps(r));assert r.get('vulkan_device_verified')
 PY
