@@ -3,6 +3,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <assert.h>
+#define MAS_TESTING 1
 #import "../iOS/ManicAirPlaySplit.m"
 
 static NSString *lastLayout;
@@ -45,14 +46,8 @@ static CGPoint touchPoint;
 - (id)nextDrawable {return _drawable;}
 - (MASViewport *)viewport {return &_viewport;}
 @end
-@interface SyntheticScreen : NSObject @end
-@implementation SyntheticScreen
-- (CGFloat)scale {return 2;}
-@end
 @interface ExternalWindow : UIWindow @end
-@implementation ExternalWindow
-- (UIScreen *)screen {static id s;static dispatch_once_t once;dispatch_once(&once,^{s=[SyntheticScreen new];});return s;}
-@end
+@implementation ExternalWindow @end
 
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
@@ -87,7 +82,7 @@ static void gpu(void) {
     check(@"aspect_fit_has_black_bars",a[0]==0&&a[1]==0);
 }
 @interface TestApp : UIResponder <UIApplicationDelegate>
-@property(strong) UIWindow *window,*external;
+@property(strong,nonatomic) UIWindow *window,*external;
 @end
 @implementation TestApp
 - (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {

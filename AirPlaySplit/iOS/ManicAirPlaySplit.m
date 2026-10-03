@@ -56,6 +56,10 @@ static CAMetalLayer *findLayer(CALayer *layer) {
 }
 static BOOL externalWindow(UIWindow *w) {
     if(!w)return NO;
+#ifdef MAS_TESTING
+    // Simulator lifecycle tests use a second window on the same physical screen.
+    if([w isKindOfClass:NSClassFromString(@"ExternalWindow")])return YES;
+#endif
     if(w.screen!=UIScreen.mainScreen ||
        [w.windowScene.session.role isEqualToString:UIWindowSceneSessionRoleExternalDisplay])return YES;
     if(@available(iOS 16.0,*))return [w.windowScene.session.role isEqualToString:UIWindowSceneSessionRoleExternalDisplayNonInteractive];
