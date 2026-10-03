@@ -1,0 +1,4 @@
+https://github.com/LIJI32/SameBoy
+commit 213a12ce93d66b105a113debd9396306066a7cfc
+Only Core and BootROMs are vendored, unmodified. No upstream iOS UI code.
+License: Expat (MIT); see LICENSE. No Nintendo firmware or game data.

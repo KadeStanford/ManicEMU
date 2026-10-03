@@ -1,0 +1,34 @@
+name: GB Link
+on:
+  push:
+    branches: [feature/gb-local-link]
+    paths: ['GBLink/**', '.github/workflows/gb-link.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Build with sanitizers
+        run: >-
+          cmake -S GBLink -B build-gblink -DCMAKE_C_COMPILER=clang
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - run: cmake --build build-gblink --parallel 2
+      - run: ctest --test-dir build-gblink --output-on-failure
+      - run: node --test GBLink/Tests/*.test.mjs
+  ios-library:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - run: brew install rgbds
+      - run: bash GBLink/scripts/build-ios.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManicGBLink-unsigned
+          path: GBLink/build/ManicGBLink.framework
