@@ -1122,7 +1122,7 @@ enum GameOption: Int, CaseIterable {
         allOptions.remove(.editLink)
         // A separate linked pair starts from battery saves. Do not run it over
         // the normal emulator or advertise it for GBA titles like FireRed.
-        if game.gameType != .gb || scene == .gaming {
+        if game.gameType != .gb || scene == .gaming || PlayViewController.isGaming {
             allOptions.remove(.gbLink)
         }
         

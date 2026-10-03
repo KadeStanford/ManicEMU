@@ -28,6 +28,14 @@ jobs:
         with: {lfs: false, submodules: false}
       - run: brew install rgbds
       - run: bash GBLink/scripts/build-ios.sh
+      - name: Verify production open bootstrap
+        run: |
+          cmake -S GBLink -B GBLink/build-host -DCMAKE_C_COMPILER=clang
+          cmake --build GBLink/build-host --parallel 2
+          GBLink/build-host/mgl_boot_tests GBLink/build/dmg_boot.bin
+      - name: Check built library packaging metadata
+        run: |
+          python3 -c "import sys; sys.path.insert(0,'GBLink/scripts'); import ipa_link; info=ipa_link.inspect_slice(open('GBLink/build/ManicGBLink.framework/ManicGBLink','rb').read()); assert info['platform']==2 and info['filetype']==6 and not info['encrypted']; print(info)"
       - uses: actions/upload-artifact@v4
         with:
           name: ManicGBLink-unsigned

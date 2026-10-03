@@ -34,14 +34,17 @@
     UILabel *_status;
     UITextField *_codeField;
     UIStackView *_stack, *_hosts;
+    NSMutableArray<UIView *> *_setupViews;
     dispatch_source_t _watchdog;
     id _backgroundObserver;
 }
 - (void)loadView {
     _work = dispatch_queue_create("org.manicemu.gblink", DISPATCH_QUEUE_SERIAL);
     _found = [NSMutableArray new];
+    _setupViews = [NSMutableArray new];
     self.view = [UIView new]; self.view.backgroundColor = UIColor.systemBackgroundColor;
     UIScrollView *scroll = [UIScrollView new]; scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.delaysContentTouches = NO; scroll.canCancelContentTouches = NO;
     [self.view addSubview:scroll];
     _stack = [UIStackView new]; _stack.axis = UILayoutConstraintAxisVertical;
     _stack.spacing = 10; _stack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -60,17 +63,21 @@
     UILabel *title = [UILabel new]; title.text = @"Game Boy Link (experimental)";
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; [_stack addArrangedSubview:title];
     UILabel *help = [UILabel new]; help.numberOfLines = 0;
-    help.text = @"Both phones need the same legally obtained original GB ROM. Only MBC3 / 32 KB battery saves without RTC are supported (Red/Blue). Exit regular gameplay first. Connecting shares your battery save with the host over an encrypted local connection. Original saves are never changed. This first version has no audio.";
+    help.text = @"For original Pokémon Red/Blue, both phones need the same legally obtained GB ROM and their own 32 KB battery save. Exit regular gameplay first. Connecting shares your selected save with the host over an encrypted local connection. Original saves are never changed. This version has no audio.";
     help.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; [_stack addArrangedSubview:help];
-    [self addButton:@"Select GB ROM" action:@selector(pickROM) stack:_stack];
-    [self addButton:@"Select battery save (.sav/.srm), or start fresh" action:@selector(pickSave) stack:_stack];
+    [_setupViews addObject:help];
+    [_setupViews addObject:[self addButton:@"Select GB ROM" action:@selector(pickROM) stack:_stack]];
+    [_setupViews addObject:[self addButton:@"Select battery save (.sav/.srm), or start fresh" action:@selector(pickSave) stack:_stack]];
     _codeField = [UITextField new]; _codeField.borderStyle = UITextBorderStyleRoundedRect;
     _codeField.placeholder = @"Friend's 6-digit code (for Join)";
     _codeField.keyboardType = UIKeyboardTypeNumberPad; [_stack addArrangedSubview:_codeField];
+    [_setupViews addObject:_codeField];
     UIStackView *row = [self row];
     [self addButton:@"Host" action:@selector(host) stack:row];
     [self addButton:@"Find / Reconnect" action:@selector(join) stack:row];
+    [_setupViews addObject:row];
     _hosts = [self row];
+    [_setupViews addObject:_hosts];
     _status = [UILabel new]; _status.numberOfLines = 0;
     _status.text = self.romURL ? @"Ready to read this game's ROM and battery save." : @"Select your own ROM and battery save.";
     [_stack addArrangedSubview:_status];
@@ -110,6 +117,11 @@
 }
 - (void)status:(NSString *)text {
     dispatch_async(dispatch_get_main_queue(), ^{ self->_status.text = text; });
+}
+- (void)playing:(BOOL)playing {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIView *view in self->_setupViews) view.hidden = playing;
+    });
 }
 - (void)pickROM { [self pick:NO]; }
 - (void)pickSave { [self pick:YES]; }
@@ -198,6 +210,7 @@
 - (void)pause:(NSString *)reason {
     _connected = NO; _outstanding = NO; _keys = 0;
     mgl_set_connected(_pair, 0);
+    [self playing:NO];
     [_session disconnect]; [self status:reason]; // Preserve pair, sequence, original files.
 }
 - (void)fail:(NSString *)reason { _fatal = YES; [self pause:reason]; }
@@ -263,6 +276,7 @@
         } else if (![_guestOriginal isEqual:guestSave]) { [self fail:@"Reconnect save changed. Close and start a new session."]; return; }
         _connected = YES;
         mgl_set_connected(_pair, 1);
+        [self playing:YES];
         [self send:MGL_SAVE sequence:_sequence payload:[self battery:1]];
         [self send:MGL_READY sequence:_sequence payload:nil];
         [self status:@"Linked. Both games restart from battery saves. Save inside both games before exporting."]; return;
@@ -272,6 +286,7 @@
             [self fail:@"Unexpected resume sequence."]; return;
         }
         _sequence = packet.sequence; _connected = YES; _outstanding = NO; _nextFrame = CACurrentMediaTime();
+        [self playing:YES];
         [self status:@"Linked. Save inside both games before exporting your new battery save."];
         [self requestFrame]; return;
     }
@@ -381,6 +396,7 @@
         } else if (state == MCSessionStateNotConnected) {
             self->_connected = NO; self->_outstanding = NO; self->_keys = 0;
             mgl_set_connected(self->_pair, 0);
+            [self playing:NO];
             [self status:@"Disconnected. Games are frozen. Reconnect to the same peer without restarting either app."];
         }
     });

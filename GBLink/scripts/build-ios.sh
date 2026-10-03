@@ -44,6 +44,7 @@ cat > "$build/ManicGBLink.framework/Info.plist" <<'PLIST'
 PLIST
 cp "$root/Vendor/SameBoy/LICENSE" "$build/ManicGBLink.framework/SameBoy-LICENSE"
 cp "$root/../LICENSE" "$build/ManicGBLink.framework/LICENSE"
+git -C "$root" rev-parse HEAD | sed 's|^|https://github.com/KadeStanford/ManicEMU/tree/|' > "$build/ManicGBLink.framework/SOURCE"
 xcrun --sdk "$sdk_name" otool -L "$build/ManicGBLink.framework/ManicGBLink"
 if [[ "$sdk_name" == "iphoneos" ]]; then python3 "$root/scripts/check-swift-bridge.py" "$sdk"; fi
 echo "Built unsigned arm64 iOS framework. No signing credentials used."

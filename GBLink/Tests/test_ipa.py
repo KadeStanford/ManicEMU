@@ -15,7 +15,7 @@ spec.loader.exec_module(ipa)
 
 def macho(filetype=2, encrypted=False, padding=True):
     data = bytearray(1024)
-    count, size = 1, 152
+    count, size = 2, 176
     if encrypted:
         count += 1
         size += 24
@@ -25,8 +25,9 @@ def macho(filetype=2, encrypted=False, padding=True):
     struct.pack_into('<I', data, 96, 1)
     struct.pack_into('<Q', data, 144, 512)
     struct.pack_into('<I', data, 152, 512 if padding else 32 + size)
+    struct.pack_into('<6I', data, 184, 0x32, 24, 2, 15 << 16, 15 << 16, 0)
     if encrypted:
-        struct.pack_into('<6I', data, 184, 0x2c, 24, 512, 512, 1, 0)
+        struct.pack_into('<6I', data, 208, 0x2c, 24, 512, 512, 1, 0)
     data[512:] = b'x' * 512
     return bytes(data)
 
@@ -55,6 +56,7 @@ class IPATests(unittest.TestCase):
             root = pathlib.Path(tmp); source = root / 'original.ipa'; out = root / 'new.ipa'
             framework = root / 'ManicGBLink.framework'; framework.mkdir()
             (framework / 'ManicGBLink').write_bytes(macho(filetype=6))
+            (framework / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'ManicGBLink', 'CFBundlePackageType': 'FMWK'}))
             (framework / 'LICENSE').write_text('test license')
             info = {'CFBundleExecutable': 'Manic', 'CFBundleIdentifier': 'test.manic',
                     'NSBonjourServices': ['_ra_netplay._tcp'], 'TestUnrelatedSetting': 'keep'}
@@ -72,6 +74,7 @@ class IPATests(unittest.TestCase):
                 self.assertEqual(changed['TestUnrelatedSetting'], 'keep')
                 self.assertEqual(changed['CFBundleIdentifier'], 'test.manic')
                 self.assertTrue(changed['MGLInjectGBLink'])
+                self.assertEqual(changed['MinimumOSVersion'], '15.0')
                 self.assertIn('_ra_netplay._tcp', changed['NSBonjourServices'])
                 self.assertNotIn('Payload/Manic.app/_CodeSignature/CodeResources', z.namelist())
                 self.assertIn('Payload/Manic.app/Frameworks/ManicGBLink.framework/LICENSE', z.namelist())
@@ -89,6 +92,14 @@ class IPATests(unittest.TestCase):
                         z.writestr(name, b'x')
                 with zipfile.ZipFile(path) as z, self.assertRaises(ValueError):
                     ipa.checked_entries(z)
+
+    def test_simulator_framework_blocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp); framework = root / 'ManicGBLink.framework'; framework.mkdir()
+            binary = bytearray(macho(filetype=6)); struct.pack_into('<I', binary, 192, 7)
+            (framework / 'ManicGBLink').write_bytes(binary)
+            with self.assertRaisesRegex(ValueError, 'physical iOS'):
+                ipa.repackage(root / 'irrelevant.ipa', framework, root / 'new.ipa')
 
 
 if __name__ == '__main__':

@@ -24,7 +24,7 @@ def inspect_slice(data):
     end = 32 + command_size
     if count > 4096 or end > len(data):
         raise ValueError("Invalid Mach-O command table")
-    offset, first_data, paths, encrypted = 32, len(data), [], False
+    offset, first_data, paths, encrypted, platform = 32, len(data), [], False, None
     for _ in range(count):
         if offset + 8 > end:
             raise ValueError("Truncated load command")
@@ -51,6 +51,12 @@ def inspect_slice(data):
             if size < 20:
                 raise ValueError("Truncated encryption command")
             encrypted |= struct.unpack_from("<I", data, offset + 16)[0] != 0
+        elif command == 0x32:  # LC_BUILD_VERSION
+            if size < 24:
+                raise ValueError("Truncated platform command")
+            platform = struct.unpack_from("<I", data, offset + 8)[0]
+        elif command == 0x25:  # LC_VERSION_MIN_IPHONEOS
+            platform = 2
         elif command in (0xC, 0x80000018, 0x8000001F):
             if size < 24:
                 raise ValueError("Truncated dylib command")
@@ -63,7 +69,8 @@ def inspect_slice(data):
     if offset != end or first_data < end or first_data > len(data):
         raise ValueError("Overlapping or invalid Mach-O layout")
     return {"encrypted": encrypted, "load_paths": paths, "header_padding": first_data - end,
-            "command_end": end, "commands": count, "command_size": command_size, "filetype": filetype}
+            "command_end": end, "commands": count, "command_size": command_size, "filetype": filetype,
+            "platform": platform}
 
 
 def patch_slice(data):
@@ -147,10 +154,20 @@ def repackage(source, framework, output):
     library_info = inspect_slice(library)
     if library_info["encrypted"] or library_info["filetype"] != 6:
         raise ValueError("Expected an unencrypted arm64 dynamic library")
+    if library_info["platform"] != 2:
+        raise ValueError("Framework is not built for physical iOS; simulator/macOS binaries cannot be embedded")
+    framework_info = plistlib.loads((framework / 'Info.plist').read_bytes())
+    if framework_info.get('CFBundleExecutable') != 'ManicGBLink' or framework_info.get('CFBundlePackageType') != 'FMWK':
+        raise ValueError("Invalid framework Info.plist")
     with zipfile.ZipFile(source) as original:
-        entries, plist_path, info, binary_path, binary, _ = app_info(original)
+        entries, plist_path, info, binary_path, binary, binary_info = app_info(original)
+        if binary_info['platform'] != 2:
+            raise ValueError("Input app is not built for physical iOS")
         patched = patch_macho(binary)  # Validate all blockers before creating output.
         info["MGLInjectGBLink"] = True
+        original_min = tuple(int(n) for n in info.get('MinimumOSVersion', '0').split('.'))
+        if original_min < (15,):
+            info['MinimumOSVersion'] = '15.0'
         info["NSLocalNetworkUsageDescription"] = "Connect with your friend for local Game Boy link play."
         services = info.setdefault("NSBonjourServices", [])
         if not isinstance(services, list):

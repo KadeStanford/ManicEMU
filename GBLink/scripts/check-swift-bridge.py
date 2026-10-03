@@ -15,6 +15,7 @@ with tempfile.TemporaryDirectory() as tmp:
     path.write_text('''import UIKit
 import Darwin
 enum Platform { case gb, gba }
+enum PlayViewController { static var isGaming = false }
 struct Game {
     var gameType = Platform.gb
     var romUrl = URL(fileURLWithPath: "/test.gb")
