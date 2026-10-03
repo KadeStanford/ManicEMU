@@ -1,0 +1,34 @@
+name: iOS source build probe
+on:
+  push:
+    branches: [feature/dual-airplay-foundation]
+    paths:
+      - 'ManicEmu/**'
+      - '.github/workflows/ios-build-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sideload-build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+      - name: Build unsigned sideload app
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild -project ManicEmu/ManicEmu.xcodeproj \
+            -scheme ManicEmuSideload -configuration Debug \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/manic-derived" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/manic-build.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-source-build-log
+          path: ${{ runner.temp }}/manic-build.log
+
