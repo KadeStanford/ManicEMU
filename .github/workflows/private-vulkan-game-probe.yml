@@ -89,8 +89,12 @@ jobs:
           xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
             -fobjc-arc -Wall -Werror -Wno-unused-parameter -DMANIC_GAME_VULKAN=1 -I "$include" -I OriginalCoreRepair/Tests/vendor OriginalCoreRepair/Tests/simulator_game_probe.m \
             -framework UIKit -framework Foundation -framework CoreGraphics -o OriginalCoreRepair/Tests/build-probe/GameProbe
-      - name: Verify original core initialization
-        run: bash OriginalCoreRepair/Tests/simulator-probe.sh
+      - name: Fetch the hash-guarded original core for the Vulkan runtime test
+        run: |
+          curl --fail --location --retry 3 --silent --show-error \
+            https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro \
+            -o OriginalCoreRepair/Tests/build-probe/original-core-download.dylib
+          test "$(shasum -a 256 OriginalCoreRepair/Tests/build-probe/original-core-download.dylib | cut -d' ' -f1)" = 183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e5954a6df940c
       - name: Execute private game and supplied plugin
         env:
           MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
