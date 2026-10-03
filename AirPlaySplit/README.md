@@ -32,7 +32,12 @@ AirPlay source-drawable pacing.
 The optional `MASAirPlayDiagnostics` app plist flag emits public numeric counters
 once per second: source drawable wait, copy encoding/completion time, sink
 drawable wait, captures/drops, allocations, in-flight snapshots and presentations.
-It contains no game paths, save contents or plugin payloads. The source drawable
-still comes from the original external-screen layer, so a bounded snapshot pool
-alone does not prove that emulation is independent of AirPlay pacing. Physical
-DS and 3DS slowdown that clears on disconnect remains under investigation.
+It contains no game paths, save contents or plugin payloads. The R3 pacing repair
+keeps the original producer view on the phone screen while the independent crop
+sink remains external. The source is clipped without changing its bounds;
+disconnect/reset restore ownership only if the source is still in our host.
+The shipped source passed 58 checks, including producer screen assignment,
+render-dimension preservation and disconnect/reconnect ownership. Physical
+AirPlay speed and quality still require testing. The private R3 IPA also retains
+all working GBA v0.7 framework entries and app hooks, verified against the
+baseline; the existing GBA regression workflow passed both jobs.
