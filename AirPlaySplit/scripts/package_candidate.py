@@ -57,6 +57,11 @@ def package(source, core, framework, output):
         raise ValueError('Input is not the verified GBA v0.7 IPA')
     files = ipa.framework_files(framework, 'ManicAirPlaySplit')
     core_bytes = core.read_bytes()
+    # Manic's bundled core negotiates Vulkan through the frontend's MoltenVK.
+    # Its dependency list alone cannot establish that this backend is present.
+    # Reject the software-only build that caused the first candidate regression.
+    if b'N6Vulkan14RendererVulkanE' not in core_bytes:
+        raise ValueError('Replacement Azahar lacks the original Vulkan renderer capability')
     core_info = ipa.inspect_slice(core_bytes)
     if core_info['platform'] != 2 or core_info['filetype'] != 6 or core_info['encrypted']:
         raise ValueError('Azahar must be an unencrypted arm64 physical iOS dylib')
@@ -119,6 +124,7 @@ def package(source, core, framework, output):
                 'executable_only_adds_load_command': AIRPLAY_LOAD,
                 'plist_only_adds_key': 'MASInjectAirPlaySplit',
                 'azahar_original_exports_preserved': sorted(exported_symbols(old_core)),
+                'azahar_vulkan_renderer_present': True,
                 'changed_entries': {name: {'before': original_hashes[name], 'after': output_hashes[name]} for name in replacements},
                 'added_entries': {name: output_hashes[name] for name in added},
                 'unchanged_entries': {name: value for name, value in original_hashes.items() if name not in replacements},
