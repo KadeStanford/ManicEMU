@@ -55,9 +55,11 @@ static CAMetalLayer *findLayer(CALayer *layer) {
     return nil;
 }
 static BOOL externalWindow(UIWindow *w) {
-    return w && (w.screen!=UIScreen.mainScreen ||
-        [w.windowScene.session.role isEqualToString:UISceneSessionRoleExternalDisplayNonInteractive] ||
-        [w.windowScene.session.role isEqualToString:UISceneSessionRoleExternalDisplay]);
+    if(!w)return NO;
+    if(w.screen!=UIScreen.mainScreen ||
+       [w.windowScene.session.role isEqualToString:UIWindowSceneSessionRoleExternalDisplay])return YES;
+    if(@available(iOS 16.0,*))return [w.windowScene.session.role isEqualToString:UIWindowSceneSessionRoleExternalDisplayNonInteractive];
+    return NO;
 }
 static NSString *canonical(BOOL threeDS) {
     return threeDS?@"0,0,400,240,40,240,320,240,400,480":@"0,0,256,192,0,192,256,192,256,384";
