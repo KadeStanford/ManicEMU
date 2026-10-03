@@ -33,8 +33,17 @@ xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$app"
 xcrun simctl launch "$device" org.manicemu.trade.smoke
-sleep 14
 container="$(xcrun simctl get_app_container "$device" org.manicemu.trade.smoke data)"
+for attempt in {1..30}; do
+  if [[ -s "$container/Documents/smoke.json" && -s "$container/Documents/latency.json" ]]; then break; fi
+  sleep 2
+done
+if [[ ! -s "$container/Documents/smoke.json" || ! -s "$container/Documents/latency.json" ]]; then
+  echo 'Simulator smoke app did not write both result files; recent app and crash diagnostics follow.' >&2
+  xcrun simctl spawn "$device" log show --last 5m --style compact --predicate 'process == "TradeSmoke" OR eventMessage CONTAINS "TradeSmoke"' 2>/dev/null | tail -100 >&2 || true
+  find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -name '*TradeSmoke*' -type f -print -exec tail -80 {} \; >&2 || true
+  exit 1
+fi
 cp "$container/Documents/smoke.json" "$root/build-simulator/smoke.json"
 cp "$container/Documents/latency.json" "$root/build-simulator/latency.json"
 python3 -c "import json; r=json.load(open('$root/build-simulator/smoke.json')); assert all(r.values()); print(r)"
