@@ -25,8 +25,12 @@ jobs:
           path: azahar-source
           lfs: false
           submodules: recursive
-      - name: Enable the 3GX loader in the libretro frontend
-        run: git -C azahar-source apply ../manic-source/CorePatches/Azahar/0001-enable-3gx-loader-in-libretro.patch
+      - name: Apply Manic libretro integration patches
+        shell: bash
+        run: |
+          for patch in manic-source/CorePatches/Azahar/*.patch; do
+            git -C azahar-source apply "../$patch"
+          done
       - name: Configure and build unsigned iOS libretro core
         shell: bash
         run: |
