@@ -23,6 +23,7 @@ jobs:
           set -o pipefail
           xcodebuild -project ManicEmu/ManicEmu.xcodeproj \
             -scheme ManicEmuSideload -configuration Debug \
+            -skipPackagePluginValidation \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/manic-derived" \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/manic-build.log"
