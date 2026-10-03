@@ -2669,9 +2669,14 @@ extension PlayViewController {
         triggerProView?.hapticType = manicGame.haptic
     }
     
+    private var isAirPlayGameViewActive: Bool {
+        PurchaseManager.isMember && Settings.defalut.airPlay &&
+            ExternalSceneDelegate.isAirPlaying && ExternalSceneDelegate.airPlayViewController != nil
+    }
+
     /// Move the game Metal view onto the AirPlay window, or back onto the phone.
     private func updateAirPlay() {
-        if PurchaseManager.isMember, Settings.defalut.airPlay, ExternalSceneDelegate.isAirPlaying {
+        if isAirPlayGameViewActive {
             if let airPlayViewController = ExternalSceneDelegate.airPlayViewController, let gameMetalView {
                 gameMetalView.removeFromSuperview()
                 var dimensions = emulatorCore?.deltaCore.videoFormat.dimensions ?? CGSize(width: 480, height: 360)
@@ -2686,7 +2691,9 @@ extension PlayViewController {
                 updateNDSCursor()
             }
         } else {
-            if let _ = ExternalSceneDelegate.airPlayViewController, let gameMetalView {
+            // The external controller can already be gone when didDisconnect arrives.
+            // The retained game view still needs to be moved back to the phone.
+            if let gameMetalView {
                 gameMetalView.removeFromSuperview()
                 view.insertSubview(gameMetalView, belowSubview: controllerView)
                 updateLibretroViews()
@@ -3263,7 +3270,7 @@ extension PlayViewController {
                                                                  bestEfforts: true)?.shaderValue
         let isOriginalShader = usingShaderPath == nil || usingShaderPath == ""
         
-        if ExternalSceneDelegate.isAirPlaying {
+        if isAirPlayGameViewActive {
             let layoutType = Settings.defalut.airPlayLayout
             var layout: String = ""
             let ratio = 0.3
