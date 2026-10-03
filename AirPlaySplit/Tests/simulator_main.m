@@ -48,6 +48,8 @@ static CGPoint touchPoint;
 @end
 @interface ExternalWindow : UIWindow @end
 @implementation ExternalWindow @end
+@interface TestTouchInputView : UIView @end
+@implementation TestTouchInputView @end
 
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
@@ -106,6 +108,10 @@ static void gpu(void) {
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonical(NO)]);
+        UIView *touchArea=[[TestTouchInputView alloc] initWithFrame:CGRectMake(30,350,300,180)];
+        [root.view addSubview:touchArea];[m refresh];
+        touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
+        check(@"skin_and_rotation_changes_follow_live_touch_region",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
         m.liveViewport=CGRectMake(20,30,400,480);[m touch:CGPointMake(0.25,0.75)];
         check(@"touch_maps_to_ds_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-120)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-450)<0.001);
         [m swap];check(@"swap_does_not_reload_or_stop",m.plan.swapped&&loads==1&&stops==0);

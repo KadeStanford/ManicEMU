@@ -54,6 +54,14 @@ static CAMetalLayer *findLayer(CALayer *layer) {
     for(CALayer *child in layer.sublayers) {CAMetalLayer *found=findLayer(child); if(found) return found;}
     return nil;
 }
+static UIView *findTouchArea(UIView *view) {
+    if(view.hidden||view.alpha==0)return nil;
+    // DeltaCore's skin updates this existing view for rotations and skin changes.
+    // Reading its UIKit geometry avoids assumptions about private Swift storage.
+    if([NSStringFromClass(view.class) hasSuffix:@"TouchInputView"] && !CGRectIsEmpty(view.bounds))return view;
+    for(UIView *child in view.subviews){UIView *found=findTouchArea(child);if(found)return found;}
+    return nil;
+}
 static BOOL externalWindow(UIWindow *w) {
     if(!w)return NO;
 #ifdef MAS_TESTING
@@ -167,6 +175,8 @@ static NSString *canonical(BOOL threeDS) {
     CGFloat sx=self.phoneBounds.width>0?bounds.width/self.phoneBounds.width:1;
     CGFloat sy=self.phoneBounds.height>0?bounds.height/self.phoneBounds.height:1;
     CGRect r=self.phoneRegion;r.origin.x*=sx;r.origin.y*=sy;r.size.width*=sx;r.size.height*=sy;
+    UIView *touchArea=findTouchArea(self.phoneParent);
+    if(touchArea)r=[touchArea convertRect:touchArea.bounds toView:self.phoneParent];
     self.phoneSurface.frame=CGRectIntersection(self.phoneParent.bounds,r);
     self.externalSurface.frame=external.bounds;
     self.swapButton.frame=CGRectMake(MAX(0,CGRectGetMaxX(self.phoneSurface.frame)-164),
