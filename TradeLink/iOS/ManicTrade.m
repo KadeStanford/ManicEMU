@@ -142,13 +142,13 @@ static NSString *gameTitle(NSString *code) {
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby players" message:@"Your friend also needs to start a cable trade or battle in their game." preferredStyle:UIAlertControllerStyleActionSheet];
     for(MCPeerID *peer in _peers){NSDictionary *meta=_peers[peer];
         [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ - %@",peer.displayName,gameTitle(meta[@"code"])] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-            if(![self->_epoch isEqual:epoch])return;
+            if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch())return;
             self->_partner=peer;self->_partnerMeta=meta;[self dismissDialog];
             NSData *context=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];
             [self->_browser invitePeer:peer toSession:self->_session withContext:context timeout:20];
         }]];
     }
-    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){if(![self->_epoch isEqual:epoch])return;MT_cancel();[self cleanup];}]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch())return;MT_cancel();[self cleanup];}]];
     [self show:a];
 }
 - (void)notice:(NSString *)title message:(NSString *)message {
@@ -168,20 +168,20 @@ static NSString *gameTitle(NSString *code) {
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Link paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
     NSString *epoch=_epoch;
     if(!_fatal)[a addAction:[UIAlertAction actionWithTitle:@"Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-        if(![self->_epoch isEqual:epoch]||MT_finishing())return;
+        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing())return;
         resumeFrontend();
         self->_ready=YES;self->_cursor=0;
         if([self->_session.connectedPeers containsObject:self->_partner]){MT_resume();[self tick:nil];}
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore before link" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
-        if(![self->_epoch isEqual:epoch]||MT_finishing())return;
+        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing())return;
         MT_restore();resumeFrontend();[self cleanup];
     }]];[self show:a];
 }
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
 - (void)tick:(NSTimer *)timer {
-    if(_ending||!_partner||![_session.connectedPeers containsObject:_partner])return;
+    if(_ending||_coreEpoch!=MT_epoch()||!_partner||![_session.connectedPeers containsObject:_partner])return;
     CFTimeInterval now=CACurrentMediaTime();
     enum MTPhase phase=MT_phase();
     if(phase==MT_LINKED&&_lastPhase==MT_SUSPENDED){[self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];}
@@ -219,7 +219,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)session:(MCSession *)session peer:(MCPeerID *)peer didChangeState:(MCSessionState)state {
     dispatch_async(dispatch_get_main_queue(),^{
-        if(self->_ending||session!=self->_session||![peer isEqual:self->_partner])return;
+        if(self->_ending||self->_coreEpoch!=MT_epoch()||session!=self->_session||![peer isEqual:self->_partner])return;
         if(state==MCSessionStateConnected){self->_heard=CACurrentMediaTime();if(MT_phase()==MT_WAITING)self->_ready=YES;[self control:@"HELLO"];if(self->_ready&&MT_phase()==MT_SUSPENDED)MT_resume();}
         else if(state==MCSessionStateNotConnected){
             if(MT_phase()==MT_WAITING){self->_partner=nil;self->_partnerMeta=nil;[self finder];}
@@ -230,7 +230,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)session:(MCSession *)session didReceiveData:(NSData *)data fromPeer:(MCPeerID *)peer {
     dispatch_async(dispatch_get_main_queue(),^{
-        if(self->_ending||session!=self->_session||![peer isEqual:self->_partner])return;
+        if(self->_ending||self->_coreEpoch!=MT_epoch()||session!=self->_session||![peer isEqual:self->_partner])return;
         self->_heard=CACurrentMediaTime();
         if(data.length==MT_PACKET_SIZE&&!memcmp(data.bytes,"MTR1",4)){
             uint8_t ack[MT_PACKET_SIZE];int result=MT_receive_packet(data.bytes,data.length,ack);
