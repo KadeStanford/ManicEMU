@@ -48,6 +48,7 @@ jobs:
         run: |
           core=azahar-build/bin/Release/azahar_libretro.dylib
           test -s "$core"
+          install_name_tool -id '@rpath/azahar.libretro.framework/azahar.libretro' "$core"
           for symbol in _retro_azahar_set_keyboard_callback _retro_azahar_keyboard_input _retro_azahar_install_cia; do
             nm -gU "$core" | grep -Fq "$symbol"
           done
