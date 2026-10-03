@@ -33,12 +33,15 @@ Machine-code verification and packaging checks cannot establish physical plugin
 execution. That requires launching the existing game and opening Vapecord's menu
 on the user's device. Original-core boot is already confirmed independently.
 
-The private integrated simulator comparison at run `37157015313` executed the
+The private integrated simulator comparison at run `37158036864` executed the
 matching original core with Software rendering. The enabled-loader job completed
-3,600 `retro_run` calls with 3,495 nonblack frames and no native fatal signal.
-Its encrypted frame at call 3,000 visibly shows Vapecord's first-run notice.
-This establishes plugin code execution in that simulator configuration; it does
-not establish Select-menu operation or physical Vulkan compatibility. The phone
+2,373 `retro_run` calls with 2,272 nonblack frames and no native fatal signal.
+After A acknowledged the plugin's notice, the encrypted frame at call 1,800
+showed New Leaf's title screen with the plugin-ready overlay. After Select at
+call 2,000, the encrypted frame at call 2,050 visibly shows the Vapecord USAWA
+5.4.0 menu with code categories and touch controls. This establishes plugin
+initialization and Select-menu operation in that simulator configuration;
+it does not establish physical Vulkan compatibility. The phone
 uses Vulkan and previously exited with SIGSEGV after the uppercase plugin copy
 was introduced. The added diagnostic copy is disabled pending a controlled test.
 
