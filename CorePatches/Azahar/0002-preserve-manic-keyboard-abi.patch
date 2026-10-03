@@ -1,0 +1,23 @@
+diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -860,5 +860,18 @@ void retro_keyboard_input(const char* text, int button) {
+ }
+ 
++// Manic's host discovers these entry points with dylib_proc.
++extern "C" RETRO_API void retro_azahar_set_keyboard_callback(retro_keyboard_callback_t callback) {
++    retro_set_keyboard_callback(callback);
++}
++
++extern "C" RETRO_API void retro_azahar_keyboard_input(const char* text, int button) {
++    retro_keyboard_input(text, button);
++}
++
+ void retro_install_cia(const char* path) {
+     Service::AM::InstallCIA(path, [](std::size_t total_bytes_read, std::size_t file_size) {});
+ }
++
++extern "C" RETRO_API void retro_azahar_install_cia(const char* path) {
++    retro_install_cia(path);
++}
+
