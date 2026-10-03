@@ -96,4 +96,7 @@ PY
   cp "$container/Documents/game-probe.json" "$build/private-game-probe.json"
   cp "$container/Documents/core-runtime.log" "$build/private-core-runtime.log"
   cp "$container/Documents/fatal-signal.bin" "$build/private-fatal-signal.bin"
+  for frame in "$container/Documents"/private-frame-*.png; do
+    if [[ -f "$frame" ]]; then cp "$frame" "$build/"; fi
+  done
 fi

@@ -93,11 +93,35 @@ jobs:
           (root/'private-game-summary.json').write_text(json.dumps(result,indent=2))
           print(json.dumps(result))
           PY
+      - name: Encrypt detailed diagnostics for private local inspection
+        if: always()
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess,zipfile
+          root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
+          records=[root/'private-core-runtime.log',root/'private-game-probe.json',root/'private-fatal-signal.bin']
+          records+=list(root.glob('private-frame-*.png'))
+          existing=[p for p in records if p.exists()]
+          if existing:
+              archive=root/'private-runtime-evidence.zip'
+              with zipfile.ZipFile(archive,'x',compression=zipfile.ZIP_DEFLATED) as z:
+                  for p in existing:z.write(p,p.name)
+              env=os.environ.copy()
+              env['MANIC_EVIDENCE_PASSWORD']=json.loads(env.pop('PRIVATE_INPUTS'))['evidence_password']
+              subprocess.run(['openssl','enc','-aes-256-cbc','-pbkdf2','-iter','200000','-salt',
+                  '-pass','env:MANIC_EVIDENCE_PASSWORD','-in',str(archive),
+                  '-out',str(root/'private-runtime-evidence.enc')],env=env,check=True)
+              archive.unlink()
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: private-game-sanitized-diagnostic-summary
-          path: OriginalCoreRepair/Tests/build-probe/private-game-summary.json
+          path: |
+            OriginalCoreRepair/Tests/build-probe/private-game-summary.json
+            OriginalCoreRepair/Tests/build-probe/private-runtime-evidence.enc
       - name: Remove runner-only private diagnostic copies
         if: always()
         run: |
@@ -108,4 +132,6 @@ jobs:
           for name in ['private-core-runtime.log','private-fatal-signal.bin','private-game-probe.json']:
               p=pathlib.Path('OriginalCoreRepair/Tests/build-probe')/name
               p.unlink(missing_ok=True)
+          for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-frame-*.png'):
+              p.unlink()
           PY

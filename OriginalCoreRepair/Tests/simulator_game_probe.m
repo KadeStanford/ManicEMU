@@ -70,6 +70,18 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
             if((((const uint32_t *)((const uint8_t *)pixels+y*pitch))[x]&0xffffff)!=0){visible=true;break;}
     if(visible)nonblackFrames++;
     report[@"last_frame_dimensions"]=@[@(width),@(height)];
+    NSString *snapshot=runCalls==179?@"private-frame-before-select.png":
+        runCalls==240?@"private-frame-after-select.png":nil;
+    if(snapshot){
+        CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+        CGContextRef context=CGBitmapContextCreate((void *)pixels,width,height,8,pitch,space,
+            kCGBitmapByteOrder32Little|kCGImageAlphaNoneSkipFirst);
+        if(context){CGImageRef image=CGBitmapContextCreateImage(context);
+            [UIImagePNGRepresentation([UIImage imageWithCGImage:image])
+                writeToFile:[root stringByAppendingPathComponent:snapshot] atomically:YES];
+            CGImageRelease(image);CGContextRelease(context);}
+        CGColorSpaceRelease(space);
+    }
 }
 static void audio(int16_t left,int16_t right){}
 static size_t audioBatch(const int16_t *samples,size_t count){return count;}
