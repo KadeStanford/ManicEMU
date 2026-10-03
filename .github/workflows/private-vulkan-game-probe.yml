@@ -95,6 +95,13 @@ jobs:
             https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro \
             -o OriginalCoreRepair/Tests/build-probe/original-core-download.dylib
           test "$(shasum -a 256 OriginalCoreRepair/Tests/build-probe/original-core-download.dylib | cut -d' ' -f1)" = 183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e5954a6df940c
+      - name: Verify the built Simulator driver before any game execution
+        run: |
+          driver="$(find OriginalCoreRepair/Tests/build-probe/driver-sdk -path '*simulator*/MoltenVK.framework/MoltenVK' -type f | head -1)"
+          header="$(find OriginalCoreRepair/Tests/build-probe/driver-sdk -path '*/include/vulkan/vulkan.h' -type f | head -1)"
+          test -n "$driver" && test -n "$header"
+          include="$(dirname "$(dirname "$header")")"
+          MANIC_MOLTENVK_SDK="$PWD/OriginalCoreRepair/Tests/build-probe/driver-sdk" MANIC_MOLTENVK_BINARY="$PWD/$driver" MANIC_MOLTENVK_INCLUDE="$PWD/$include" bash OriginalCoreRepair/Tests/simulator-vulkan-probe.sh
       - name: Execute private game and supplied plugin
         env:
           MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
@@ -161,6 +168,9 @@ jobs:
           path: |
             OriginalCoreRepair/Tests/build-probe/private-game-summary.json
             OriginalCoreRepair/Tests/build-probe/private-runtime-evidence.enc
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-fatal.bin
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight-system.log
       - name: Remove runner-only private diagnostic copies
         if: always()
         run: |

@@ -19,7 +19,13 @@ sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
   -fobjc-arc -Wall -Werror -I "${MANIC_MOLTENVK_INCLUDE:-$sdkroot/MoltenVK/MoltenVK/include}" simulator_vulkan_probe.m \
   -framework UIKit -framework Foundation -o "$app/VulkanProbe"
-python3 - "${MANIC_MOLTENVK_BINARY:-$sdkroot/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK}" "$app/moltenvk-probe.dylib" <<'PY'
+driver="${MANIC_MOLTENVK_BINARY:-$sdkroot/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK}"
+if [[ "$(xcrun lipo -archs "$driver")" == arm64 ]]; then
+  cp "$driver" "$build/moltenvk-arm64.dylib"
+else
+  xcrun lipo "$driver" -thin arm64 -output "$build/moltenvk-arm64.dylib"
+fi
+python3 - "$build/moltenvk-arm64.dylib" "$app/moltenvk-probe.dylib" <<'PY'
 import pathlib,struct,sys
 b=bytearray(pathlib.Path(sys.argv[1]).read_bytes());assert b[:4]==bytes.fromhex('cffaedfe')
 pos=32;found=False

@@ -7,7 +7,11 @@ app="$build/GameProbe.app"
 mkdir -p "$app"
 cp "$build/GameProbe" "$app/GameProbe"
 if [[ -n "${MANIC_PROBE_VULKAN_DRIVER:-}" ]]; then
-  cp "$MANIC_PROBE_VULKAN_DRIVER" "$app/moltenvk-probe.dylib"
+  if [[ "$(xcrun lipo -archs "$MANIC_PROBE_VULKAN_DRIVER")" == arm64 ]]; then
+    cp "$MANIC_PROBE_VULKAN_DRIVER" "$app/moltenvk-probe.dylib"
+  else
+    xcrun lipo "$MANIC_PROBE_VULKAN_DRIVER" -thin arm64 -output "$app/moltenvk-probe.dylib"
+  fi
   codesign --force --sign - "$app/moltenvk-probe.dylib"
 fi
 python3 - "$build/original-core-download.dylib" "$app/game-probe-core.dylib" <<'PY'
