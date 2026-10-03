@@ -9,7 +9,7 @@ cp -R "$root/build-simulator/ManicGBLink.framework" "$app/Frameworks/"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" -fobjc-arc \
   -I "$root/Core" "$root/Tests/simulator_main.m" -F "$app/Frameworks" -framework ManicGBLink -framework UIKit -framework Foundation -framework MultipeerConnectivity \
-  -Wl,-rpath,@executable_path/Frameworks -o "$app/TradeSmoke"
+  -Wl,-rpath,@executable_path/Frameworks -Wl,-export_dynamic -o "$app/TradeSmoke"
 cat > "$app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
@@ -33,7 +33,7 @@ xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$app"
 xcrun simctl launch "$device" org.manicemu.trade.smoke
-sleep 8
+sleep 10
 container="$(xcrun simctl get_app_container "$device" org.manicemu.trade.smoke data)"
 cp "$container/Documents/smoke.json" "$root/build-simulator/smoke.json"
 python3 -c "import json; r=json.load(open('$root/build-simulator/smoke.json')); assert all(r.values()); print(r)"

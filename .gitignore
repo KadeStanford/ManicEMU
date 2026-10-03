@@ -117,3 +117,5 @@ Scripts/find_unused_types.py
 .vscode
 # Local read-only investigation of the pinned Libretro bridge.
 /source-evidence/
+# Python test/packager caches
+__pycache__/

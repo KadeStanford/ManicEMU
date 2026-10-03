@@ -183,7 +183,7 @@ def repackage(source, framework, output, gpsp=None):
         original_min = tuple(int(n) for n in info.get('MinimumOSVersion', '0').split('.'))
         if original_min < (15,):
             info['MinimumOSVersion'] = '15.0'
-        info["NSLocalNetworkUsageDescription"] = "Find nearby players when starting a Game Boy Advance cable trade."
+        info["NSLocalNetworkUsageDescription"] = "Find nearby players when starting a Game Boy Advance cable trade or battle."
         services = info.setdefault("NSBonjourServices", [])
         if not isinstance(services, list):
             raise ValueError("Invalid Bonjour service list")

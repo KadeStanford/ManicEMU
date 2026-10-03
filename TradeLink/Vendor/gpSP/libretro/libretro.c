@@ -390,7 +390,7 @@ static bool trade_speed_locked;
 static bool trade_busy(void) {
    enum MTPhase p = MT_phase();
    return MT_active() && (p == MT_WAITING || p == MT_LINKED ||
-      p == MT_SUSPENDED || p == MT_RESTORE || p == MT_BROKEN);
+      p == MT_SUSPENDED || p == MT_RESTORE || p == MT_BROKEN || p == MT_CLOSING);
 }
 void set_fastforward_override(bool fastforward)
 {
@@ -585,6 +585,8 @@ static void manic_trade_receive(const void *data, size_t size, unsigned peer) {
 static void manic_trade_stop(void) {
    netpacket_stop(); netplay_num_clients = 0; netplay_client_id = 0;
    serialproto_reset(); serial_set_irq_cycles(0);
+   // Clear old busy/ID/SI/error bits without restarting the game or changing SRAM.
+   write_ioreg(REG_SIOCNT, read_ioreg(REG_SIOCNT) & ~0xfc);
 }
 
 

@@ -1,4 +1,4 @@
-name: In-game GBA Trade
+name: In-game GBA Link
 on:
   push:
     branches: [feature/gb-local-link]

@@ -112,7 +112,10 @@ cpu_alert_type write_siocnt(u16 value) {
   u16 newval = (value & 0x7F8B) | (oldval & 0x0004);
   u32 pvmode = get_serial_mode(oldval, read_ioreg(REG_RCNT));
   u32 nwmode = get_serial_mode(newval, read_ioreg(REG_RCNT));
-  if (MT_active() && pvmode == SERIAL_MODE_MULTI && nwmode != SERIAL_MODE_MULTI)
+  // Gen3 DisableSerial writes SIO_MULTI_MODE (0x2000), clearing IRQ while
+  // retaining multiplayer mode. Merely checking a mode change misses the exit.
+  if (MT_active() && pvmode == SERIAL_MODE_MULTI &&
+      (nwmode != SERIAL_MODE_MULTI || ((oldval & 0x4000) && !(newval & 0x4000))))
     MT_leave();
 
   switch (nwmode) {
@@ -205,6 +208,7 @@ u32 serial_next_event() {
 
 // Account for consumed cycles and return if a serial IRQ should be raised.
 bool update_serial(unsigned cycles) {
+  if (MT_active() && MT_local_closed()) return false;
   if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED || MT_phase() == MT_BROKEN))
     return false; // No handshake IRQ can complete before pairing/backup.
   // Might wanna check if the connected device has some update (IRQ).

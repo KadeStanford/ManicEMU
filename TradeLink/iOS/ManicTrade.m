@@ -7,8 +7,10 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include "TradeCore.h"
+#include "FrontendSave.h"
+#include <dlfcn.h>
 
-static NSString *const TradeProtocol = @"g3-fc4afeb-mtr1";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr2";
 static NSString *const Service = @"manic-trade";
 static void resumeFrontend(void) {
     Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
@@ -59,7 +61,8 @@ static NSString *gameTitle(NSString *code) {
     NSTimer *_timer;
     uint64_t _cursor;
     CFTimeInterval _heard,_lastResend;
-    BOOL _ready,_peerReady,_localDone,_remoteDone,_sentDone,_ending,_fatal;
+    BOOL _ready,_peerReady,_ending,_fatal;
+    enum MTPhase _lastPhase;
     NSString *_epoch;
 }
 + (instancetype)shared { static ManicTrade *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v; }
@@ -83,7 +86,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;
-    _ending=NO;_fatal=NO;_localDone=_remoteDone=_sentDone=NO;_ready=_peerReady=NO;_cursor=0;
+    _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     _identity=[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"%@ · %@",UIDevice.currentDevice.model,[_epoch substringToIndex:4]]];
@@ -131,7 +134,7 @@ static NSString *gameTitle(NSString *code) {
 - (void)show:(UIAlertController *)dialog {_dialog=dialog;[self publishDialog];}
 - (void)finder {
     if(_partner||_ending||_fatal)return;
-    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby players" message:@"Your friend also needs to start a cable trade in their game." preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby players" message:@"Your friend also needs to start a cable trade or battle in their game." preferredStyle:UIAlertControllerStyleActionSheet];
     for(MCPeerID *peer in _peers){NSDictionary *meta=_peers[peer];
         [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ — %@",peer.displayName,gameTitle(meta[@"code"])] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
             self->_partner=peer;self->_partnerMeta=meta;[self dismissDialog];
@@ -148,18 +151,22 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)halt:(NSString *)reason {
     if(_ending)return;
+    if(MT_complete()||MT_phase()==MT_IDLE){[self cleanup];return;}
+    // A locally closed game keeps playing. It cannot rejoin or restore an
+    // already ended session, even if the final peer/ACK callbacks arrive late.
+    if(MT_finishing())return;
     if(MT_phase()==MT_BROKEN)_fatal=YES;
-    BOOL notify=_ready;MT_suspend();_ready=_peerReady=NO;if(notify)[self control:@"PAUSE"];
+    MT_suspend();_ready=_peerReady=NO;
     [_advertiser startAdvertisingPeer];[_browser startBrowsingForPeers];
     [self dismissDialog];
-    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Trade paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Link paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
     if(!_fatal)[a addAction:[UIAlertAction actionWithTitle:@"Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         resumeFrontend();
         self->_ready=YES;self->_cursor=0;
-        if([self->_session.connectedPeers containsObject:self->_partner])[self control:@"HELLO"];
+        if([self->_session.connectedPeers containsObject:self->_partner]){MT_resume();[self tick:nil];}
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"Restore before trade" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
+    [a addAction:[UIAlertAction actionWithTitle:@"Restore before link" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
         MT_restore();resumeFrontend();[self cleanup];
     }]];[self show:a];
 }
@@ -167,8 +174,11 @@ static NSString *gameTitle(NSString *code) {
 - (void)tick:(NSTimer *)timer {
     if(_ending||!_partner||![_session.connectedPeers containsObject:_partner])return;
     CFTimeInterval now=CACurrentMediaTime();
-    if(MT_phase()==MT_LINKED){
-        if(now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];return;}
+    enum MTPhase phase=MT_phase();
+    if(phase==MT_LINKED&&_lastPhase==MT_SUSPENDED){[self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];}
+    _lastPhase=phase;
+    if(phase==MT_LINKED||phase==MT_SUSPENDED||phase==MT_CLOSING){
+        if(phase==MT_LINKED&&now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];}
         if(now-_lastResend>0.75){_cursor=0;_lastResend=now;}
         for(unsigned i=0;i<64;i++){
             uint8_t bytes[MT_PACKET_SIZE];if(!MT_next_packet(_cursor,bytes))break;
@@ -176,15 +186,16 @@ static NSString *gameTitle(NSString *code) {
             NSError *error;if(![_session sendData:[NSData dataWithBytes:bytes length:sizeof(bytes)] toPeers:@[_partner] withMode:MCSessionSendDataReliable error:&error]){[self halt:@"The connection stopped. Your pre-trade backups are safe."];return;}_cursor=seq;
         }
     }
-    if(_localDone&&!MT_pending()&&!_sentDone){_sentDone=YES;[self control:@"DONE"];}
-    if(_localDone&&_remoteDone&&MT_complete()){[self cleanup];return;}
     static unsigned count=0;if(++count%40==0)[self control:@"PING"];
 }
 - (void)ended:(NSString *)reason {
     if([reason isEqual:@"Pre-trade checkpoint restored"]){[self notice:reason message:@"Back out of the cable club. Your automatic battery backup is also kept in ManicTradeBackups."];return;}
-    if(MT_phase()==MT_OFF){[self cleanup];return;}
-    _localDone=YES;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
-    if(!_partner){[self cleanup];return;}[self tick:nil];
+    if(MT_phase()==MT_OFF||[reason isEqual:@"Link cancelled"]){[self cleanup];return;}
+    if([reason isEqual:@"Link completed"]){
+        [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
+        // Allow the final reliable ACK to leave MCSession before disconnecting.
+        NSString *epoch=_epoch;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{if([self->_epoch isEqual:epoch])[self cleanup];});
+    }
 }
 - (void)cleanup {
     _ending=YES;[_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
@@ -194,10 +205,11 @@ static NSString *gameTitle(NSString *code) {
 - (void)session:(MCSession *)session peer:(MCPeerID *)peer didChangeState:(MCSessionState)state {
     dispatch_async(dispatch_get_main_queue(),^{
         if(self->_ending||session!=self->_session||![peer isEqual:self->_partner])return;
-        if(state==MCSessionStateConnected){self->_heard=CACurrentMediaTime();self->_ready=YES;[self control:@"HELLO"];}
+        if(state==MCSessionStateConnected){self->_heard=CACurrentMediaTime();if(MT_phase()==MT_WAITING)self->_ready=YES;[self control:@"HELLO"];if(self->_ready&&MT_phase()==MT_SUSPENDED)MT_resume();}
         else if(state==MCSessionStateNotConnected){
             if(MT_phase()==MT_WAITING){self->_partner=nil;self->_partnerMeta=nil;[self finder];}
-            else [self halt:@"The player disconnected. Keep both apps alive and reconnect to resume, or restore the pre-trade checkpoint."];
+            else if(MT_peer_disconnected()){resumeFrontend();}
+            else [self halt:@"The player disconnected. Keep both apps alive and reconnect to resume, or restore the pre-link checkpoint."];
         }
     });
 }
@@ -208,7 +220,9 @@ static NSString *gameTitle(NSString *code) {
         if(data.length==MT_PACKET_SIZE&&!memcmp(data.bytes,"MTR1",4)){
             uint8_t ack[MT_PACKET_SIZE];int result=MT_receive_packet(data.bytes,data.length,ack);
             if(result<0){self->_fatal=YES;[self halt:@"An incompatible or stale packet was rejected. Restore the pre-trade checkpoint."];return;}
-            if(result<2){NSError *error;[self->_session sendData:[NSData dataWithBytes:ack length:sizeof(ack)] toPeers:@[peer] withMode:MCSessionSendDataReliable error:&error];}return;
+            if(result<2){NSError *error;[self->_session sendData:[NSData dataWithBytes:ack length:sizeof(ack)] toPeers:@[peer] withMode:MCSessionSendDataReliable error:&error];}
+            if(MT_phase()==MT_SUSPENDED&&self->_lastPhase!=MT_SUSPENDED){self->_lastPhase=MT_SUSPENDED;[self halt:@"The other game paused. Return to both games and reconnect."];}
+            [self tick:nil];return;
         }
         if(data.length>1024){self->_fatal=YES;[self halt:@"Invalid trade message. Restore the pre-trade checkpoint."];return;}
         NSDictionary *meta=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
@@ -216,25 +230,24 @@ static NSString *gameTitle(NSString *code) {
         NSString *command=meta[@"MT"];
         if([command isEqual:@"HELLO"]){
             self->_peerReady=YES;if(!self->_ready)return;
-            NSData *other=unhex(meta[@"room"]);BOOL first=MT_phase()==MT_WAITING,resuming=MT_phase()==MT_SUSPENDED;
+            NSData *other=unhex(meta[@"room"]);BOOL first=MT_phase()==MT_WAITING;
+            if(!first){if(MT_phase()==MT_SUSPENDED)MT_resume();return;}
             if(first){BOOL parent=memcmp(self->_room.bytes,other.bytes,16)<0;NSData *sessionID=parent?self->_room:other;MT_connect(parent?0:1,sessionID.bytes);}
-            else if(MT_phase()==MT_SUSPENDED)MT_resume();
             resumeFrontend();
             [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
             self->_cursor=0;self->_lastResend=CACurrentMediaTime();
-            if(first||resuming)[self control:@"HELLO"];
-        }else if([command isEqual:@"PAUSE"]){MT_suspend();self->_ready=self->_peerReady=NO;[self halt:@"The other game paused. Return to both games and reconnect."];}
-        else if([command isEqual:@"DONE"]){self->_remoteDone=YES;[self tick:nil];}
+            if(first)[self control:@"HELLO"];
+        }
         else if(![command isEqual:@"PING"]){self->_fatal=YES;[self halt:@"Unknown trade message. Restore the pre-trade checkpoint."];}
     });
 }
 - (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didReceiveInvitationFromPeer:(MCPeerID *)peer withContext:(NSData *)context invitationHandler:(void (^)(BOOL,MCSession *))handler {
     dispatch_async(dispatch_get_main_queue(),^{
         NSDictionary *meta=context.length&&context.length<=1024?[NSJSONSerialization JSONObjectWithData:context options:0 error:nil]:nil;
-        if(self->_ending||self->_fatal||![self valid:meta]||(self->_partner&&![peer isEqual:self->_partner])){handler(NO,nil);return;}
+        if(advertiser!=self->_advertiser||self->_ending||self->_fatal||MT_finishing()||![self valid:meta]||(self->_partner&&![peer isEqual:self->_partner])){handler(NO,nil);return;}
         if(self->_partner){handler(YES,self->_session);return;} // Same approved peer only.
         self->_partner=peer;self->_partnerMeta=meta;
-        UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby trade" message:[NSString stringWithFormat:@"Trade with %@ playing %@?",peer.displayName,gameTitle(meta[@"code"])] preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby player" message:[NSString stringWithFormat:@"Link with %@ playing %@?",peer.displayName,gameTitle(meta[@"code"])] preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"Decline" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){self->_partner=nil;self->_partnerMeta=nil;handler(NO,nil);[self finder];}]];
         [a addAction:[UIAlertAction actionWithTitle:@"Accept" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[self dismissDialog];handler(YES,self->_session);}]];[self show:a];
     });
@@ -243,7 +256,7 @@ static NSString *gameTitle(NSString *code) {
     dispatch_async(dispatch_get_main_queue(),^{if(browser==self->_browser&&[self valid:info]){self->_peers[peer]=info;[self finder];}});
 }
 - (void)browser:(MCNearbyServiceBrowser *)browser lostPeer:(MCPeerID *)peer {
-    dispatch_async(dispatch_get_main_queue(),^{[self->_peers removeObjectForKey:peer];[self finder];});
+    dispatch_async(dispatch_get_main_queue(),^{if(browser!=self->_browser)return;[self->_peers removeObjectForKey:peer];[self finder];});
 }
 - (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didNotStartAdvertisingPeer:(NSError *)error {dispatch_async(dispatch_get_main_queue(),^{if(advertiser!=self->_advertiser)return;MT_cancel();[self cleanup];[self notice:@"Nearby trading unavailable" message:@"Allow Local Network access for Manic in iOS Settings, then enter the cable club again."];});}
 - (void)browser:(MCNearbyServiceBrowser *)browser didNotStartBrowsingForPeers:(NSError *)error { dispatch_async(dispatch_get_main_queue(),^{if(browser!=self->_browser)return;[self advertiser:self->_advertiser didNotStartAdvertisingPeer:error];}); }
@@ -255,19 +268,44 @@ static NSString *gameTitle(NSString *code) {
 static void snapshot(const uint8_t *battery,const uint8_t *state,size_t size) {
     NSData *b=[NSData dataWithBytes:battery length:MT_SAVE_SIZE],*s=[NSData dataWithBytes:state length:size];
     NSString *path=[NSString stringWithUTF8String:MT_path()];NSString *code=[[NSString alloc] initWithBytes:MT_code() length:4 encoding:NSASCIIStringEncoding];
-    dispatch_async(dispatch_get_main_queue(),^{[[ManicTrade shared] checkpoint:b state:s path:path code:code];});
+    uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] checkpoint:b state:s path:path code:code];});
 }
-static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];dispatch_async(dispatch_get_main_queue(),^{[[ManicTrade shared] ended:s];});}
-static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];dispatch_async(dispatch_get_main_queue(),^{
+static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] ended:s];});}
+static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
+    if(epoch!=MT_epoch())return;
+    if(MT_local_closed()){[[ManicTrade shared] notice:@"Save needs attention" message:s];return;}
     if(MT_phase()==MT_CANCELLED){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Trading stopped" message:s];}
     else [[ManicTrade shared] halt:s];
 });}
+static int persist(const uint8_t *battery,const uint8_t *state,size_t size) {
+    @autoreleasepool {
+        // Called from retro_run on the existing core thread. Obtain the actual
+        // active battery path from the frontend, not from a guessed ROM name.
+        struct MTSaveList *(*files)(void)=(void *)dlsym(RTLD_DEFAULT,"savefile_ptr_get");
+        struct MTSaveList *list=files?files():NULL;NSString *path=nil;
+        if(list&&list->elems&&list->size<=16&&list->size<=list->cap)
+            for(size_t i=0;i<list->size;i++)if(list->elems[i].attr.i==0&&list->elems[i].data){
+                if(path)return 0;path=[NSString stringWithUTF8String:list->elems[i].data];
+            }
+        NSData *data=[NSData dataWithBytes:battery length:MT_SAVE_SIZE];
+        NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        NSURL *dir=[[documents URLByAppendingPathComponent:@"ManicTradeBackups" isDirectory:YES] URLByAppendingPathComponent:[@"completed-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+        NSError *error;BOOL backup=[NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:&error];
+        backup=backup&&[data writeToURL:[dir URLByAppendingPathComponent:@"current.sav"] options:NSDataWritingAtomic error:&error];
+        backup=backup&&[[NSData dataWithBytes:state length:size] writeToURL:[dir URLByAppendingPathComponent:@"post-link.gpspstate"] options:NSDataWritingAtomic error:&error];
+        // Preserve a post-link copy even if the frontend ABI/path is unavailable.
+        if(!path.isAbsolutePath||![path.pathExtension.lowercaseString isEqual:@"sav"])return 0;
+        BOOL saved=[data writeToFile:path options:NSDataWritingAtomic error:&error];
+        saved=saved&&[[NSData dataWithContentsOfFile:path] isEqualToData:data];
+        return backup&&saved;
+    }
+}
 static void (*originalPause)(id,SEL);
 static void tradePause(id bridge,SEL selector) {
     BOOL linked=MT_phase()==MT_LINKED;
     if(linked)MT_suspend(); // Suspend before the frontend stops issuing frames.
     originalPause(bridge,selector);
-    if(linked)dispatch_async(dispatch_get_main_queue(),^{[[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];});
+    uint64_t epoch=MT_epoch();if(linked)dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];});
 }
 __attribute__((constructor)) static void install_trade(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MGLInjectTrade"] boolValue])return;
@@ -279,5 +317,5 @@ __attribute__((constructor)) static void install_trade(void) {
     // Use Manic's existing gpSP selection. Changing only the loaded dylib would
     // mislabel new save states as mGBA in the frontend's persisted metadata.
     // Core selection happens once at launch; pairing never swaps/restarts cores.
-    MT_install(snapshot,stopped,failure);MT_enable(1);
+    MT_install(snapshot,stopped,failure);MT_set_persist(persist);MT_enable(1);
 }

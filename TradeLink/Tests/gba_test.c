@@ -44,7 +44,8 @@ int main(void){
     serial_set_irq_cycles(0);write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_siocnt(0x6083);assert(serial_get_irq_cycles()==5242);
     assert(!update_serial(5241));assert(update_serial(1));assert(!(read_ioreg(REG_SIOCNT)&0x80));
     MT_suspend();unsigned cyc=serial_get_irq_cycles();retro_run();assert(serial_get_irq_cycles()==cyc);
-    MT_resume();retro_run();MT_suspend();MT_restore();retro_run();assert(MT_phase()==MT_CANCELLED);
+    MT_resume();assert(MT_phase()==MT_SUSPENDED); // Requires the other phone's READY.
+    MT_restore();retro_run();assert(MT_phase()==MT_CANCELLED);
     retro_unload_game();retro_deinit();unlink(path);
     puts("PASS: real gpSP core boots legal GBA program, preserves video/audio, detects Gen3 serial activity, captures checkpoint, blocks pairing clocks, sets link role, and executes multiplayer serial timing/IRQ + recovery");
 }

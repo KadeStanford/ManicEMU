@@ -7,11 +7,13 @@ import socket
 import subprocess
 import sys
 import time
+import tempfile
+from pathlib import Path
 
 
 class Peer:
-    def __init__(self, role):
-        self.proc = subprocess.Popen([sys.argv[1], str(role)], stdin=subprocess.PIPE,
+    def __init__(self, role, save=None):
+        self.proc = subprocess.Popen([sys.argv[1], str(role)] + ([str(save)] if save else []), stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True, bufsize=1)
         self.pending = []
         self.acks = []
@@ -35,6 +37,11 @@ class Peer:
                 self.reg = [int(v, 16) for v in words[1:5]]
                 self.phase = int(words[6])
                 self.rx = int(words[10])
+                self.mode = int(words[12])
+                self.sram = int(words[14])
+                self.flushes = int(words[16])
+            elif line.startswith('EXPECTED '):
+                self.expected = int(line.split()[1])
 
     def command(self, text):
         self.proc.stdin.write(text + '\n')
@@ -84,6 +91,109 @@ def relay(source, dest, duplicate=False):
             source.command('packet ' + wire(ack).hex())
 
 
+def settle(master, slave):
+    for _ in range(4):
+        relay(master, slave, True)
+        relay(slave, master, True)
+
+
+def handshake(master, slave):
+    relay(master, slave, True)
+    slave.command('slave b9a0 280065')
+    relay(slave, master)
+    master.command('master b9a0')
+    relay(master, slave)
+    master.command('master 8fff')
+    relay(master, slave)
+    slave.command('slave b9a0 280065')
+    relay(slave, master)
+
+
+def exchange(master, slave, a, b):
+    master.command('master 0')
+    for word in a: master.command(f'master {word:x}')
+    relay(master, slave, True)
+    slave.command('slave 0 28673')
+    observed=[]
+    for word in b:
+        slave.command(f'slave {word:x} 28673')
+        observed.append(slave.reg[0])
+    assert observed == a, (observed, a)
+    relay(slave, master, True)
+    master.command('master 0')
+    observed=[]
+    for _ in range(8):
+        master.command('master 0')
+        observed.append(master.reg[1])
+    assert observed == b, (observed, b)
+    relay(master, slave)
+
+
+def close(peer):
+    peer.command('quit')
+    assert peer.proc.wait(timeout=10)==0
+
+
+def lifecycle():
+    # Protocol fixtures use real IO/engine packets. They do not contain Pokemon
+    # characters, parties, battle AI, save-sector checksums or game assets.
+    for mode, order in [(0x1111,'master'),(0x2233,'slave'),(0x2244,'both')]:
+        with tempfile.TemporaryDirectory() as directory:
+            paths=[Path(directory)/f'{i}.sav' for i in range(2)]
+            m,s=Peer(0,paths[0]),Peer(1,paths[1])
+            try:
+                handshake(m,s)
+                # Identify Trade/Single/Double through actual LINKCMD, then
+                # forward many block/turn packets, finish/forfeit close unchanged.
+                exchange(m,s,[0x2222,mode,0,0,0,0,0,0],[0x2222,mode,0,0,0,0,0,0])
+                assert m.mode==s.mode=={0x1111:1,0x2233:2,0x2244:3}[mode]
+                for turn in range(24):
+                    exchange(m,s,[0x8888]+[(turn*8+i)&0xffff for i in range(7)],
+                             [0x8888]+[(0x8000+turn*8+i)&0xffff for i in range(7)])
+                for _ in range(3):
+                    m.command('pause');settle(m,s)
+                    assert m.phase==s.phase==4
+                    m.command('resume');settle(m,s)
+                    assert m.phase==s.phase==4, 'one-sided reconnect ran game'
+                    s.command('resume');settle(m,s)
+                    assert m.phase==s.phase==3
+                exchange(m,s,[0x5fff,0,0,0,0,0,0,0],[0x5fff,0,0,0,0,0,0,0])
+                for peer in (m,s):peer.command('mutate')
+                first,second=(s,m) if order=='slave' else (m,s)
+                first.command('leave')
+                if order!='both':
+                    settle(m,s)
+                    assert first.phase==second.phase==8
+                    first.command('frame');assert first.flushes==1
+                second.command('leave');settle(m,s)
+                for peer in (m,s):
+                    peer.command('frame');assert peer.phase==1 and peer.flushes==1
+                    peer.command('disconnected');assert peer.expected==1
+                    peer.command('resume');peer.command('checksave');assert peer.phase==1
+                for path in paths:assert len(path.read_bytes())==131072 and path.read_bytes()[0]==0x99
+            finally:
+                close(m);close(s)
+            # New processes/restarted cores import the persisted changed battery.
+            for role,path in enumerate(paths):
+                peer=Peer(role,path)
+                try:assert peer.sram==0x99
+                finally:close(peer)
+    # A disconnect during battle is not a CLOSE or a successful completion.
+    m,s=Peer(0),Peer(1)
+    try:
+        handshake(m,s);exchange(m,s,[0x2222,0x2233,0,0,0,0,0,0],[0x2222,0x2233,0,0,0,0,0,0])
+        for peer in (m,s):
+            peer.command('mutate');peer.command('disconnected');assert peer.expected==0
+            peer.command('pause');assert peer.phase==4 and peer.flushes==0
+        settle(m,s)
+        for peer in (m,s):peer.command('restore');assert peer.sram==0x45 and peer.phase==6
+    finally:close(m);close(s)
+    print('PASS: real-core trade/single/double command + 24 block/turn frames, '
+          'three bilateral reconnect rounds, parent/child/simultaneous IRQ-disable exits, '
+          'no rollback/rejoin after ending, persisted SRAM in new processes, '
+          'battle disconnect retains explicit checkpoint recovery')
+
+
 peers = []
 try:
     master, slave = Peer(0), Peer(1)
@@ -123,6 +233,11 @@ try:
     time.sleep(0.08)
     master.command('resume')
     slave.command('resume')
+    # PAUSE and both READY rounds travel in the same ordered stream as serial.
+    for _ in range(4):
+        relay(master, slave, True)
+        relay(slave, master, True)
+    assert master.phase == slave.phase == 3
     relay(master, slave, True)  # Retained, unacknowledged frames after reconnect.
     slave.command('slave 0 28673')
     observed = []
@@ -151,3 +266,5 @@ finally:
             peer.proc.stdin.write('quit\n')
             peer.proc.stdin.flush()
         assert peer.proc.wait(timeout=10) == 0, 'core process failed on exit'
+
+lifecycle()
