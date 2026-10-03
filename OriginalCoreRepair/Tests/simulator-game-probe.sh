@@ -46,10 +46,10 @@ PLIST
 codesign --force --sign - "$app/game-probe-core.dylib"
 codesign --force --sign - "$app"
 device="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
-trap 'xcrun simctl uninstall "$device" org.manicemu.game-probe >/dev/null 2>&1 || true; xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
-xcrun simctl install "$device" "$app"
+trap 'python3 run_bounded.py 20 xcrun simctl uninstall "$device" org.manicemu.game-probe >/dev/null 2>&1 || true; python3 run_bounded.py 20 xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
+python3 run_bounded.py 120 xcrun simctl boot "$device"
+python3 run_bounded.py 180 xcrun simctl bootstatus "$device" -b
+python3 run_bounded.py 120 xcrun simctl install "$device" "$app"
 container="$(xcrun simctl get_app_container "$device" org.manicemu.game-probe data)"
 mkdir -p "$container/Documents"
 if [[ "${1:-}" == '--self-test' ]]; then
@@ -90,7 +90,7 @@ PY
       cp -R "$resources/." "$container/Documents/${prefix}sdmc/Vapecord/"
     fi
   done
-  xcrun simctl launch "$device" org.manicemu.game-probe
+  python3 run_bounded.py 180 xcrun simctl launch "$device" org.manicemu.game-probe
   for attempt in {1..150}; do
     [[ -s "$container/Documents/fatal-signal.bin" ]] && break
     if [[ -s "$container/Documents/game-probe.json" ]] && python3 - "$container/Documents/game-probe.json" <<'PY'

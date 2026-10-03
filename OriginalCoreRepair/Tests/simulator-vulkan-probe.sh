@@ -52,12 +52,12 @@ PLIST
 codesign --force --sign - "$app/moltenvk-probe.dylib"
 codesign --force --sign - "$app"
 device="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
-trap 'xcrun simctl uninstall "$device" org.manicemu.vulkan-probe >/dev/null 2>&1 || true; xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
-xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
-xcrun simctl install "$device" "$app"
+trap 'python3 run_bounded.py 20 xcrun simctl uninstall "$device" org.manicemu.vulkan-probe >/dev/null 2>&1 || true; python3 run_bounded.py 20 xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
+python3 run_bounded.py 120 xcrun simctl boot "$device"
+python3 run_bounded.py 180 xcrun simctl bootstatus "$device" -b
+python3 run_bounded.py 120 xcrun simctl install "$device" "$app"
 container="$(xcrun simctl get_app_container "$device" org.manicemu.vulkan-probe data)"
-xcrun simctl launch "$device" org.manicemu.vulkan-probe
+python3 run_bounded.py 180 xcrun simctl launch "$device" org.manicemu.vulkan-probe
 for attempt in {1..30}; do
   [[ -s "$container/Documents/vulkan-fatal.bin" ]] && break
   if [[ -s "$container/Documents/vulkan-preflight.json" ]] && python3 - "$container/Documents/vulkan-preflight.json" <<'PY'
@@ -69,7 +69,7 @@ PY
 done
 cp "$container/Documents/vulkan-preflight.json" "$build/vulkan-preflight.json"
 cp "$container/Documents/vulkan-fatal.bin" "$build/vulkan-fatal.bin"
-xcrun simctl spawn "$device" log show --last 2m --style compact --predicate 'process == "VulkanProbe"' > "$build/vulkan-preflight-system.log" 2>/dev/null || true
+python3 run_bounded.py 20 xcrun simctl spawn "$device" log show --last 2m --style compact --predicate 'process == "VulkanProbe"' > "$build/vulkan-preflight-system.log" 2>/dev/null || true
 python3 - "$build/vulkan-preflight.json" "$build/vulkan-fatal.bin" <<'PY'
 import json,sys,pathlib,struct
 p=pathlib.Path(sys.argv[1]);r=json.loads(p.read_text());b=pathlib.Path(sys.argv[2]).read_bytes()
