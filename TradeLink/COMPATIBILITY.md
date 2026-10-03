@@ -25,7 +25,7 @@ alone does not validate another locale, cartridge revision or ROM hack.
 | Emerald / Emerald | Yes, subject to game rules | Automated matrix | Not run |
 | Emerald / FireRed | Yes, subject to game rules | Automated matrix | Not run |
 | Emerald / LeafGreen | Yes, subject to game rules | Automated matrix | Not run |
-| FireRed / FireRed | Yes, subject to game rules | Automated matrix + dedicated regressions | v0.5 user: trade saved and room exit quiet; battle worked first after loading. Sequential reentry and result pause were faulty. v0.6 pending. Battle mode/revision unspecified. |
+| FireRed / FireRed | Yes, subject to game rules | Automated matrix + dedicated regressions | v0.6 user confirms everything works fine in the reported flow. v0.7 battle speed/audio pending. Battle mode/revision unspecified. |
 | FireRed / LeafGreen | Yes, subject to game rules | Automated matrix | Not run |
 | LeafGreen / LeafGreen | Yes, subject to game rules | Automated matrix | Not run |
 

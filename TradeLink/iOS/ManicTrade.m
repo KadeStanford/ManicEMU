@@ -9,8 +9,9 @@
 #include "TradeCore.h"
 #include "FrontendSave.h"
 #include <dlfcn.h>
+#include <stdatomic.h>
 
-static NSString *const TradeProtocol = @"g3-fc4afeb-mtr5";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr6";
 static NSString *const Service = @"manic-trade";
 static void resumeFrontend(void) {
     Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
@@ -50,7 +51,16 @@ static NSString *gameTitle(NSString *code) {
 - (void)halt:(NSString *)reason;
 - (void)frontendPaused;
 - (void)frontendResumed;
+- (void)tick:(NSTimer *)timer;
 @end
+static atomic_bool battleWakeQueued;
+static void battleWake(void) {
+    if(atomic_exchange(&battleWakeQueued,true))return;
+    uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
+        atomic_store(&battleWakeQueued,false);
+        if(epoch==MT_epoch())[[ManicTrade shared] tick:nil];
+    });
+}
 @implementation ManicTrade {
     MCSession *_session;
     MCNearbyServiceAdvertiser *_advertiser;
@@ -64,7 +74,7 @@ static NSString *gameTitle(NSString *code) {
     BOOL _uiBusy;
     NSTimer *_timer;
     uint64_t _cursor;
-    CFTimeInterval _heard,_lastResend;
+    CFTimeInterval _heard,_lastResend,_lastPing;
     BOOL _ready,_peerReady,_ending,_fatal;
     enum MTPhase _lastPhase;
     NSString *_epoch;
@@ -98,7 +108,7 @@ static NSString *gameTitle(NSString *code) {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;_coreEpoch=MT_epoch();
     _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;_saveWarning=nil;
     _recoveryDialog=nil;_recoveryFatal=NO;_frontendPausedForLink=NO;
-    _heard=_lastResend=CACurrentMediaTime();
+    _heard=_lastResend=_lastPing=CACurrentMediaTime();
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -239,7 +249,7 @@ static NSString *gameTitle(NSString *code) {
             NSError *error;if(![_session sendData:[NSData dataWithBytes:bytes length:sizeof(bytes)] toPeers:@[_partner] withMode:MCSessionSendDataReliable error:&error]){[self halt:@"The connection stopped. Your pre-trade backups are safe."];return;}_cursor=seq;
         }
     }
-    static unsigned count=0;if(++count%40==0)[self control:@"PING"];
+    if(now-_lastPing>=1){_lastPing=now;[self control:@"PING"];}
 }
 - (void)ended:(NSString *)reason {
     [self writeDiagnostics];
@@ -387,5 +397,5 @@ __attribute__((constructor)) static void install_trade(void) {
     // Use Manic's existing gpSP selection. Changing only the loaded dylib would
     // mislabel new save states as mGBA in the frontend's persisted metadata.
     // Core selection happens once at launch; pairing never swaps/restarts cores.
-    MT_install(snapshot,stopped,failure);MT_set_persist(persist);MT_enable(1);
+    MT_install(snapshot,stopped,failure);MT_set_persist(persist);MT_set_battle_wake(battleWake);MT_enable(1);
 }

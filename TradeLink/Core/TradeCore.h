@@ -9,6 +9,8 @@
 #define MT_PACKET_SIZE 56
 #define MT_QUEUE_SIZE 512
 #define MT_CLOSE_QUIET_FRAMES 180 // ~3 seconds at normal GBA speed; reopening cancels finalization.
+#define MT_BATTLE_RATE 2
+#define MT_BATTLE_MAX_LEAD 4 // Emulated frames, never an unlimited fast-forward queue.
 enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN, MT_CLOSING, MT_HELD };
 enum MTMode { MT_MODE_UNKNOWN, MT_MODE_TRADE, MT_MODE_SINGLE_BATTLE, MT_MODE_DOUBLE_BATTLE };
 enum MTTitle { MT_TITLE_UNKNOWN, MT_TITLE_RUBY, MT_TITLE_SAPPHIRE, MT_TITLE_EMERALD, MT_TITLE_FIRERED, MT_TITLE_LEAFGREEN };
@@ -25,8 +27,15 @@ typedef struct {
 typedef void (*MTSnapshot)(const uint8_t *battery, const uint8_t *state, size_t state_size);
 typedef void (*MTNotice)(const char *message);
 typedef int (*MTPersist)(const uint8_t *battery, const uint8_t *state, size_t state_size);
+typedef void (*MTBattleWake)(void); // Schedules transport work; called outside the core mutex.
 void MT_install(MTSnapshot snapshot, MTNotice stopped, MTNotice error);
 void MT_set_persist(MTPersist persist); // Core thread: current SRAM + post-link backup, never the old checkpoint.
+void MT_set_battle_wake(MTBattleWake wake);
+int MT_battle_transport(void); // Both games identify the active 2211 battle subconnection, not the room.
+unsigned MT_battle_budget(void); // Core thread: negotiated 0..2 frames this frontend call.
+int MT_battle_accelerated(void);
+void MT_battle_did_frame(void); // One complete actual GBA frame, including all IRQs/timers.
+void MT_battle_clocks(uint64_t *local, uint64_t *peer); // Read-only test/diagnostic counters.
 void MT_enable(int enabled);
 int MT_game_code(const uint8_t code[4]);
 enum MTTitle MT_title(const uint8_t code[4]); // Cartridge header only; no game-memory addresses or save patches.

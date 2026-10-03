@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 
-enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6, QUIET=7, HOLD=8, RELEASE=9 };
+enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6, QUIET=7, HOLD=8, RELEASE=9, SPEED=10, PACE=11 };
 typedef struct { uint64_t sequence; unsigned type; uint8_t data[MT_DATA_SIZE]; } Message;
 static struct {
     enum MTPhase phase;
@@ -18,6 +18,9 @@ static struct {
     int local_hold, remote_hold;
     uint64_t hold_generation, peer_hold_generation, hold_release_sequence;
     unsigned link_type;
+    unsigned local_link_type, peer_link_type;
+    uint64_t speed_offer, peer_speed_generation, battle_frames, peer_battle_frames;
+    MTBattleWake battle_wake;
     unsigned quiet;
     uint64_t frames, serial_generation, peer_serial_generation, diagnostic_revision;
     char diagnostics[128][176];
@@ -47,7 +50,7 @@ static void diagnostic(const char *event,unsigned detail) { // Caller holds lock
 size_t MT_diagnostics(char *buffer,size_t capacity,uint64_t *revision) {
     size_t used=0;pthread_mutex_lock(&lock);if(revision)*revision=g.diagnostic_revision;
     if(buffer&&capacity){
-        int n=snprintf(buffer,capacity,"Manic GBA link v0.6; game=%.4s; epoch=%llu; metadata only\n",g.code,(unsigned long long)g.epoch);
+        int n=snprintf(buffer,capacity,"Manic GBA link v0.7; game=%.4s; epoch=%llu; battle-clock=%llu/%llu; metadata only\n",g.code,(unsigned long long)g.epoch,(unsigned long long)g.battle_frames,(unsigned long long)g.peer_battle_frames);
         used=n>0?(size_t)n:0;if(used>=capacity)used=capacity-1;
         for(size_t i=0;i<g.diagnostic_count;i++){
             const char *line=g.diagnostics[(g.diagnostic_head+i)%128];size_t size=strlen(line);
@@ -61,7 +64,7 @@ void MT_serial_registers(uint16_t siocnt,uint16_t rcnt) {
 static uint64_t read64(const uint8_t *p) { uint64_t v=0; for(unsigned i=0;i<8;i++)v=(v<<8)|p[i];return v; }
 static void write64(uint8_t *p,uint64_t v) { for(int i=7;i>=0;i--){p[i]=v;v>>=8;} }
 static void envelope(uint8_t *out,unsigned type,uint64_t seq) {
-    memset(out,0,MT_PACKET_SIZE);memcpy(out,"MTR1",4);out[4]=5;out[5]=type;
+    memset(out,0,MT_PACKET_SIZE);memcpy(out,"MTR1",4);out[4]=6;out[5]=type;
     memcpy(out+8,g.session,16);write64(out+24,seq);
 }
 static int valid_data(const uint8_t *p) {
@@ -79,11 +82,54 @@ static void clear_session(void) {
     g.room_exit_sent=g.room_exit_received=0;g.link_type=0;
     g.local_hold=g.remote_hold=0;g.hold_generation=g.peer_hold_generation=g.hold_release_sequence=0;
     g.serial_generation=g.peer_serial_generation=0;
+    g.local_link_type=g.peer_link_type=0;
+    g.speed_offer=g.peer_speed_generation=g.battle_frames=g.peer_battle_frames=0;
 }
 static int queue(unsigned type,const void *data) { // Caller holds lock; controls share the serial sequence.
     if(g.out_count==MT_QUEUE_SIZE||g.tx==UINT64_MAX)return 0;
     Message *m=&g.out[(g.out_head+g.out_count)%MT_QUEUE_SIZE];m->sequence=++g.tx;m->type=type;
     memset(m->data,0,sizeof(m->data));if(data)memcpy(m->data,data,MT_DATA_SIZE);g.out_count++;return 1;
+}
+static void reset_battle(void) { // Caller holds lock. A new hardware/type lifecycle needs fresh agreement.
+    g.local_link_type=g.peer_link_type=0;
+    g.speed_offer=g.peer_speed_generation=g.battle_frames=g.peer_battle_frames=0;
+}
+static int battle_transport_locked(void) {
+    return g.active&&g.phase==MT_LINKED&&!g.leaving&&!g.remote_left&&g.serial_on&&g.peer_serial_on&&
+        !g.close_sent&&!g.close_received&&g.local_link_type==0x2211&&g.peer_link_type==0x2211&&
+        (g.mode==MT_MODE_SINGLE_BATTLE||g.mode==MT_MODE_DOUBLE_BATTLE);
+}
+static int accelerated_locked(void) {
+    return battle_transport_locked()&&g.speed_offer&&g.acked>=g.speed_offer&&
+        g.peer_speed_generation==g.peer_serial_generation+1;
+}
+void MT_set_battle_wake(MTBattleWake wake) { pthread_mutex_lock(&lock);g.battle_wake=wake;pthread_mutex_unlock(&lock); }
+int MT_battle_transport(void) { int v;pthread_mutex_lock(&lock);v=battle_transport_locked();pthread_mutex_unlock(&lock);return v; }
+int MT_battle_accelerated(void) { int v;pthread_mutex_lock(&lock);v=accelerated_locked();pthread_mutex_unlock(&lock);return v; }
+void MT_battle_clocks(uint64_t *local,uint64_t *peer) { pthread_mutex_lock(&lock);if(local)*local=g.battle_frames;if(peer)*peer=g.peer_battle_frames;pthread_mutex_unlock(&lock); }
+unsigned MT_battle_budget(void) {
+    unsigned budget=1;int ok=1;MTBattleWake wake=NULL;pthread_mutex_lock(&lock);
+    if(g.active&&(g.phase==MT_WAITING||g.phase==MT_SUSPENDED||g.phase==MT_HELD||g.phase==MT_RESTORE||g.phase==MT_BROKEN))budget=0;
+    if(battle_transport_locked()){
+        if(!g.speed_offer){
+            uint8_t data[24]={0};write64(data,g.serial_generation+1);write64(data+8,MT_BATTLE_RATE);
+            ok=queue(SPEED,data);if(ok){g.speed_offer=g.tx;diagnostic("battle-speed-offer",MT_BATTLE_RATE);wake=g.battle_wake;}
+        }
+        if(accelerated_locked()){
+            uint64_t limit=g.peer_battle_frames+MT_BATTLE_MAX_LEAD;
+            uint64_t credit=g.battle_frames<limit?limit-g.battle_frames:0;
+            budget=credit<MT_BATTLE_RATE?(unsigned)credit:MT_BATTLE_RATE;
+        }
+    }
+    pthread_mutex_unlock(&lock);if(!ok)MT_failure("Battle pacing queue filled; reconnect or restore the checkpoint.");if(wake)wake();return ok?budget:0;
+}
+void MT_battle_did_frame(void) {
+    int ok=1;MTBattleWake wake=NULL;pthread_mutex_lock(&lock);
+    if(battle_transport_locked()&&g.speed_offer){
+        uint8_t data[24]={0};write64(data,g.serial_generation+1);write64(data+8,++g.battle_frames);
+        ok=queue(PACE,data);wake=g.battle_wake;
+    }
+    pthread_mutex_unlock(&lock);if(!ok)MT_failure("Battle pacing queue filled; reconnect or restore the checkpoint.");if(wake)wake();
 }
 static void fault(const char *message) {
     MTNotice fn;pthread_mutex_lock(&lock);g.phase=g.captured?MT_BROKEN:MT_CANCELLED;diagnostic("fault",0);fn=g.error;pthread_mutex_unlock(&lock);if(fn)fn(message);
@@ -120,6 +166,7 @@ void MT_request(void) { pthread_mutex_lock(&lock);if(g.active&&g.phase==MT_IDLE)
 void MT_serial_state(int enabled) {
     int ok=1;enabled=!!enabled;pthread_mutex_lock(&lock);
     if(g.serial_on!=enabled){
+        reset_battle();
         g.serial_on=enabled;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;
         if(enabled){g.close_sent=g.close_received=0;g.room_exit_sent=g.room_exit_received=0;}
         diagnostic(enabled?"serial-on":"serial-off",0);
@@ -262,9 +309,11 @@ static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/blo
         (g.link_type==0x1111||g.link_type==0x2233||g.link_type==0x2244)){
         if(outgoing)g.room_exit_sent=1;else g.room_exit_received=1;diagnostic(outgoing?"room-exit-key-tx":"room-exit-key-rx",arg);
     }
-    if(cmd==0x5fff){if(outgoing)g.close_sent=1;else g.close_received=1;diagnostic(outgoing?"close-command-tx":"close-command-rx",(unsigned)p[10]<<8|p[11]);}
+    if(cmd==0x5fff){reset_battle();if(outgoing)g.close_sent=1;else g.close_received=1;diagnostic(outgoing?"close-command-tx":"close-command-rx",(unsigned)p[10]<<8|p[11]);}
     if(cmd!=0x2222)return 1;
     unsigned type=(unsigned)p[10]<<8|p[11];
+    if(type!=0x2211)reset_battle();
+    if(outgoing)g.local_link_type=type;else g.peer_link_type=type;
     g.link_type=type;
     diagnostic(outgoing?"link-type-tx":"link-type-rx",type);
     switch(type){case 0x1111:case 0x1122:case 0x1133:case 0x1144:g.mode=MT_MODE_TRADE;break;
@@ -276,9 +325,10 @@ static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/blo
 }
 void MT_send(uint16_t recipient,const void *data,size_t size) {
     (void)recipient;if(!data||size!=MT_DATA_SIZE||!valid_data(data)){fault("Invalid GBA serial packet");return;}
-    int ok=1,supported=1;pthread_mutex_lock(&lock);
+    int ok=1,supported=1;MTBattleWake wake=NULL;pthread_mutex_lock(&lock);
     if((g.phase==MT_LINKED||g.phase==MT_HELD||g.phase==MT_CLOSING)&&!g.leaving){supported=classify(data,1);if(supported)ok=queue(DATA,data);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;}
-    pthread_mutex_unlock(&lock);
+    if(ok&&supported&&battle_transport_locked())wake=g.battle_wake;
+    pthread_mutex_unlock(&lock);if(wake)wake();
     if(!supported)fault("Four-player Multi Battle requires four consoles. Use Single or Double Battle with two phones.");
     else if(!ok)fault("Connection stalled; games paused and pre-link backups retained");
 }
@@ -289,10 +339,11 @@ int MT_next_packet(uint64_t after,uint8_t packet[MT_PACKET_SIZE]) {
 }
 void MT_ack_packet(uint8_t packet[MT_PACKET_SIZE]) { pthread_mutex_lock(&lock);envelope(packet,ACK,g.rx);pthread_mutex_unlock(&lock); }
 int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) {
-    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=5||p[6]||p[7]||p[5]<DATA||p[5]>RELEASE)return -1;
+    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=6||p[6]||p[7]||p[5]<DATA||p[5]>PACE)return -1;
     uint64_t seq=read64(p+24);unsigned type=p[5];int result=0,supported=1;
     if(type==DATA&&!valid_data(p+32))return -1;
-    if(type==SERIAL){if(p[32]>1||!read64(p+40))return -1;for(unsigned i=33;i<56;i++)if((i<40||i>=48)&&p[i])return -1;}
+    if(type==SPEED||type==PACE){if(!read64(p+32)||(type==SPEED&&read64(p+40)!=MT_BATTLE_RATE)||(type==PACE&&!read64(p+40)))return -1;for(unsigned i=48;i<56;i++)if(p[i])return -1;}
+    else if(type==SERIAL){if(p[32]>1||!read64(p+40))return -1;for(unsigned i=33;i<56;i++)if((i<40||i>=48)&&p[i])return -1;}
     else if(type!=DATA){unsigned begin=(type==PAUSE||type==READY||type==QUIET||type==HOLD||type==RELEASE)?40:32;for(unsigned i=begin;i<MT_PACKET_SIZE;i++)if(p[i])return -1;if((type==HOLD||type==RELEASE)&&!read64(p+32))return -1;}
     pthread_mutex_lock(&lock);
     if(!g.captured||memcmp(p+8,g.session,16)){pthread_mutex_unlock(&lock);return -1;}
@@ -309,7 +360,16 @@ int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) 
             if(type==DATA){supported=classify(p+32,0);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;Message *m=&g.in[(g.in_head+g.in_count)%MT_QUEUE_SIZE];m->sequence=seq;m->type=DATA;memcpy(m->data,p+32,MT_DATA_SIZE);g.in_count++;}
             else if(type==CLOSE){g.remote_left=1;g.phase=MT_CLOSING;}
             else if(type==SERIAL){uint64_t generation=read64(p+40);if(generation<=g.peer_serial_generation){pthread_mutex_unlock(&lock);return -1;}
-                g.peer_serial_generation=generation;g.peer_serial_on=p[32];g.quiet=0;g.idle_ready=g.peer_idle_ready=0;if(g.peer_serial_on){g.close_sent=g.close_received=0;g.room_exit_sent=g.room_exit_received=0;}diagnostic("peer-serial",p[32]);}
+                reset_battle();g.peer_serial_generation=generation;g.peer_serial_on=p[32];g.quiet=0;g.idle_ready=g.peer_idle_ready=0;if(g.peer_serial_on){g.close_sent=g.close_received=0;g.room_exit_sent=g.room_exit_received=0;}diagnostic("peer-serial",p[32]);}
+            else if(type==SPEED||type==PACE){
+                uint64_t generation=read64(p+32),value=read64(p+40);
+                if(generation!=g.peer_serial_generation+1){pthread_mutex_unlock(&lock);return -1;}
+                if(type==SPEED){g.peer_speed_generation=generation;g.peer_battle_frames=0;diagnostic("peer-battle-speed",(unsigned)value);}
+                else if(g.peer_speed_generation){if(g.peer_speed_generation!=generation||value<g.peer_battle_frames||value>UINT64_MAX-MT_BATTLE_MAX_LEAD){pthread_mutex_unlock(&lock);return -1;}g.peer_battle_frames=value;}
+                // A local close/type change can invalidate speed while older,
+                // ordered peer PACE controls are still in flight. ACK those;
+                // they cannot restart acceleration or override a pause/close.
+            }
             else if(type==QUIET){
                 // A faster phone cannot finalize while the slower game is still
                 // preparing to reopen. Readiness belongs to this OFF generation.

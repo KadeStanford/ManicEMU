@@ -3,6 +3,7 @@
 #import <MultipeerConnectivity/MultipeerConnectivity.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <QuartzCore/QuartzCore.h>
 #include "TradeCore.h"
 #include "../iOS/FrontendSave.h"
 #include <assert.h>
@@ -34,6 +35,18 @@ static void halt(NSString *reason){((void (*)(id,SEL,id))objc_msgSend)(manager()
 static void call(NSString *method){((void (*)(id,SEL))objc_msgSend)(manager(),NSSelectorFromString(method));}
 static unsigned recovery_presentations,exit_presentations;
 static NSMutableDictionary *report;
+static NSMutableDictionary *latency;
+static CFTimeInterval queued_at,sent_at;
+@interface TestSession : MCSession
+@property(strong,nonatomic) MCPeerID *testPeer;
+@end
+@implementation TestSession
+- (NSArray<MCPeerID *> *)connectedPeers {return self.testPeer?@[self.testPeer]:@[];}
+- (BOOL)sendData:(NSData *)data toPeers:(NSArray<MCPeerID *> *)peers withMode:(MCSessionSendDataMode)mode error:(NSError **)error {
+    if(data.length==MT_PACKET_SIZE&&!memcmp(data.bytes,"MTR1",4)&&!sent_at)sent_at=CACurrentMediaTime();
+    return YES; // Records scheduling only, never claims a radio/peer measurement.
+}
+@end
 @interface TestRoot : UIViewController @end
 @implementation TestRoot
 - (void)presentViewController:(UIViewController *)vc animated:(BOOL)animated completion:(void (^)(void))completion {
@@ -59,13 +72,13 @@ static NSMutableDictionary *report;
         // new alerts on an alert that is still being dismissed.
         Class cls=NSClassFromString(@"ManicTrade");id<MCNearbyServiceBrowserDelegate> manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
         MCNearbyServiceBrowser *browser=object_getIvar(manager,class_getInstanceVariable(cls,"_browser"));
-        NSDictionary *one=@{@"v":@"g3-fc4afeb-mtr5",@"room":@"00000000000000000000000000000001",@"code":@"BPRE"};
-        NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr5",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
+        NSDictionary *one=@{@"v":@"g3-fc4afeb-mtr6",@"room":@"00000000000000000000000000000001",@"code":@"BPRE"};
+        NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr6",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player One"] withDiscoveryInfo:one];
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player Two"] withDiscoveryInfo:two];
         NSArray *otherCodes=@[@"AXVE",@"AXPE",@"BPEE"];
         for(NSUInteger i=0;i<otherCodes.count;i++){
-            NSDictionary *info=@{@"v":@"g3-fc4afeb-mtr5",@"room":[NSString stringWithFormat:@"%032lu",(unsigned long)i+3],@"code":otherCodes[i]};
+            NSDictionary *info=@{@"v":@"g3-fc4afeb-mtr6",@"room":[NSString stringWithFormat:@"%032lu",(unsigned long)i+3],@"code":otherCodes[i]};
             [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"Player %lu",(unsigned long)i+3]] withDiscoveryInfo:info];
         }
     });
@@ -155,6 +168,20 @@ static NSMutableDictionary *report;
         }assert(recovery_presentations==before);
         report[@"battle_result_and_save_frontend_pauses_resume_without_recovery"]=@YES;
         report[@"frontend_resume_does_not_clear_real_disconnect"]=@YES;
+        assert(MT_battle_budget()==1&&!MT_battle_accelerated());report[@"room_keeps_normal_speed"]=@YES;
+        command(0x2222,0x2211);assert(MT_battle_budget()==1);loopback();assert(MT_battle_budget()==2&&MT_battle_accelerated());
+        report[@"battle_speed_requires_bilateral_offer_and_ack"]=@YES;
+        MCPeerID *peer=[[MCPeerID alloc] initWithDisplayName:@"Scheduling fixture"];
+        TestSession *fake=[[TestSession alloc] initWithPeer:[[MCPeerID alloc] initWithDisplayName:@"Local fixture"] securityIdentity:nil encryptionPreference:MCEncryptionRequired];fake.testPeer=peer;
+        [manager() setValue:fake forKey:@"session"];[manager() setValue:peer forKey:@"partner"];
+        [manager() setValue:@(CACurrentMediaTime()) forKey:@"heard"];[manager() setValue:@0 forKey:@"cursor"];
+        NSTimer *poll=[manager() valueForKey:@"timer"];assert(poll);poll.fireDate=[NSDate dateWithTimeIntervalSinceNow:0.2];
+        uint8_t data[24]={'M','P','K','1',0x80,0,0,2,0xbb,0xbb,0,28};queued_at=CACurrentMediaTime();sent_at=0;MT_send(0xffff,data,24);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/10),dispatch_get_main_queue(),^{
+        assert(sent_at>=queued_at&&(sent_at-queued_at)<0.1);
+        report[@"battle_packet_wake_bypasses_poll_timer"]=@YES;
+        latency=[@{@"regular_poll_deliberately_deferred_ms":@200,@"event_driven_queue_to_fake_MC_send_ms":@((sent_at-queued_at)*1000),@"measurement":@"UIKit simulator scheduling to MCSession test override; no physical Wi-Fi measurement"} mutableCopy];
+        loopback();MT_poll_receive();
         halt(@"New battle interruption");id first=[manager() valueForKey:@"_dialog"];
         halt(@"Repeated new interruption");assert(first==[manager() valueForKey:@"_dialog"]);
         MT_failure("Synthetic fatal packet loss");halt(@"Fatal packet loss");id fatal=[manager() valueForKey:@"_dialog"];
@@ -163,11 +190,13 @@ static NSMutableDictionary *report;
         halt(@"Repeated fatal callback");assert(fatal==[manager() valueForKey:@"_dialog"]);
         report[@"new_interruptions_can_recover_and_fatal_errors_escalate"]=@YES;
         call(@"cleanup");MT_unloaded();
+        });
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,12*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         assert(!root.presentedViewController&&root.view.subviews.count==2);
         NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *json=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];assert([json writeToURL:[documents URLByAppendingPathComponent:@"smoke.json"] atomically:YES]);
+        NSData *perf=[NSJSONSerialization dataWithJSONObject:latency options:NSJSONWritingPrettyPrinted error:nil];assert([perf writeToURL:[documents URLByAppendingPathComponent:@"latency.json"] atomically:YES]);
         NSLog(@"PASS: terminal exit, single recovery UI, stale alert cancellation and fresh Colosseum discovery");
     });return YES;
 }

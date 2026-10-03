@@ -7,16 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-static uint8_t rom[1024*1024];
+static uint8_t rom[1024*1024];static uint64_t audio_frames,input_polls,video_calls;
 static bool environment(unsigned cmd,void *data) {
     if(cmd==RETRO_ENVIRONMENT_GET_VARIABLE){struct retro_variable *v=data;v->value=!strcmp(v->key,"gpsp_bios")?"builtin":!strcmp(v->key,"gpsp_boot_mode")?"game":!strcmp(v->key,"gpsp_serial")?"mul_poke":"disabled";return true;}
     if(cmd==RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE){*(bool *)data=false;return true;}
     return cmd==RETRO_ENVIRONMENT_SET_PIXEL_FORMAT||cmd==RETRO_ENVIRONMENT_GET_INPUT_BITMASKS;
 }
-static void video(const void *p,unsigned w,unsigned h,size_t n){(void)p;(void)n;assert(w==240&&h==160);}
+static void video(const void *p,unsigned w,unsigned h,size_t n){(void)p;(void)n;assert(w==240&&h==160);video_calls++;}
 static void sample(int16_t a,int16_t b){(void)a;(void)b;}
-static size_t audio(const int16_t *p,size_t n){(void)p;return n;}
-static void poll(void){}
+static size_t audio(const int16_t *p,size_t n){(void)p;audio_frames+=n;return n;}
+static void poll(void){input_polls++;}
 static int16_t input(unsigned a,unsigned b,unsigned c,unsigned d){(void)a;(void)b;(void)c;(void)d;return 0;}
 static void packet(const char *name,const uint8_t *p){printf("%s ",name);for(unsigned i=0;i<56;i++)printf("%02x",p[i]);puts("");}
 static uint64_t cursor;static uint8_t session_cycle;
@@ -27,7 +27,10 @@ static int persist(const uint8_t *b,const uint8_t *s,size_t n){
 }
 static void report(void){
     uint8_t p[56];while(MT_next_packet(cursor,p)){cursor=0;for(unsigned i=24;i<32;i++)cursor=(cursor<<8)|p[i];packet("PACKET",p);}
-    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu TERMINAL %d\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch(),MT_terminal_exit());puts("END");fflush(stdout);
+    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu TERMINAL %d\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch(),MT_terminal_exit());
+    uint64_t local,peer;MT_battle_clocks(&local,&peer);
+    printf("PERF %u %llu %llu %llu %llu %llu %d\n",frame_counter,(unsigned long long)audio_frames,(unsigned long long)input_polls,(unsigned long long)video_calls,(unsigned long long)local,(unsigned long long)peer,MT_battle_accelerated());
+    puts("END");fflush(stdout);
 }
 int main(int argc,char **argv){
     assert(argc>=2&&argc<=4);unsigned role=(unsigned)atoi(argv[1]);assert(role<2);
@@ -70,7 +73,8 @@ int main(int argc,char **argv){
             assert(role==0);serial_set_irq_cycles(0);write_ioreg(REG_SIOMLT_SEND,word);write_siocnt(0x6083);assert(serial_get_irq_cycles()==5242);assert(update_serial(5242));
         }else if(sscanf(line,"slave %x %u",&word,&cycles)==2){
             assert(role==1);MT_poll_receive();write_ioreg(REG_SIOMLT_SEND,word);assert(update_serial(cycles));
-        }else if(!strncmp(line,"hold",4)){MT_frontend_hold(1);unsigned before=serial_get_irq_cycles();retro_run();assert(MT_phase()==MT_HELD&&before==serial_get_irq_cycles());}
+        }else if(!strncmp(line,"speed",5)){printf("BUDGET %u\n",MT_battle_budget());}
+        else if(!strncmp(line,"hold",4)){MT_frontend_hold(1);unsigned before=serial_get_irq_cycles();retro_run();assert(MT_phase()==MT_HELD&&before==serial_get_irq_cycles());}
         else if(!strncmp(line,"release",7)){MT_frontend_hold(0);}
         else if(!strncmp(line,"pause",5)){MT_suspend();unsigned before=serial_get_irq_cycles();retro_run();assert(MT_phase()==MT_SUSPENDED&&before==serial_get_irq_cycles());}
         else if(!strncmp(line,"resume",6)){MT_resume();}

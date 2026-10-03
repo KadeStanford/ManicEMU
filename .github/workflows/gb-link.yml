@@ -56,4 +56,5 @@ jobs:
           name: GBA-Trade-UI-smoke
           path: |
             TradeLink/build-simulator/smoke.json
+            TradeLink/build-simulator/latency.json
             TradeLink/build-simulator/gba-trade-ui.png

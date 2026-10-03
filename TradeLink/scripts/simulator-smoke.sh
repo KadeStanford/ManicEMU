@@ -36,6 +36,7 @@ xcrun simctl launch "$device" org.manicemu.trade.smoke
 sleep 14
 container="$(xcrun simctl get_app_container "$device" org.manicemu.trade.smoke data)"
 cp "$container/Documents/smoke.json" "$root/build-simulator/smoke.json"
+cp "$container/Documents/latency.json" "$root/build-simulator/latency.json"
 python3 -c "import json; r=json.load(open('$root/build-simulator/smoke.json')); assert all(r.values()); print(r)"
 xcrun simctl io "$device" screenshot "$root/build-simulator/gba-trade-ui.png"
 xcrun simctl terminate "$device" org.manicemu.trade.smoke

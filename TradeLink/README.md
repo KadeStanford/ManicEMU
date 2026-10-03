@@ -5,14 +5,13 @@ session. It targets FireRed, LeafGreen, Ruby, Sapphire and Emerald (game-code
 prefixes BPR, BPG, AXV, AXP and BPE). Original Game Boy Red/Blue are a different
 protocol; the earlier GB experiment is archived under `GBLink`.
 
-The user confirmed a FireRed trade/save and quiet room exit in v0.5, plus a
-battle when it was the first link after loading. Battle after trade did not
-rediscover, and ordinary battle-result/save pauses showed recovery prompts.
-v0.6 fixes completed-session bootstrap interrupts and adds cooperative frontend
-HOLD/RELEASE controls. It also extends the shared cable-room lifecycle to all
-five titles. See [the compatibility and evidence matrix](COMPATIBILITY.md).
-**v0.6 still needs physical two-phone testing.** Synthetic traces exercise real
-gpSP, not Pokemon game logic; they do not establish actual game compatibility.
+The user confirmed v0.6 works in their FireRed flow, after its completed-session
+bootstrap and pause/resume fixes. v0.7 adds negotiated, bounded battle-only
+maximum 2x pacing and event-driven battle packet sending. Trades, rooms and
+normal gameplay keep 1x behavior. See [battle pacing and measurement limits](BATTLE_PACING.md)
+and [the compatibility/evidence matrix](COMPATIBILITY.md). **v0.7 needs physical
+two-phone speed/audio testing.** Synthetic fixtures do not execute Pokemon game
+logic or establish other actual game combinations.
 
 ## Use with existing progress
 
@@ -158,8 +157,8 @@ master schedule (5242 emulated cycles), busy-bit/IRQ behavior and both direction
 of actual serial words across isolated engines. Network packets carry those
 24-byte serial frames inside a sequenced 56-byte envelope. Encrypted
 MultipeerConnectivity handles discovery and reliable local transport. MTR1 wire
-version 5 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL, QUIET, HOLD and RELEASE
-in one sequence. Both phones must use v0.6; older wire versions cannot pair with it. ROM and
+version 6 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL, QUIET, HOLD, RELEASE,
+SPEED and PACE in one sequence. Both phones must use v0.7; older wire versions cannot pair with it. ROM and
 battery bytes are never sent to the other player. Protocol version, peer/session
 identity, game-code family and language code must match the compatibility checks.
 The game itself still determines inter-title trade eligibility.

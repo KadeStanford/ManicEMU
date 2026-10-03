@@ -47,6 +47,10 @@ class Peer:
                 self.terminal = int(words[20])
             elif line.startswith('EXPECTED '):
                 self.expected = int(line.split()[1])
+            elif line.startswith('PERF '):
+                self.clocks,self.audio,self.polls,self.videos,self.bclock,self.peerclock,self.accel = map(int,line.split()[1:])
+            elif line.startswith('BUDGET '):
+                self.budget = int(line.split()[1])
 
     def command(self, text):
         self.proc.stdin.write(text + '\n')

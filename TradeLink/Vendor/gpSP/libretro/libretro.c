@@ -423,7 +423,9 @@ void set_fastforward_override(bool fastforward)
    environ_cb(RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE, &ff_override);
 }
 
-static void audio_run(void)
+#include "AudioPace.h"
+static MTAudioPace battle_audio_pace;
+static void audio_run(unsigned rate)
 {
    s16 *audio_buffer_ptr;
    u32 samples_to_read;
@@ -449,6 +451,7 @@ static void audio_run(void)
    }
 
    samples_produced = sound_read_samples(audio_sample_buffer, samples_to_read);
+   samples_produced = (u32)MT_audio_pace(&battle_audio_pace,audio_sample_buffer,samples_produced,rate);
 
    /* Workaround for a RetroArch audio driver
     * limitation: a maximum of 1024 frames
@@ -1369,6 +1372,7 @@ bool retro_load_game_special(unsigned game_type,
 
 void retro_unload_game(void)
 {
+   memset(&battle_audio_pace,0,sizeof(battle_audio_pace));
    MT_unloaded();
    if (libretro_ff_enabled || trade_speed_locked)
       set_fastforward_override(false);
@@ -1427,6 +1431,15 @@ void retro_run(void)
       video_cb(NULL, GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT, GBA_SCREEN_WIDTH * 2);
       return;
    }
+
+   unsigned budget = MT_battle_budget();
+   if (!budget) {
+      video_cb(NULL, GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT, GBA_SCREEN_WIDTH * 2);
+      return; // Wait for peer frame credit; never fabricate serial words/IRQs.
+   }
+   for (unsigned frame = 0; frame < budget; frame++) {
+   if (frame && (!MT_battle_accelerated() || !MT_battle_budget() || !MT_frame(&trade)))
+      break; // A close, result/save hold or loss during frame one cancels frame two.
 
    input_poll_cb();
    update_input();
@@ -1522,8 +1535,7 @@ void retro_run(void)
      rumble_cb(0, RETRO_RUMBLE_STRONG, MIN(strength, 0xffff) / 2);
    }
 
-   audio_run();
-   video_run();
+   audio_run(budget == MT_BATTLE_RATE ? MT_BATTLE_RATE : 1);
 
    switch (serial_mode) {
    case SERIAL_MODE_RFU:
@@ -1533,6 +1545,9 @@ void retro_run(void)
      serialpoke_frame_update();
      break;
    };
+   MT_battle_did_frame();
+   }
+   video_run(); // One frontend image per call; all emulated VBlanks still execute.
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       check_variables(false);
