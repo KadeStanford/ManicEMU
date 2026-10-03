@@ -45,6 +45,7 @@ static NSString *gameTitle(NSString *code) {
 + (instancetype)shared;
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code;
 - (void)ended:(NSString *)reason;
+- (void)closed:(uint64_t)epoch;
 - (void)halt:(NSString *)reason;
 @end
 @implementation ManicTrade {
@@ -64,6 +65,7 @@ static NSString *gameTitle(NSString *code) {
     BOOL _ready,_peerReady,_ending,_fatal;
     enum MTPhase _lastPhase;
     NSString *_epoch;
+    uint64_t _coreEpoch;
 }
 + (instancetype)shared { static ManicTrade *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v; }
 - (instancetype)init {
@@ -85,7 +87,7 @@ static NSString *gameTitle(NSString *code) {
     return a.length==4&&b.length==4&&MT_compatible(a.bytes,b.bytes)&&![meta[@"room"] isEqual:_meta[@"room"]];
 }
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code {
-    [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;
+    [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;_coreEpoch=MT_epoch();
     _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
@@ -134,15 +136,17 @@ static NSString *gameTitle(NSString *code) {
 - (void)show:(UIAlertController *)dialog {_dialog=dialog;[self publishDialog];}
 - (void)finder {
     if(_partner||_ending||_fatal)return;
+    NSString *epoch=_epoch;
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby players" message:@"Your friend also needs to start a cable trade or battle in their game." preferredStyle:UIAlertControllerStyleActionSheet];
     for(MCPeerID *peer in _peers){NSDictionary *meta=_peers[peer];
-        [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ — %@",peer.displayName,gameTitle(meta[@"code"])] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        [a addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ - %@",peer.displayName,gameTitle(meta[@"code"])] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            if(![self->_epoch isEqual:epoch])return;
             self->_partner=peer;self->_partnerMeta=meta;[self dismissDialog];
             NSData *context=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];
             [self->_browser invitePeer:peer toSession:self->_session withContext:context timeout:20];
         }]];
     }
-    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){MT_cancel();[self cleanup];}]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){if(![self->_epoch isEqual:epoch])return;MT_cancel();[self cleanup];}]];
     [self show:a];
 }
 - (void)notice:(NSString *)title message:(NSString *)message {
@@ -160,13 +164,16 @@ static NSString *gameTitle(NSString *code) {
     [_advertiser startAdvertisingPeer];[_browser startBrowsingForPeers];
     [self dismissDialog];
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Link paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
+    NSString *epoch=_epoch;
     if(!_fatal)[a addAction:[UIAlertAction actionWithTitle:@"Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        if(![self->_epoch isEqual:epoch]||MT_finishing())return;
         resumeFrontend();
         self->_ready=YES;self->_cursor=0;
         if([self->_session.connectedPeers containsObject:self->_partner]){MT_resume();[self tick:nil];}
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore before link" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
+        if(![self->_epoch isEqual:epoch]||MT_finishing())return;
         MT_restore();resumeFrontend();[self cleanup];
     }]];[self show:a];
 }
@@ -198,6 +205,7 @@ static NSString *gameTitle(NSString *code) {
         NSString *epoch=_epoch;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{if([self->_epoch isEqual:epoch])[self cleanup];});
     }
 }
+- (void)closed:(uint64_t)epoch {if(_coreEpoch<epoch)[self cleanup];}
 - (void)cleanup {
     _ending=YES;[_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     _session.delegate=nil;_advertiser.delegate=nil;_browser.delegate=nil;[_session disconnect];
@@ -248,9 +256,10 @@ static NSString *gameTitle(NSString *code) {
         if(advertiser!=self->_advertiser||self->_ending||self->_fatal||MT_finishing()||![self valid:meta]||(self->_partner&&![peer isEqual:self->_partner])){handler(NO,nil);return;}
         if(self->_partner){handler(YES,self->_session);return;} // Same approved peer only.
         self->_partner=peer;self->_partnerMeta=meta;
+        NSString *epoch=self->_epoch;
         UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby player" message:[NSString stringWithFormat:@"Link with %@ playing %@?",peer.displayName,gameTitle(meta[@"code"])] preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"Decline" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){self->_partner=nil;self->_partnerMeta=nil;handler(NO,nil);[self finder];}]];
-        [a addAction:[UIAlertAction actionWithTitle:@"Accept" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[self dismissDialog];handler(YES,self->_session);}]];[self show:a];
+        [a addAction:[UIAlertAction actionWithTitle:@"Decline" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){handler(NO,nil);if(![self->_epoch isEqual:epoch])return;self->_partner=nil;self->_partnerMeta=nil;[self finder];}]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Accept" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){if(![self->_epoch isEqual:epoch]){handler(NO,nil);return;}[self dismissDialog];handler(YES,self->_session);}]];[self show:a];
     });
 }
 - (void)browser:(MCNearbyServiceBrowser *)browser foundPeer:(MCPeerID *)peer withDiscoveryInfo:(NSDictionary *)info {
@@ -271,7 +280,10 @@ static void snapshot(const uint8_t *battery,const uint8_t *state,size_t size) {
     NSString *path=[NSString stringWithUTF8String:MT_path()];NSString *code=[[NSString alloc] initWithBytes:MT_code() length:4 encoding:NSASCIIStringEncoding];
     uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] checkpoint:b state:s path:path code:code];});
 }
-static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] ended:s];});}
+static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
+    if([s isEqual:@"Game closed"])[[ManicTrade shared] closed:epoch];
+    else if(epoch==MT_epoch())[[ManicTrade shared] ended:s];
+});}
 static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
     if(epoch!=MT_epoch())return;
     if(MT_local_closed()){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Save needs attention" message:s];return;}
