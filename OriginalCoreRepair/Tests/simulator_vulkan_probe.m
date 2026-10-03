@@ -1,0 +1,64 @@
+// Public Vulkan loading preflight. No game, plugin, keys or saves are used.
+#import <UIKit/UIKit.h>
+#import <dlfcn.h>
+#include <vulkan/vulkan.h>
+
+static NSMutableDictionary *state;
+static NSString *destination;
+static void checkpoint(NSString *stage) {
+    state[@"stage"]=stage;
+    [[NSJSONSerialization dataWithJSONObject:state options:2 error:nil] writeToFile:destination atomically:YES];
+}
+@interface VulkanProbeApp : UIResponder <UIApplicationDelegate>
+@property(nonatomic,strong) UIWindow *window;
+@end
+@implementation VulkanProbeApp
+- (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
+    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    self.window.rootViewController=[UIViewController new];[self.window makeKeyAndVisible];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        destination=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject
+            stringByAppendingPathComponent:@"vulkan-preflight.json"];
+        state=[@{@"moltenvk_version":@"1.2.8",@"actual_game_executed":@NO,@"plugin_executed":@NO} mutableCopy];
+        checkpoint(@"dlopen");
+        void *library=dlopen([[NSBundle.mainBundle pathForResource:@"moltenvk-probe" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
+        if(!library){state[@"error"]=@(dlerror()?:"dlopen failed");checkpoint(@"failed");return;}
+        PFN_vkGetInstanceProcAddr get=(void *)dlsym(library,"vkGetInstanceProcAddr");
+        if(!get){checkpoint(@"missing_vkGetInstanceProcAddr");return;}
+        PFN_vkCreateInstance create=(void *)get(VK_NULL_HANDLE,"vkCreateInstance");
+        const char *extensions[]={"VK_KHR_portability_enumeration","VK_KHR_get_physical_device_properties2"};
+        VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.pApplicationName="Manic Vulkan preflight",.apiVersion=VK_API_VERSION_1_1};
+        VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .flags=VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,.pApplicationInfo=&application,
+            .enabledExtensionCount=2,.ppEnabledExtensionNames=extensions};
+        VkInstance instance=VK_NULL_HANDLE;checkpoint(@"vkCreateInstance");
+        VkResult result=create(&info,NULL,&instance);state[@"instance_result"]=@(result);
+        if(result!=VK_SUCCESS){checkpoint(@"failed");return;}
+        PFN_vkEnumeratePhysicalDevices enumerate=(void *)get(instance,"vkEnumeratePhysicalDevices");
+        uint32_t count=0;result=enumerate(instance,&count,NULL);state[@"physical_devices"]=@(count);
+        if(result!=VK_SUCCESS||!count){checkpoint(@"failed");return;}
+        VkPhysicalDevice *devices=calloc(count,sizeof(*devices));enumerate(instance,&count,devices);
+        VkPhysicalDevice gpu=devices[0];free(devices);
+        PFN_vkGetPhysicalDeviceProperties properties=(void *)get(instance,"vkGetPhysicalDeviceProperties");
+        VkPhysicalDeviceProperties props;properties(gpu,&props);state[@"gpu_name"]=@(props.deviceName);state[@"api_version"]=@(props.apiVersion);
+        PFN_vkGetPhysicalDeviceQueueFamilyProperties families=(void *)get(instance,"vkGetPhysicalDeviceQueueFamilyProperties");
+        count=0;families(gpu,&count,NULL);VkQueueFamilyProperties *queues=calloc(count,sizeof(*queues));families(gpu,&count,queues);
+        uint32_t family=UINT32_MAX;
+        for(uint32_t i=0;i<count;i++)if(queues[i].queueFlags&VK_QUEUE_GRAPHICS_BIT){family=i;break;}
+        free(queues);if(family==UINT32_MAX){checkpoint(@"failed");return;}
+        float priority=1;VkDeviceQueueCreateInfo queueInfo={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
+        const char *deviceExtensions[]={"VK_KHR_portability_subset"};
+        VkDeviceCreateInfo deviceInfo={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount=1,.pQueueCreateInfos=&queueInfo,.enabledExtensionCount=1,.ppEnabledExtensionNames=deviceExtensions};
+        PFN_vkCreateDevice createDevice=(void *)get(instance,"vkCreateDevice");
+        VkDevice device=VK_NULL_HANDLE;checkpoint(@"vkCreateDevice");result=createDevice(gpu,&deviceInfo,NULL,&device);
+        state[@"device_result"]=@(result);if(result!=VK_SUCCESS){checkpoint(@"failed");return;}
+        PFN_vkDeviceWaitIdle idle=(void *)get(instance,"vkDeviceWaitIdle");
+        result=idle(device);state[@"device_idle_result"]=@(result);
+        PFN_vkDestroyDevice destroyDevice=(void *)get(instance,"vkDestroyDevice");destroyDevice(device,NULL);
+        PFN_vkDestroyInstance destroyInstance=(void *)get(instance,"vkDestroyInstance");destroyInstance(instance,NULL);
+        state[@"vulkan_device_verified"]=@(result==VK_SUCCESS);checkpoint(@"completed");
+    });return YES;
+}
+@end
+int main(int argc,char **argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(VulkanProbeApp.class));}}

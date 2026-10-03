@@ -24,6 +24,8 @@ jobs:
         run: bash OriginalCoreRepair/Tests/simulator-probe.sh
       - name: Verify native fault recorder independent of Apple report quota
         run: bash OriginalCoreRepair/Tests/simulator-game-probe.sh --self-test
+      - name: Verify matching MoltenVK 1.2.8 can create a Vulkan device in Simulator
+        run: bash OriginalCoreRepair/Tests/simulator-vulkan-probe.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -32,3 +34,4 @@ jobs:
             OriginalCoreRepair/Tests/build-probe/probe.json
             OriginalCoreRepair/Tests/build-probe/probe.log
             OriginalCoreRepair/Tests/build-probe/fault-recorder-self-test.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
