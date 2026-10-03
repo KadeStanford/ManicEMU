@@ -28,7 +28,7 @@ static unsigned masPresentedFrames;
 
 @interface MASPlan : NSObject
 @property(strong) CAMetalLayer *source,*phone,*external;
-@property(strong) id<MTLCommandQueue> copyQueue;
+@property(strong) id<MTLCommandQueue> presentationQueue;
 @property BOOL threeDS,swapped,originalFramebufferOnly;
 @end
 @implementation MASPlan @end
@@ -276,8 +276,8 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
             top.size.height*=0.5;bottom.origin.y+=bottom.size.height*0.5;bottom.size.height*=0.5;
             if(live.threeDS){bottom.origin.x+=bottom.size.width*0.1;bottom.size.width*=0.8;}
             id<CAMetalDrawable> phone=[live.phone nextDrawable],tv=[live.external nextDrawable];
-            @synchronized(live){if(!live.copyQueue)live.copyQueue=[texture.device newCommandQueue];}
-            id<MTLCommandBuffer> buffer=[live.copyQueue commandBuffer];
+            @synchronized(live){if(!live.presentationQueue)live.presentationQueue=[texture.device newCommandQueue];}
+            id<MTLCommandBuffer> buffer=[live.presentationQueue commandBuffer];
             CGSize topSize=live.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
             CGSize bottomSize=live.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
             if(!phone||!tv||!MASDrawCrop(buffer,texture,phone.texture,live.swapped?top:bottom,live.swapped?topSize:bottomSize)||
