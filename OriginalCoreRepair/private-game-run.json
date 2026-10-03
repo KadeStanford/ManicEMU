@@ -1,1 +1,1 @@
-{"sequence":3,"purpose":"Acknowledge the verified Vapecord first-run notice and test its Select menu","core_changes":"existing 16-byte loader enable only","private_input_secret_required":true,"original_inputs_and_saves_preserved":true}
+{"sequence":4,"purpose":"Capture the Select menu after the verified Vapecord-ready title screen within the runtime limit","core_changes":"existing 16-byte loader enable only","private_input_secret_required":true,"original_inputs_and_saves_preserved":true}

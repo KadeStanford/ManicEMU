@@ -70,7 +70,7 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
             if((((const uint32_t *)((const uint8_t *)pixels+y*pitch))[x]&0xffffff)!=0){visible=true;break;}
     if(visible)nonblackFrames++;
     report[@"last_frame_dimensions"]=@[@(width),@(height)];
-    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==3000)?
+    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000)?
         [NSString stringWithFormat:@"private-frame-%d.png",runCalls]:nil;
     if(snapshot){
         CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
@@ -91,8 +91,8 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     if(port!=0||device!=1)return 0;
     // Vapecord displays its own first-run notice before entering the menu loop.
     // Acknowledge it in this disposable sandbox, then make one Select press.
-    if(id==8)return (runCalls>=1200&&runCalls<1206)||(runCalls>=1800&&runCalls<1806);
-    return id==2&&runCalls>=2700&&runCalls<2706;
+    if(id==8)return runCalls>=1200&&runCalls<1206;
+    return id==2&&runCalls>=2000&&runCalls<2006;
 }
 @interface GameProbeApp : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
