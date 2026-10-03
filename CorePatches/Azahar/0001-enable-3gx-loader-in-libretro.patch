@@ -1,0 +1,15 @@
+diff --git a/src/citra_libretro/core_settings.cpp b/src/citra_libretro/core_settings.cpp
+--- a/src/citra_libretro/core_settings.cpp
++++ b/src/citra_libretro/core_settings.cpp
+@@ -1198,4 +1198,9 @@ void ParseCoreOptions(void) {
+     // Override default values that aren't user-selectable and aren't correct for the core
+     Settings::values.enable_audio_stretching = false;
+     Settings::values.frame_limit = 0;
++    // The desktop frontend exposes this setting, but the libretro frontend does not.
++    // Keep the loader available; it only acts when a title has a matching 3GX file.
++    Settings::values.plugin_loader_enabled = true;
++    Settings::values.allow_plugin_loader = true;
++
+ #if defined(USING_GLES)
+     Settings::values.use_gles = true;
+
