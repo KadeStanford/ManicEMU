@@ -97,6 +97,42 @@ static void presentWithoutContext(CAMetalLayer *layer) {
 
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
+static NSDictionary *pressureProfile(MASManager *manager,BOOL threeDS,NSUInteger factor) {
+    MASPlan *previous=manager.plan,*plan=[MASPlan new];plan.source=previous.source;
+    plan.displayQueue=dispatch_queue_create("org.manicemu.airplay.pressure-test",DISPATCH_QUEUE_SERIAL);
+    plan.snapshotSlots=dispatch_semaphore_create(3);plan.freeSnapshots=[NSMutableArray new];
+    dispatch_semaphore_t entered=dispatch_semaphore_create(0),resume=dispatch_semaphore_create(0);
+    dispatch_async(plan.displayQueue,^{dispatch_semaphore_signal(entered);dispatch_semaphore_wait(resume,DISPATCH_TIME_FOREVER);});
+    dispatch_semaphore_wait(entered,DISPATCH_TIME_FOREVER);
+    id<MTLDevice> device=previous.source.device;
+    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+        width:(threeDS?400:256)*factor height:(threeDS?480:384)*factor mipmapped:NO];
+    desc.usage=MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+    TestSourceDrawable *source=[TestSourceDrawable new];source.texture=[device newTextureWithDescriptor:desc];
+    id<MTLCommandQueue> queue=[device newCommandQueue];double times[2];
+    for(unsigned enabled=0;enabled<2;enabled++) {
+        manager.plan=enabled?plan:nil;double start=CACurrentMediaTime();
+        for(unsigned frame=0;frame<120;frame++) {
+            @autoreleasepool {
+                id<MTLCommandBuffer> producer=[queue commandBuffer];
+                MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+                pass.colorAttachments[0].texture=source.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+                pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+                id<MTLRenderCommandEncoder> encoder=[producer renderCommandEncoderWithDescriptor:pass];[encoder endEncoding];
+                captureFrame((id)source,plan.source,producer);[producer commit];[producer waitUntilCompleted];
+            }
+        }
+        times[enabled]=CACurrentMediaTime()-start;
+    }
+    NSString *label=[NSString stringWithFormat:@"%@_%lux_120_frames",threeDS?@"3ds":@"ds",factor];
+    check([label stringByAppendingString:@"_producer_completes_under_blocked_sink"],times[1]<MAX(3.0,times[0]*5));
+    check([label stringByAppendingString:@"_capture_memory_bounded"],plan.peakInflight==3&&plan.allocations==3&&plan.dropped==117);
+    NSMutableDictionary *metrics=[performanceMetrics(plan) mutableCopy];metrics[@"system"]=threeDS?@"3ds":@"ds";
+    metrics[@"factor"]=@(factor);metrics[@"producer_frames"]=@120;
+    metrics[@"casting_off_ms"]=@(times[0]*1000);metrics[@"blocked_sink_ms"]=@(times[1]*1000);
+    manager.plan=previous;dispatch_semaphore_signal(resume);
+    return metrics;
+}
 static void gpu(void) {
     id<MTLDevice> device=MTLCreateSystemDefaultDevice();
     check(@"metal_device_available",device!=nil);if(!device)return;
@@ -253,6 +289,10 @@ static void gpu(void) {
         timed[@"synthetic_20_frames_casting_off_ms"]=@(timings[0]*1000);
         timed[@"synthetic_20_frames_blocked_sink_ms"]=@(timings[1]*1000);
         timed[@"physical_airplay_measured"]=@NO;
+        NSMutableArray *scaled=[NSMutableArray new];
+        for(unsigned system=0;system<2;system++)for(NSUInteger factor=1;factor<=4;factor*=2)
+            [scaled addObject:pressureProfile(m,system!=0,factor)];
+        timed[@"scaled_pressure_profiles"]=scaled;
         [[NSJSONSerialization dataWithJSONObject:timed options:NSJSONWritingPrettyPrinted error:nil]
             writeToFile:[metricsDir stringByAppendingPathComponent:@"performance.json"] atomically:YES];
         dispatch_semaphore_signal(resume);
