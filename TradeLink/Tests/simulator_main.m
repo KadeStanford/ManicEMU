@@ -24,7 +24,7 @@
 static uint8_t battery[MT_SAVE_SIZE],state[512];
 static void start(unsigned role){}static void receive(const void *p,size_t n,unsigned peer){}static void stop(void){}
 static size_t size(void){return sizeof(state);}static bool save(void *p,size_t n){memcpy(p,state,n);return true;}static bool load(const void *p,size_t n){memcpy(state,p,n);return true;}
-static MTGBA gba={start,receive,stop,size,save,load,battery};
+static MTGBA gba={start,receive,stop,size,save,load,battery,NULL};
 static struct MTSaveList files;static struct MTSaveEntry entry;static unsigned save_calls;
 void *savefile_ptr_get(void){save_calls++;return &files;}
 static void loopback(void){uint8_t p[56],ack[56];while(MT_next_packet(0,p)){assert(MT_receive_packet(p,56,ack)>=0);assert(MT_receive_packet(ack,56,p)==2);}}

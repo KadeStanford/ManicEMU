@@ -148,6 +148,19 @@ def lifecycle():
                 # forward many block/turn packets, finish/forfeit close unchanged.
                 exchange(m,s,[0x2222,mode,0,0,0,0,0,0],[0x2222,mode,0,0,0,0,0,0])
                 assert m.mode==s.mode=={0x1111:1,0x2233:2,0x2244:3}[mode]
+                if mode==0x2233:
+                    # A reconnect burst exceeds gpSP's 128-frame engine queue.
+                    # Transport keeps the tail until hardware consumes space.
+                    burst=[[0x8888,turn]+[0x7100+i for i in range(6)] for turn in range(140)]
+                    for frame in burst:
+                        m.command('master 0')
+                        for word in frame:m.command(f'master {word:x}')
+                    relay(m,s,True);assert s.phase==3
+                    for frame in burst:
+                        s.command('slave 0 28673');observed=[]
+                        for _ in range(8):s.command('slave 0 28673');observed.append(s.reg[0])
+                        assert observed==frame, (observed,frame)
+                    relay(s,m,True);assert m.phase==s.phase==3
                 for turn in range(24):
                     exchange(m,s,[0x8888]+[(turn*8+i)&0xffff for i in range(7)],
                              [0x8888]+[(0x8000+turn*8+i)&0xffff for i in range(7)])
@@ -190,7 +203,7 @@ def lifecycle():
         for peer in (m,s):peer.command('restore');assert peer.sram==0x45 and peer.phase==6
     finally:close(m);close(s)
     print('PASS: real-core trade/single/double command + 24 block/turn frames, '
-          'three bilateral reconnect rounds, parent/child/simultaneous IRQ-disable exits, '
+          '140-frame reconnect burst with engine backpressure, three bilateral reconnect rounds, parent/child/simultaneous IRQ-disable exits, '
           'no rollback/rejoin after ending, persisted SRAM in new processes, '
           'battle disconnect retains explicit checkpoint recovery')
 

@@ -1420,7 +1420,8 @@ void retro_run(void)
    }
 
    MTGBA trade = { manic_trade_start, manic_trade_receive, manic_trade_stop,
-      retro_serialize_size, retro_serialize, retro_unserialize, gamepak_backup };
+      retro_serialize_size, retro_serialize, retro_unserialize, gamepak_backup,
+      serialpoke_receive_capacity };
    if (MT_active() && !MT_frame(&trade)) {
       // Keep the existing Manic game screen; pause emulated clocks, not UIKit.
       video_cb(NULL, GBA_SCREEN_WIDTH, GBA_SCREEN_HEIGHT, GBA_SCREEN_WIDTH * 2);

@@ -18,6 +18,7 @@ typedef struct {
     bool (*save_state)(void *, size_t);
     bool (*load_state)(const void *, size_t);
     uint8_t *battery;
+    unsigned (*receive_capacity)(unsigned peer); // Backpressure before gpSP's smaller serial queue overflows.
 } MTGBA;
 typedef void (*MTSnapshot)(const uint8_t *battery, const uint8_t *state, size_t state_size);
 typedef void (*MTNotice)(const char *message);

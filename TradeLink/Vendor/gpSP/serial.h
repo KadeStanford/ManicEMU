@@ -53,6 +53,7 @@ void serialpoke_frame_update(void);
 void serialpoke_master_send(void);
 bool serialpoke_update(unsigned cycles);
 void serialpoke_net_receive(const void* buf, size_t len, uint16_t client_id);
+unsigned serialpoke_receive_capacity(unsigned peer);
 
 void serialaw_frame_update(void);
 void serialaw_master_send(void);
@@ -64,4 +65,3 @@ u32 gbp_transfer(u32 value);
 void gbp_reset(void);
 u32 gbp_get_state(void);
 void gbp_set_state(u32 v);
-

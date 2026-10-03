@@ -15,7 +15,7 @@ static void ended(const char *s){if(!strcmp(s,"Link completed"))completed++;}
 static void error(const char *s){assert(s);errors++;}
 static int fail_save(const uint8_t *b,const uint8_t *s,size_t n){assert(b[0]==0x99&&s[0]==0xaa&&n==32);return 0;}
 static void roundtrip(void){uint8_t p[56],ack[56];while(MT_next_packet(0,p)){assert(MT_receive_packet(p,56,ack)>=0);assert(MT_receive_packet(ack,56,p)==2);}}
-static MTGBA gba={start,receive,stop,size,save,load,battery};
+static MTGBA gba={start,receive,stop,size,save,load,battery,NULL};
 int main(void){
     battery[0]=0x45;state[0]=0x67;MT_install(snap,ended,error);MT_set_persist(persist);MT_enable(1);
     assert(MT_game_code((uint8_t *)"BPRE"));assert(!MT_game_code((uint8_t *)"ABCD"));

@@ -114,6 +114,7 @@ void MT_poll_receive(void) {
     for(unsigned n=0;n<MT_QUEUE_SIZE;n++){
         Message m;MTGBA gba;unsigned peer;int deliver;pthread_mutex_lock(&lock);
         if((g.phase!=MT_LINKED&&g.phase!=MT_CLOSING)||!g.started||!g.in_count){pthread_mutex_unlock(&lock);break;}
+        if(!g.leaving&&g.gba.receive_capacity&&!g.gba.receive_capacity(1-g.role)){pthread_mutex_unlock(&lock);break;}
         m=g.in[g.in_head];g.in_head=(g.in_head+1)%MT_QUEUE_SIZE;g.in_count--;gba=g.gba;peer=1-g.role;deliver=!g.leaving;
         pthread_mutex_unlock(&lock);if(deliver&&gba.receive)gba.receive(m.data,MT_DATA_SIZE,peer);
     }

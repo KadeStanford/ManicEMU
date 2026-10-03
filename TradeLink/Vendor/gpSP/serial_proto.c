@@ -122,6 +122,9 @@ void serialproto_reset(void) {
   SRPT_DEBUG_LOG("Reset serial-proto state\n");
   memset(&serstate, 0, sizeof(serstate));
 }
+unsigned serialpoke_receive_capacity(unsigned peer) {
+  return peer < 4 ? MAX_QPACK - serstate.poke.peer[peer].count : 0;
+}
 
 static void serialpoke_senddata(u16 state, const u16 *packet) {
   u32 flags = state | (packet ? 0x80000000 : 0);

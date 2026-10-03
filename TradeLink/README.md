@@ -123,7 +123,8 @@ battery migration, IPA preservation tests, physical-arm64 iOS compilation, and a
 native UIKit simulator smoke test. The expanded fixtures test Trade/Single/Double
 commands, 24 bidirectional block/turn frames, three bilateral reconnect rounds,
 parent/child/simultaneous IRQ-disable exits, missing final close ACK versus DATA,
-SRAM persistence across new processes, failed save handling, and interrupted
+SRAM persistence across new processes, a 140-frame reconnect burst with engine
+backpressure, failed save handling, and interrupted
 battle checkpoint recovery. The UIKit test checks normal ending without a
 reconnect/restore dialog, the active frontend save path, and separate pre/post
 backups. The simulator uses a small test frontend;

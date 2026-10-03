@@ -47,7 +47,7 @@ int main(int argc,char **argv){
         }else if(sscanf(line,"master %x",&word)==1){
             assert(role==0);serial_set_irq_cycles(0);write_ioreg(REG_SIOMLT_SEND,word);write_siocnt(0x6083);assert(serial_get_irq_cycles()==5242);assert(update_serial(5242));
         }else if(sscanf(line,"slave %x %u",&word,&cycles)==2){
-            assert(role==1);write_ioreg(REG_SIOMLT_SEND,word);assert(serialpoke_update(cycles));
+            assert(role==1);MT_poll_receive();write_ioreg(REG_SIOMLT_SEND,word);assert(serialpoke_update(cycles));
         }else if(!strncmp(line,"pause",5)){MT_suspend();unsigned before=serial_get_irq_cycles();retro_run();assert(MT_phase()==MT_SUSPENDED&&before==serial_get_irq_cycles());}
         else if(!strncmp(line,"resume",6)){MT_resume();}
         else if(!strncmp(line,"restore",7)){battery[0]=0x99;MT_suspend();MT_restore();retro_run();assert(MT_phase()==MT_CANCELLED&&battery[0]==0x45);}
