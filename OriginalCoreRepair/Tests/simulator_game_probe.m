@@ -77,7 +77,7 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     return port==0&&device==1&&id==2&&runCalls>=180&&runCalls<183;
 }
 @interface GameProbeApp : UIResponder <UIApplicationDelegate>
-@property(strong) UIWindow *window;
+@property(nonatomic,strong) UIWindow *window;
 @end
 @implementation GameProbeApp
 - (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
@@ -93,6 +93,9 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         struct sigaction action={0};action.sa_sigaction=fatalSignal;action.sa_flags=SA_SIGINFO;
         int signals[]={SIGABRT,SIGBUS,SIGILL,SIGSEGV,SIGTRAP};
         for(unsigned i=0;i<sizeof(signals)/sizeof(signals[0]);i++)sigaction(signals[i],&action,NULL);
+        if([NSProcessInfo.processInfo.environment[@"MANIC_PROBE_SIGNAL_TEST"] isEqualToString:@"1"]){
+            checkpoint(@"diagnostic_signal_self_test");raise(SIGSEGV);return;
+        }
         checkpoint(@"dlopen");
         void *h=dlopen([[NSBundle.mainBundle pathForResource:@"game-probe-core" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
         if(!h){report[@"error"]=@(dlerror()?:"dlopen failed");checkpoint(@"dlopen_failed");return;}
