@@ -70,8 +70,8 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
             if((((const uint32_t *)((const uint8_t *)pixels+y*pitch))[x]&0xffffff)!=0){visible=true;break;}
     if(visible)nonblackFrames++;
     report[@"last_frame_dimensions"]=@[@(width),@(height)];
-    NSString *snapshot=runCalls==179?@"private-frame-before-select.png":
-        runCalls==240?@"private-frame-after-select.png":nil;
+    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==3000)?
+        [NSString stringWithFormat:@"private-frame-%d.png",runCalls]:nil;
     if(snapshot){
         CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
         CGContextRef context=CGBitmapContextCreate((void *)pixels,width,height,8,pitch,space,
@@ -88,7 +88,10 @@ static size_t audioBatch(const int16_t *samples,size_t count){return count;}
 static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     // A short Select press after execution has started; no save interaction.
-    return port==0&&device==1&&id==2&&runCalls>=180&&runCalls<183;
+    if(port!=0||device!=1)return 0;
+    // Fresh sandbox boot can spend many frames preparing game data. Probe Select
+    // repeatedly after that interval, rather than only during the loading screen.
+    return id==2&&runCalls>=1200&&runCalls%300<6;
 }
 @interface GameProbeApp : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
@@ -140,14 +143,25 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         }
         report[@"loaded_images"]=images;
         setenv(environment);setvideo(video);setaudio(audio);setbatch(audioBatch);setpoll(poll);setinput(input);
-        checkpoint(@"retro_init");init();checkpoint(@"retro_load_game");
+        checkpoint(@"retro_init");init();
+        // This diagnostic core is hash-guarded by the runner. Its logging Impl
+        // reads the Filter at +0x00; ParseFilterString takes a string_view in
+        // x1/x2. Only verbosity changes, after initialization and before loading.
+        void *logging=*(void **)(coreBase+0xff2da0);
+        if(logging){
+            const char *filter="*:Warning Service.PLGLDR:Debug Loader:Info";
+            void (*parseFilter)(void *,const char *,size_t)=(void *)(coreBase+0x4e526c);
+            parseFilter(logging,filter,strlen(filter));
+            report[@"plugin_diagnostic_logging_enabled"]=@YES;
+        }
+        checkpoint(@"retro_load_game");
         NSString *gamePath=[root stringByAppendingPathComponent:@"input/game.cxi"];
         Game game={gamePath.fileSystemRepresentation,NULL,0,NULL};
         report[@"actual_game_load_attempted"]=@YES;bool loaded=load(&game);
         report[@"retro_load_game_returned"]=@(loaded);checkpoint(loaded?@"retro_run":@"load_rejected");
         if(loaded){
             NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:120];
-            while(!shutdownRequested&&runCalls<600&&deadline.timeIntervalSinceNow>0){
+            while(!shutdownRequested&&runCalls<3600&&deadline.timeIntervalSinceNow>0){
                 ++runCalls;checkpoint(@"retro_run");run();
             }
             report[@"shutdown_requested"]=@(shutdownRequested);
