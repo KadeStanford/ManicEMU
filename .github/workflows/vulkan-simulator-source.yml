@@ -1,0 +1,36 @@
+name: Vulkan simulator source diagnostic
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['.github/workflows/vulkan-simulator-source.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  matching-simulator-driver:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Build official MoltenVK 1.2.8 for Simulator
+        run: |
+          git clone --depth 1 --branch v1.2.8 https://github.com/KhronosGroup/MoltenVK.git "$RUNNER_TEMP/moltenvk-source"
+          cd "$RUNNER_TEMP/moltenvk-source"
+          test "$(git rev-parse HEAD)" = 1d98babb721c03667f65e7f6197ca2a356d19198
+          ./fetchDependencies --iossim --parallel-build
+          make iossim
+      - name: Exercise real simulator driver with Vulkan preflight
+        run: |
+          driver="$(find "$RUNNER_TEMP/moltenvk-source/Package/Release/MoltenVK/dynamic" -path '*simulator*/MoltenVK.framework/MoltenVK' -type f | head -1)"
+          test -n "$driver"
+          MANIC_MOLTENVK_SDK="$RUNNER_TEMP/moltenvk-source" MANIC_MOLTENVK_BINARY="$driver" MANIC_MOLTENVK_INCLUDE="$RUNNER_TEMP/moltenvk-source/External/Vulkan-Headers/include" bash OriginalCoreRepair/Tests/simulator-vulkan-probe.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: moltenvk-real-simulator-diagnostic
+          path: |
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-fatal.bin
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight-system.log
+            ${{ runner.temp }}/moltenvk-source/Package/Release/MoltenVK
