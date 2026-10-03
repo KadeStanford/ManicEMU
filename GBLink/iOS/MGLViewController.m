@@ -70,7 +70,7 @@
     UIStackView *row = [self row];
     [self addButton:@"Host" action:@selector(host) stack:row];
     [self addButton:@"Find / Reconnect" action:@selector(join) stack:row];
-    _hosts = [self row]; [_stack addArrangedSubview:_hosts];
+    _hosts = [self row];
     _status = [UILabel new]; _status.numberOfLines = 0;
     _status.text = self.romURL ? @"Ready to read this game's ROM and battery save." : @"Select your own ROM and battery save.";
     [_stack addArrangedSubview:_status];
@@ -184,7 +184,7 @@
     });
 }
 - (void)connect:(UIButton *)button {
-    MCPeerID *peer = button.tag < _found.count ? _found[button.tag] : nil;
+    MCPeerID *peer = button.tag >= 0 && (NSUInteger)button.tag < _found.count ? _found[button.tag] : nil;
     if (!peer) return;
     dispatch_async(_work, ^{
         if (self->_connected || self->_fatal) return;
@@ -197,6 +197,7 @@
 - (void)keyUp:(UIButton *)button { uint8_t mask = button.tag; dispatch_async(_work, ^{ self->_keys &= ~mask; }); }
 - (void)pause:(NSString *)reason {
     _connected = NO; _outstanding = NO; _keys = 0;
+    mgl_set_connected(_pair, 0);
     [_session disconnect]; [self status:reason]; // Preserve pair, sequence, original files.
 }
 - (void)fail:(NSString *)reason { _fatal = YES; [self pause:reason]; }
@@ -230,7 +231,7 @@
     });
 }
 - (void)hostFrame:(uint8_t)keys {
-    if (!mgl_frame(_pair, _keys, keys)) { [self fail:@"Core stopped advancing. Close this session; original saves are safe."]; return; }
+    if (!mgl_advance(_pair, _sequence, _keys, keys)) { [self fail:@"Core stopped advancing. Close this session; original saves are safe."]; return; }
     _sequence++;
     [self display:[NSData dataWithBytes:mgl_pixels(_pair, 0) length:MGL_PIXELS * 4]];
     NSMutableData *wire = [NSMutableData dataWithLength:MGL_PIXELS * 2];
@@ -248,6 +249,10 @@
     if (!mgl_decode(data.bytes, data.length, &packet)) { [self fail:@"Invalid or incompatible link packet. Close this session."]; return; }
     _lastReceive = CACurrentMediaTime();
     if (_host && packet.type == MGL_HELLO) {
+        if (_connected || (!_pair && packet.sequence) ||
+            (_pair && packet.sequence != _sequence && packet.sequence + 1 != _sequence)) {
+            [self fail:@"Unexpected handshake sequence."]; return;
+        }
         if (memcmp(packet.payload, _hash.bytes, 32)) { [self fail:@"ROMs differ. Both phones must load the exact same GB ROM."]; return; }
         NSData *guestSave = [NSData dataWithBytes:packet.payload + 32 length:MGL_SAVE_SIZE];
         if (!_pair) {
@@ -257,11 +262,15 @@
             if (!_pair) { [self fail:@"Unable to initialize the GB cable core."]; return; }
         } else if (![_guestOriginal isEqual:guestSave]) { [self fail:@"Reconnect save changed. Close and start a new session."]; return; }
         _connected = YES;
+        mgl_set_connected(_pair, 1);
         [self send:MGL_SAVE sequence:_sequence payload:[self battery:1]];
         [self send:MGL_READY sequence:_sequence payload:nil];
         [self status:@"Linked. Both games restart from battery saves. Save inside both games before exporting."]; return;
     }
     if (!_host && packet.type == MGL_READY) {
+        if (_connected || packet.sequence < _sequence || packet.sequence > _sequence + 1) {
+            [self fail:@"Unexpected resume sequence."]; return;
+        }
         _sequence = packet.sequence; _connected = YES; _outstanding = NO; _nextFrame = CACurrentMediaTime();
         [self status:@"Linked. Save inside both games before exporting your new battery save."];
         [self requestFrame]; return;
@@ -348,7 +357,11 @@
 - (void)browser:(MCNearbyServiceBrowser *)browser foundPeer:(MCPeerID *)peer withDiscoveryInfo:(NSDictionary<NSString *,NSString *> *)info {
     if (![info[@"version"] isEqualToString:@"1"]) return;
     dispatch_async(dispatch_get_main_queue(), ^{
-        if ([self->_found containsObject:peer]) return;
+        if ([self->_found containsObject:peer]) {
+            NSUInteger index = [self->_found indexOfObject:peer];
+            for (UIButton *b in self->_hosts.arrangedSubviews) if ((NSUInteger)b.tag == index) b.enabled = YES;
+            return;
+        }
         [self->_found addObject:peer];
         UIButton *button = [self addButton:peer.displayName action:@selector(connect:) stack:self->_hosts]; button.tag = self->_found.count - 1;
     });
@@ -356,7 +369,7 @@
 - (void)browser:(MCNearbyServiceBrowser *)browser lostPeer:(MCPeerID *)peer {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSUInteger i = [self->_found indexOfObject:peer]; if (i == NSNotFound) return;
-        for (UIButton *b in self->_hosts.arrangedSubviews) if (b.tag == i) b.enabled = NO;
+        for (UIButton *b in self->_hosts.arrangedSubviews) if ((NSUInteger)b.tag == i) b.enabled = NO;
     });
 }
 - (void)session:(MCSession *)session peer:(MCPeerID *)peer didChangeState:(MCSessionState)state {
@@ -367,6 +380,7 @@
             [self send:MGL_HELLO sequence:self->_sequence payload:hello];
         } else if (state == MCSessionStateNotConnected) {
             self->_connected = NO; self->_outstanding = NO; self->_keys = 0;
+            mgl_set_connected(self->_pair, 0);
             [self status:@"Disconnected. Games are frozen. Reconnect to the same peer without restarting either app."];
         }
     });

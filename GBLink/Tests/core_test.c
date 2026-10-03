@@ -5,22 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); exit(1); } } while (0)
-
-static uint8_t rom[32768], boot[256], saves[2][MGL_SAVE_SIZE];
-static void fixtures(void) {
-    rom[0x100] = 0xc3; rom[0x101] = 0x50; rom[0x102] = 1; // JP $150
-    rom[0x150] = 0x18; rom[0x151] = 0xfe; // JR forever
-    rom[0x147] = 0x13; rom[0x148] = 0; rom[0x149] = 3;
-    uint8_t sum = 0;
-    for (unsigned i = 0x134; i <= 0x14c; i++) sum -= rom[i] + 1;
-    rom[0x14d] = sum;
-    // LD A,1; JP $FE; LDH [$FF50],A; falls through to ROM $100.
-    boot[0] = 0x3e; boot[1] = 1; boot[2] = 0xc3; boot[3] = 0xfe;
-    boot[0xfe] = 0xe0; boot[0xff] = 0x50;
-    memset(saves[0], 0x35, sizeof(saves[0]));
-    memset(saves[1], 0xca, sizeof(saves[1]));
-}
+#include "fixtures.h"
 static void cable_test(void) {
     MGLPair *p = mgl_create(rom, sizeof(rom), saves[0], MGL_SAVE_SIZE,
                           saves[1], MGL_SAVE_SIZE, boot, sizeof(boot));
@@ -77,12 +62,22 @@ static void cable_test(void) {
     CHECK(GB_read_memory(b, 0xff01) == 0x99);
     CHECK(GB_read_memory(a, 0xff01) == 0x42);
     CHECK(mgl_battery(p, 0, battery)); CHECK(!memcmp(before, battery, sizeof(before)));
-    for (int i = 0; i < 120; i++) CHECK(mgl_frame(p, 0, 0));
+    mgl_set_connected(p, 0);
+    for (int i = 0; i < 120; i++) CHECK(!mgl_advance(p, 0, 0, 0));
+    CHECK(mgl_frames(p) == 0);
+    CHECK(mgl_battery(p, 0, battery)); CHECK(!memcmp(before, battery, sizeof(before)));
+    mgl_set_connected(p, 1);
+    CHECK(mgl_advance(p, 0, 0, 0));
+    CHECK(!mgl_advance(p, 0, 0, 0)); // duplicate
+    CHECK(!mgl_advance(p, 2, 0, 0)); // future
+    CHECK(mgl_frames(p) == 1);
+    for (int i = 1; i < 120; i++) CHECK(mgl_advance(p, i, 0, 0));
     CHECK(mgl_frames(p) == 120);
     CHECK(mgl_pixels(p, 0) && mgl_pixels(p, 1));
     mgl_destroy(p);
     puts("PASS: 512 bidirectional byte transfers, DMG clock timing, serial IRQs,");
-    puts("      external-clock wait, pending-transfer resume, save isolation, 120 frames");
+    puts("      external-clock wait, pending-transfer resume, save isolation, 120 frames,");
+    puts("      disconnect freeze, reconnect continuation, duplicate/future input rejection");
 }
 static void protocol_test(void) {
     uint8_t out[MGL_MAX_PACKET], payload[MGL_SAVE_SIZE] = {0}; MGLPacket p;

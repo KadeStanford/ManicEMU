@@ -21,6 +21,10 @@ MGLPair *mgl_create(const uint8_t *rom, size_t size,
 void mgl_destroy(MGLPair *pair);
 // Run both GBs on one thread, in emulated cycle order. No wall-clock cable IO.
 int mgl_frame(MGLPair *pair, uint8_t host_keys, uint8_t guest_keys);
+// Transport gate: a paused pair cannot advance. Stale/duplicate/future input
+// requests are rejected without mutation. Reconnect keeps the same frame count.
+void mgl_set_connected(MGLPair *pair, int connected);
+int mgl_advance(MGLPair *pair, uint64_t request, uint8_t host_keys, uint8_t guest_keys);
 const uint32_t *mgl_pixels(MGLPair *pair, unsigned player); // RGBA little endian
 int mgl_battery(MGLPair *pair, unsigned player, uint8_t save[MGL_SAVE_SIZE]);
 uint64_t mgl_frames(const MGLPair *pair);

@@ -16,6 +16,7 @@ struct MGLPair {
     uint32_t pixels[2][MGL_PIXELS];
     int debt;
     uint64_t frames;
+    int connected;
 };
 static uint32_t rgb(GB_gameboy_t *gb, uint8_t r, uint8_t g, uint8_t b) {
     (void)gb;
@@ -53,6 +54,7 @@ MGLPair *mgl_create(const uint8_t *rom, size_t size,
         (guest_size && (guest_size != MGL_SAVE_SIZE || !guest_save))) return NULL;
     MGLPair *p = calloc(1, sizeof(*p));
     if (!p) return NULL;
+    p->connected = 1;
     for (unsigned i = 0; i < 2; i++) {
         p->gb[i] = GB_alloc();
         if (!p->gb[i]) { mgl_destroy(p); return NULL; }
@@ -90,7 +92,7 @@ unsigned mgl_quantum(MGLPair *p) {
     return cycles;
 }
 int mgl_frame(MGLPair *p, uint8_t host_keys, uint8_t guest_keys) {
-    if (!p) return 0;
+    if (!p || !p->connected) return 0;
     GB_set_key_mask(p->gb[0], host_keys);
     GB_set_key_mask(p->gb[1], guest_keys);
     p->endpoints[0].vblank = p->endpoints[1].vblank = 0;
@@ -100,6 +102,10 @@ int mgl_frame(MGLPair *p, uint8_t host_keys, uint8_t guest_keys) {
     if (!watchdog) return 0;
     p->frames++;
     return 1;
+}
+void mgl_set_connected(MGLPair *p, int connected) { if (p) p->connected = !!connected; }
+int mgl_advance(MGLPair *p, uint64_t request, uint8_t host_keys, uint8_t guest_keys) {
+    return p && request == p->frames && mgl_frame(p, host_keys, guest_keys);
 }
 const uint32_t *mgl_pixels(MGLPair *p, unsigned player) {
     return p && player < 2 ? p->pixels[player] : NULL;
