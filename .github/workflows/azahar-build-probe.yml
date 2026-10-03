@@ -1,0 +1,40 @@
+name: Azahar iOS source build probe
+on:
+  push:
+    branches: [feature/dual-airplay-foundation]
+    paths: ['.github/workflows/azahar-build-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  azahar-libretro:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Daiuno/azahar
+          ref: 03da4a354cc10012418c28a935dd0c627e37a963
+          path: azahar-source
+          lfs: false
+          submodules: recursive
+      - name: Configure and build unsigned iOS libretro core
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake -S azahar-source -B azahar-build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=OFF -DENABLE_OPENGL=OFF \
+            -DENABLE_LTO=OFF -DENABLE_TESTS=OFF 2>&1 | tee "$RUNNER_TEMP/azahar-configure.log"
+          cmake --build azahar-build --target azahar_libretro --config Release --parallel 3 \
+            2>&1 | tee "$RUNNER_TEMP/azahar-build.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: azahar-ios-source-build-evidence
+          path: |
+            ${{ runner.temp }}/azahar-configure.log
+            ${{ runner.temp }}/azahar-build.log
+            azahar-build/src/citra_libretro/Release/*
+
