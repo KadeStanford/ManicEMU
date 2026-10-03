@@ -139,7 +139,7 @@ static NSString *gameTitle(NSString *code) {
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore before trade" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
-        MT_restore();[self cleanup];[self notice:@"Pre-trade checkpoint restored" message:@"Back out of the cable club. Your automatic battery backup is also kept in ManicTradeBackups."];
+        MT_restore();[self cleanup];
     }]];[self show:a];
 }
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
@@ -160,6 +160,7 @@ static NSString *gameTitle(NSString *code) {
     static unsigned count=0;if(++count%40==0)[self control:@"PING"];
 }
 - (void)ended:(NSString *)reason {
+    if([reason isEqual:@"Pre-trade checkpoint restored"]){[self notice:reason message:@"Back out of the cable club. Your automatic battery backup is also kept in ManicTradeBackups."];return;}
     if(MT_phase()==MT_OFF){[self cleanup];return;}
     _localDone=YES;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     if(!_partner){[self cleanup];return;}[self tick:nil];
@@ -239,23 +240,13 @@ static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8Str
     if(MT_phase()==MT_CANCELLED){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Trading stopped" message:s];}
     else [[ManicTrade shared] halt:s];
 });}
-static BOOL (*originalLoad)(id,SEL,NSString *,NSString *,id);
-static BOOL tradeLoad(id self,SEL selector,NSString *path,NSString *core,id completion) {
-    // Route only known Gen3 .gba cartridges, at launch, before any CPU state is
-    // running. The exact save directory/extension and normal frontend are retained.
-    if([path.pathExtension.lowercaseString isEqual:@"gba"]){
-        NSFileHandle *f=[NSFileHandle fileHandleForReadingAtPath:path];NSData *header=[f readDataOfLength:192];[f closeFile];
-        if(header.length==192&&MT_game_code((const uint8_t *)header.bytes+0xac)){
-            NSString *linkCore=[NSBundle.mainBundle pathForResource:@"gpsp.libretro" ofType:@"framework" inDirectory:@"Frameworks"];
-            if(linkCore)core=linkCore;
-        }
-    }return originalLoad(self,selector,path,core,completion);
-}
 __attribute__((constructor)) static void install_trade(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MGLInjectTrade"] boolValue])return;
     Class cls=NSClassFromString(@"LibretroCore");SEL sel=NSSelectorFromString(@"loadGame:corePath:completion:");
     Method method=cls?class_getInstanceMethod(cls,sel):NULL;
     if(!method||method_getNumberOfArguments(method)!=5)return;
-    originalLoad=(void *)method_getImplementation(method);method_setImplementation(method,(IMP)tradeLoad);
+    // Use Manic's existing gpSP selection. Changing only the loaded dylib would
+    // mislabel new save states as mGBA in the frontend's persisted metadata.
+    // Core selection happens once at launch; pairing never swaps/restarts cores.
     MT_install(snapshot,stopped,failure);MT_enable(1);
 }

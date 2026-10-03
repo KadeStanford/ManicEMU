@@ -107,7 +107,8 @@ int MT_frame(const MTGBA *gba) {
         if(gba->stop)gba->stop();
         if(!gba->load_state(g.state,g.state_size)){fault("Pre-trade checkpoint could not be restored; battery backup is retained");return 0;}
         memcpy(gba->battery,g.battery,MT_SAVE_SIZE);
-        pthread_mutex_lock(&lock);g.started=0;g.phase=MT_CANCELLED;g.out_count=g.in_count=0;pthread_mutex_unlock(&lock);return 1;
+        pthread_mutex_lock(&lock);g.started=0;g.phase=MT_CANCELLED;g.out_count=g.in_count=0;MTNotice restored=g.stopped;pthread_mutex_unlock(&lock);
+        if(restored)restored("Pre-trade checkpoint restored");return 1;
     }
     if(start&&gba->start)gba->start(role);
     MT_poll_receive();

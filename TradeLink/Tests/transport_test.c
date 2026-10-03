@@ -26,6 +26,11 @@ int main(void){
     packet[31]++;assert(MT_receive_packet(packet,56,ack)==-1);packet[31]--;
     assert(MT_receive_packet(packet,56,ack)==1);assert(MT_frame(&gba));assert(delivered==2);
     assert(MT_receive_packet(ack,56,packet)==2);
+    // End only after the last acknowledged packet executes on the core thread.
+    MT_send(0xffff,data,24);assert(MT_next_packet(0,packet));MT_leave();assert(!MT_complete());
+    assert(MT_receive_packet(packet,56,ack)==1);assert(MT_receive_packet(ack,56,packet)==2);assert(!MT_complete());
+    assert(MT_frame(&gba)&&delivered==3);assert(MT_complete());assert(MT_frame(&gba)&&MT_phase()==MT_IDLE);
+    MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
     battery[0]=0x99;state[0]=0xaa;MT_suspend();MT_restore();assert(MT_frame(&gba));assert(battery[0]==0x45&&state[0]==0x67);
     MT_leave();assert(MT_phase()==MT_IDLE);MT_unloaded();
     puts("PASS: Gen3 compatibility, automatic checkpoint, duplicate/replay/session guards, pause/resume, battery + full-state rollback");
