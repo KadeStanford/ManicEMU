@@ -21,6 +21,8 @@ jobs:
         run: bash AirPlaySplit/scripts/build-ios.sh
       - name: Verify live GPU crops, swap, touch and disconnect lifecycle
         run: bash AirPlaySplit/scripts/simulator-smoke.sh
+      - name: Build isolated timing instrumentation for the installed R2 behavior
+        run: bash AirPlaySplit/scripts/build-r2-diagnostics.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -29,3 +31,10 @@ jobs:
             AirPlaySplit/build/ManicAirPlaySplit.framework
             AirPlaySplit/build-simulator/smoke.json
             AirPlaySplit/build-simulator/performance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: airplay-r2-timing-diagnostics
+          path: |
+            AirPlaySplit/build-r2-diagnostics/ManicAirPlaySplit.framework
+            AirPlaySplit/build-r2-diagnostics/diagnostic-build.json
