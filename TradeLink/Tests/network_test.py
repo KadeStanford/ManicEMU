@@ -208,77 +208,81 @@ def lifecycle():
           'battle disconnect retains explicit checkpoint recovery')
 
 
-peers = []
-try:
-    master, slave = Peer(0), Peer(1)
-    peers = [master, slave]
-    relay(master, slave, True)
-    slave.command('slave b9a0 280065')
-    relay(slave, master)
-    master.command('master b9a0')
-    assert master.reg[1] == 0xb9a0, 'master did not discover slave'
-    relay(master, slave)
-    master.command('master 8fff')
-    relay(master, slave)
-    slave.command('slave b9a0 280065')
-    assert slave.reg[0] == 0x8fff, 'slave did not receive master handshake'
-    relay(slave, master)
-
-    # Full 1+8 halfword frames. Sender game IO -> real serial protocol -> TCP ->
-    # other core -> receiver game IO. No fabricated remote register values.
-    outgoing = [0x1200 + i for i in range(8)]
-    returning = [0x3400 + i for i in range(8)]
-    master.command('master 0')
-    for word in outgoing:
-        master.command(f'master {word:x}')
-    assert any(p[36] & 0x80 for p in master.pending), 'no data frame produced'
-
-    # Disconnect halfway through a wire frame. No partial frame reaches a core.
-    dropped = master.pending[0]
-    a, b = tcp_pair()
-    a.sendall(dropped[:19])
-    a.close()
-    partial = b.recv(56)
-    b.close()
-    assert len(partial) < 56
-    master.command('pause')
-    slave.command('pause')
-    assert master.phase == slave.phase == 4
-    time.sleep(0.08)
-    master.command('resume')
-    slave.command('resume')
-    # PAUSE and both READY rounds travel in the same ordered stream as serial.
-    for _ in range(4):
+def basic_network():
+    peers = []
+    try:
+        master, slave = Peer(0), Peer(1)
+        peers = [master, slave]
         relay(master, slave, True)
-        relay(slave, master, True)
-    assert master.phase == slave.phase == 3
-    relay(master, slave, True)  # Retained, unacknowledged frames after reconnect.
-    slave.command('slave 0 28673')
-    observed = []
-    for word in returning:
-        slave.command(f'slave {word:x} 28673')
-        observed.append(slave.reg[0])
-    assert observed == outgoing, (observed, outgoing)
-    relay(slave, master, True)
-    master.command('master 0')
-    observed = []
-    for i in range(8):
-        master.command('master 0')
-        observed.append(master.reg[1])
-    assert observed == returning, (observed, returning)
-    relay(master, slave)
-    for peer in peers:
-        peer.command('restore')
-        assert peer.phase == 6
-    print('PASS: two real gpSP cores discover opposite link roles and exchange '
-          '8-word Gen3 frames both ways over delayed/fragmented TCP; truncated '
-          'connection, pause, retained retransmission, duplicate suppression, '
-          'and independent battery/full-state recovery passed')
-finally:
-    for peer in peers:
-        if peer.proc.poll() is None:
-            peer.proc.stdin.write('quit\n')
-            peer.proc.stdin.flush()
-        assert peer.proc.wait(timeout=10) == 0, 'core process failed on exit'
+        slave.command('slave b9a0 280065')
+        relay(slave, master)
+        master.command('master b9a0')
+        assert master.reg[1] == 0xb9a0, 'master did not discover slave'
+        relay(master, slave)
+        master.command('master 8fff')
+        relay(master, slave)
+        slave.command('slave b9a0 280065')
+        assert slave.reg[0] == 0x8fff, 'slave did not receive master handshake'
+        relay(slave, master)
 
-lifecycle()
+        # Full 1+8 halfword frames. Sender game IO -> real serial protocol -> TCP ->
+        # other core -> receiver game IO. No fabricated remote register values.
+        outgoing = [0x1200 + i for i in range(8)]
+        returning = [0x3400 + i for i in range(8)]
+        master.command('master 0')
+        for word in outgoing:
+            master.command(f'master {word:x}')
+        assert any(p[36] & 0x80 for p in master.pending), 'no data frame produced'
+
+        # Disconnect halfway through a wire frame. No partial frame reaches a core.
+        dropped = master.pending[0]
+        a, b = tcp_pair()
+        a.sendall(dropped[:19])
+        a.close()
+        partial = b.recv(56)
+        b.close()
+        assert len(partial) < 56
+        master.command('pause')
+        slave.command('pause')
+        assert master.phase == slave.phase == 4
+        time.sleep(0.08)
+        master.command('resume')
+        slave.command('resume')
+        # PAUSE and both READY rounds travel in the same ordered stream as serial.
+        for _ in range(4):
+            relay(master, slave, True)
+            relay(slave, master, True)
+        assert master.phase == slave.phase == 3
+        relay(master, slave, True)  # Retained, unacknowledged frames after reconnect.
+        slave.command('slave 0 28673')
+        observed = []
+        for word in returning:
+            slave.command(f'slave {word:x} 28673')
+            observed.append(slave.reg[0])
+        assert observed == outgoing, (observed, outgoing)
+        relay(slave, master, True)
+        master.command('master 0')
+        observed = []
+        for i in range(8):
+            master.command('master 0')
+            observed.append(master.reg[1])
+        assert observed == returning, (observed, returning)
+        relay(master, slave)
+        for peer in peers:
+            peer.command('restore')
+            assert peer.phase == 6
+        print('PASS: two real gpSP cores discover opposite link roles and exchange '
+              '8-word Gen3 frames both ways over delayed/fragmented TCP; truncated '
+              'connection, pause, retained retransmission, duplicate suppression, '
+              'and independent battery/full-state recovery passed')
+    finally:
+        for peer in peers:
+            if peer.proc.poll() is None:
+                peer.proc.stdin.write('quit\n')
+                peer.proc.stdin.flush()
+            assert peer.proc.wait(timeout=10) == 0, 'core process failed on exit'
+
+
+if __name__ == '__main__':
+    basic_network()
+    lifecycle()

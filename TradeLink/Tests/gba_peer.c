@@ -44,7 +44,10 @@ int main(int argc,char **argv){
             uint8_t p[56],ack[56];assert(strlen(line+7)>=112);
             for(unsigned i=0;i<56;i++){unsigned byte;assert(sscanf(line+7+2*i,"%2x",&byte)==1);p[i]=(uint8_t)byte;}
             int accepted=MT_receive_packet(p,56,ack);assert(accepted>=0);if(accepted<2)packet("ACK",ack);MT_poll_receive();
-        }else if(sscanf(line,"master %x",&word)==1){
+        }else if(sscanf(line,"sio %x",&word)==1){write_siocnt(word);}
+        else if(sscanf(line,"rcnt %x",&word)==1){write_rcnt(word);}
+        else if(sscanf(line,"frames %u",&cycles)==1){for(unsigned i=0;i<cycles;i++)retro_run();}
+        else if(sscanf(line,"master %x",&word)==1){
             assert(role==0);serial_set_irq_cycles(0);write_ioreg(REG_SIOMLT_SEND,word);write_siocnt(0x6083);assert(serial_get_irq_cycles()==5242);assert(update_serial(5242));
         }else if(sscanf(line,"slave %x %u",&word,&cycles)==2){
             assert(role==1);MT_poll_receive();write_ioreg(REG_SIOMLT_SEND,word);assert(serialpoke_update(cycles));
