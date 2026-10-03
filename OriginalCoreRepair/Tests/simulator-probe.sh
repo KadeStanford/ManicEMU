@@ -7,6 +7,7 @@ mkdir -p "$app"
 curl --fail --location --silent --show-error \
   https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro \
   -o "$app/device-core.dylib"
+cp "$app/device-core.dylib" "$build/original-core-download.dylib"
 python3 - "$app" <<'PY'
 import hashlib,pathlib,struct,sys
 root=pathlib.Path(sys.argv[1]);b=(root/'device-core.dylib').read_bytes()

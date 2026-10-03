@@ -6,7 +6,7 @@ build="$PWD/build-probe"
 app="$build/GameProbe.app"
 mkdir -p "$app"
 cp "$build/GameProbe" "$app/GameProbe"
-python3 - "$build/OriginalCoreProbe.app/device-core.dylib" "$app/game-probe-core.dylib" <<'PY'
+python3 - "$build/original-core-download.dylib" "$app/game-probe-core.dylib" <<'PY'
 import hashlib,pathlib,struct,sys
 b=pathlib.Path(sys.argv[1]).read_bytes()
 assert hashlib.sha256(b).hexdigest()=='183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e5954a6df940c'
