@@ -147,7 +147,7 @@ jobs:
           python3 - <<'PY'
           import json,os,pathlib,subprocess,zipfile
           root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
-          records=[root/'private-core-runtime.log',root/'private-game-probe.json',root/'private-fatal-signal.bin']
+          records=[root/'private-core-runtime.log',root/'private-game-system.log',root/'private-game-probe.json',root/'private-fatal-signal.bin']
           records+=list(root.glob('private-frame-*.png'))
           existing=[p for p in records if p.exists()]
           if existing:
@@ -178,7 +178,7 @@ jobs:
           import os,pathlib,shutil
           root=pathlib.Path(os.environ['RUNNER_TEMP'])/'manic-private-inputs'
           if root.is_dir():shutil.rmtree(root)
-          for name in ['private-core-runtime.log','private-fatal-signal.bin','private-game-probe.json']:
+          for name in ['private-core-runtime.log','private-game-system.log','private-fatal-signal.bin','private-game-probe.json']:
               p=pathlib.Path('OriginalCoreRepair/Tests/build-probe')/name
               p.unlink(missing_ok=True)
           for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-frame-*.png'):

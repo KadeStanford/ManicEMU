@@ -104,6 +104,7 @@ PY
   cp "$container/Documents/game-probe.json" "$build/private-game-probe.json"
   cp "$container/Documents/core-runtime.log" "$build/private-core-runtime.log"
   cp "$container/Documents/fatal-signal.bin" "$build/private-fatal-signal.bin"
+  python3 run_bounded.py 20 xcrun simctl spawn "$device" log show --last 3m --style compact --predicate 'process == "GameProbe"' > "$build/private-game-system.log" 2>/dev/null || true
   for frame in "$container/Documents"/private-frame-*.png; do
     if [[ -f "$frame" ]]; then cp "$frame" "$build/"; fi
   done

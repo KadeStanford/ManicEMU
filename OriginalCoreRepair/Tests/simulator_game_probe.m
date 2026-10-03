@@ -124,6 +124,9 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         report[@"renderer"]=@"Vulkan";
 #endif
         logFD=open([root stringByAppendingPathComponent:@"core-runtime.log"].fileSystemRepresentation,O_CREAT|O_WRONLY|O_APPEND,0600);
+        // Keep driver assertions and C++ termination details in encrypted evidence.
+        // The runner never publishes this log unencrypted.
+        if(logFD>=0){dup2(logFD,STDOUT_FILENO);dup2(logFD,STDERR_FILENO);}
         signalFD=open([root stringByAppendingPathComponent:@"fatal-signal.bin"].fileSystemRepresentation,O_CREAT|O_WRONLY|O_EXCL,0600);
         struct sigaction action={0};action.sa_sigaction=fatalSignal;action.sa_flags=SA_SIGINFO;
         int signals[]={SIGABRT,SIGBUS,SIGILL,SIGSEGV,SIGTRAP};
