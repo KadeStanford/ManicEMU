@@ -1,0 +1,24 @@
+name: Original core runtime capability probe
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/Tests/**', '.github/workflows/original-core-runtime-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-simulator:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Probe original core with untouched code on simulator
+        run: bash OriginalCoreRepair/Tests/simulator-probe.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-core-runtime-probe-evidence
+          path: |
+            OriginalCoreRepair/Tests/build-probe/probe.json
+            OriginalCoreRepair/Tests/build-probe/probe.log
