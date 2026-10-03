@@ -40,5 +40,6 @@ if [[ ! -s "$container/Documents/smoke.json" ]]; then
   exit 1
 fi
 cp "$container/Documents/smoke.json" "$build/smoke.json"
+cp "$container/Documents/performance.json" "$build/performance.json"
 python3 -c "import json; r=json.load(open('$build/smoke.json')); print(r); assert len(r)>=16 and all(r.values())"
 xcrun simctl terminate "$device" org.manicemu.airplay.smoke

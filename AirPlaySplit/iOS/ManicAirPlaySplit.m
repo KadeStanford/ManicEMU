@@ -6,6 +6,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
+#import <os/log.h>
 #import "MASRender.h"
 
 typedef struct { int x,y; unsigned width,height,full_width,full_height; } MASViewport;
@@ -41,8 +42,33 @@ static unsigned masSinkAcquisitionsOnMain,masSnapshotsSkipped;
 @property(strong) dispatch_semaphore_t snapshotSlots;
 @property(strong) NSMutableArray *freeSnapshots;
 @property BOOL threeDS,swapped,originalFramebufferOnly;
+@property unsigned sourceFrames,snapshots,dropped,allocations,inflight,peakInflight,presentations;
+@property double sourceWaitMax,copyEncodeMax,copyCompletionMax,sinkWaitMax,lastMetricTime;
 @end
 @implementation MASPlan @end
+
+#ifdef MAS_TESTING
+static NSDictionary *performanceMetrics(MASPlan *p) {
+    @synchronized(p){return @{@"source_frames":@(p.sourceFrames),@"snapshots":@(p.snapshots),
+        @"dropped":@(p.dropped),@"allocations":@(p.allocations),@"inflight":@(p.inflight),
+        @"peak_inflight":@(p.peakInflight),@"presentations":@(p.presentations),
+        @"source_drawable_wait_max_ms":@(p.sourceWaitMax*1000),
+        @"copy_encode_max_ms":@(p.copyEncodeMax*1000),
+        @"copy_completion_max_ms":@(p.copyCompletionMax*1000),
+        @"sink_drawable_wait_max_ms":@(p.sinkWaitMax*1000)};}
+}
+#endif
+static void logPerformance(MASPlan *p) {
+    if(!p||![NSBundle.mainBundle.infoDictionary[@"MASAirPlayDiagnostics"] boolValue])return;
+    double now=CACurrentMediaTime();
+    @synchronized(p){
+        if(now-p.lastMetricTime<1)return;
+        p.lastMetricTime=now;
+        os_log_info(OS_LOG_DEFAULT,"ManicAirPlay source=%{public}u captured=%{public}u dropped=%{public}u allocated=%{public}u inflight=%{public}u peak=%{public}u presented=%{public}u source_wait_max_ms=%{public}.3f copy_encode_max_ms=%{public}.3f copy_complete_max_ms=%{public}.3f sink_wait_max_ms=%{public}.3f",
+            p.sourceFrames,p.snapshots,p.dropped,p.allocations,p.inflight,p.peakInflight,p.presentations,
+            p.sourceWaitMax*1000,p.copyEncodeMax*1000,p.copyCompletionMax*1000,p.sinkWaitMax*1000);
+    }
+}
 
 @interface MASSurface : UIView
 @property BOOL touchSurface;
@@ -210,6 +236,7 @@ static NSString *effectiveLayout(MASManager *m) {
     [self releaseTouch];self.swapped=!self.swapped;[self refresh];
 }
 - (void)refresh {
+    logPerformance(self.plan);
     UIView *view=self.coreView;UIWindow *external=view.window;
     BOOL active=self.dual&&!self.disabled&&externalWindow(external)&&self.phoneParent.window&&!CGRectIsEmpty(self.phoneRegion);
     if(!active) {
@@ -320,6 +347,7 @@ static id masDrawable(id self,SEL cmd) {
 // swapchain or block a Metal completion callback.
 static void recycleSnapshot(MASPlan *plan,id<MTLTexture> texture) {
     @synchronized(plan.freeSnapshots){[plan.freeSnapshots addObject:texture];}
+    @synchronized(plan){if(plan.inflight)plan.inflight--;}
     dispatch_semaphore_signal(plan.snapshotSlots);
 }
 static void presentSnapshot(id<MTLTexture> texture,MASPlan *live,MASViewport vp) {
@@ -330,7 +358,9 @@ static void presentSnapshot(id<MTLTexture> texture,MASPlan *live,MASViewport vp)
             CGRect top=region,bottom=region;
             top.size.height*=0.5;bottom.origin.y+=bottom.size.height*0.5;bottom.size.height*=0.5;
             if(live.threeDS){bottom.origin.x+=bottom.size.width*0.1;bottom.size.width*=0.8;}
+            double sinkStart=CACurrentMediaTime();
             id<CAMetalDrawable> phone=[live.phone nextDrawable],tv=[live.external nextDrawable];
+            @synchronized(live){live.sinkWaitMax=MAX(live.sinkWaitMax,CACurrentMediaTime()-sinkStart);}
             @synchronized(live){if(!live.presentationQueue)live.presentationQueue=[texture.device newCommandQueue];}
             id<MTLCommandBuffer> buffer=[live.presentationQueue commandBuffer];
             CGSize topSize=live.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
@@ -352,6 +382,7 @@ static void presentSnapshot(id<MTLTexture> texture,MASPlan *live,MASViewport vp)
             [buffer presentDrawable:phone];[buffer presentDrawable:tv];
             [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
                 recycleSnapshot(live,texture);
+                @synchronized(live){if(finished.status==MTLCommandBufferStatusCompleted)live.presentations++;}
                 dispatch_async(dispatch_get_main_queue(),^{
                     if(m.plan!=live||finished.status!=MTLCommandBufferStatusCompleted)return;
                     m.liveViewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
@@ -370,19 +401,23 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
     MASPlan *plan=MASManager.shared.plan;
     if(plan.source!=layer)return;
     if(dispatch_semaphore_wait(plan.snapshotSlots,DISPATCH_TIME_NOW)!=0) {
+        @synchronized(plan){plan.dropped++;}
 #ifdef MAS_TESTING
         masSnapshotsSkipped++;
 #endif
         return;
     }
+    double copyStart=CACurrentMediaTime();
+    @synchronized(plan){plan.snapshots++;plan.inflight++;plan.peakInflight=MAX(plan.peakInflight,plan.inflight);}
     id<MTLTexture> source=drawable.texture,snapshot=nil;
     @synchronized(plan.freeSnapshots){snapshot=plan.freeSnapshots.lastObject;if(snapshot)[plan.freeSnapshots removeLastObject];}
     if(snapshot.width!=source.width||snapshot.height!=source.height||snapshot.pixelFormat!=source.pixelFormat) {
         MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:source.width height:source.height mipmapped:NO];
         desc.storageMode=MTLStorageModePrivate;desc.usage=MTLTextureUsageShaderRead;
         snapshot=[source.device newTextureWithDescriptor:desc];
+        @synchronized(plan){plan.allocations++;}
     }
-    if(!snapshot){dispatch_semaphore_signal(plan.snapshotSlots);return;}
+    if(!snapshot){@synchronized(plan){plan.inflight--;}dispatch_semaphore_signal(plan.snapshotSlots);return;}
     MASViewport vp={0,0,(unsigned)source.width,(unsigned)source.height,(unsigned)source.width,(unsigned)source.height};
     if(driverViewport)driverViewport(&vp);
     @synchronized(plan){if(!plan.presentationQueue)plan.presentationQueue=[source.device newCommandQueue];}
@@ -392,7 +427,9 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
     [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
               sourceSize:MTLSizeMake(source.width,source.height,1) toTexture:snapshot destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
     [blit endEncoding];
+    @synchronized(plan){plan.copyEncodeMax=MAX(plan.copyEncodeMax,CACurrentMediaTime()-copyStart);}
     [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        @synchronized(plan){plan.copyCompletionMax=MAX(plan.copyCompletionMax,CACurrentMediaTime()-copyStart);}
         // Retain the source only through this GPU copy, never through sink waits.
         (void)drawable;
         if(finished.status!=MTLCommandBufferStatusCompleted){recycleSnapshot(plan,snapshot);return;}
@@ -445,7 +482,9 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
     if((layer==p.phone||layer==p.external)&&NSThread.isMainThread)masSinkAcquisitionsOnMain++;
 #endif
     if(p.source==layer)layer.framebufferOnly=NO;
+    double acquireStart=CACurrentMediaTime();
     id<CAMetalDrawable> drawable=originalLayerDrawable(layer,cmd);
+    if(p.source==layer)@synchronized(p){p.sourceFrames++;p.sourceWaitMax=MAX(p.sourceWaitMax,CACurrentMediaTime()-acquireStart);}
     if(p.source==layer&&drawable) {
         objc_setAssociatedObject(drawable,encodedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(drawable,sourceKey,layer,OBJC_ASSOCIATION_RETAIN_NONATOMIC);

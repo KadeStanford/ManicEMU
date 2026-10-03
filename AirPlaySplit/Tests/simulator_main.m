@@ -246,6 +246,15 @@ static void gpu(void) {
         NSLog(@"Matched synthetic producer GPU timings: AirPlay off %.3f ms; blocked AirPlay on %.3f ms (20 frames)",timings[0]*1000,timings[1]*1000);
         check(@"blocked_sink_cannot_block_producer_gpu_completion",timings[1]<1.0&&masSnapshotsSkipped>=17);
         check(@"capture_pool_bounded_under_sink_backpressure",dispatch_semaphore_wait(perfPlan.snapshotSlots,DISPATCH_TIME_NOW)!=0);
+        check(@"capture_accounting_records_three_inflight_snapshots",perfPlan.inflight==3&&perfPlan.peakInflight==3&&perfPlan.dropped>=17);
+        NSDictionary *metrics=performanceMetrics(perfPlan);
+        NSString *metricsDir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+        NSMutableDictionary *timed=[metrics mutableCopy];
+        timed[@"synthetic_20_frames_casting_off_ms"]=@(timings[0]*1000);
+        timed[@"synthetic_20_frames_blocked_sink_ms"]=@(timings[1]*1000);
+        timed[@"physical_airplay_measured"]=@NO;
+        [[NSJSONSerialization dataWithJSONObject:timed options:NSJSONWritingPrettyPrinted error:nil]
+            writeToFile:[metricsDir stringByAppendingPathComponent:@"performance.json"] atomically:YES];
         dispatch_semaphore_signal(resume);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);

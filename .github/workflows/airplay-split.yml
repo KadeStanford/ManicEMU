@@ -28,3 +28,4 @@ jobs:
           path: |
             AirPlaySplit/build/ManicAirPlaySplit.framework
             AirPlaySplit/build-simulator/smoke.json
+            AirPlaySplit/build-simulator/performance.json
