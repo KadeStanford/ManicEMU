@@ -38,6 +38,8 @@ int main(void){
     retro_run();assert(backups==1);unsigned before=videos;retro_run();assert(videos==before+1&&MT_phase()==MT_WAITING);
     uint8_t session[16]={9};MT_connect(0,session);retro_run();assert(netplay_client_id==0&&netplay_num_clients==1);
     uint8_t packet[56];assert(MT_next_packet(0,packet));assert(!memcmp(packet+32,"MPK1",4));
+    size_t state_size=retro_serialize_size();void *state=malloc(state_size);assert(state&&retro_serialize(state,state_size));
+    assert(!retro_unserialize(state,state_size));free(state); // No one-sided rewind in a live link.
     // Master timing at 115200: 2621 clocks per player, two players.
     serial_set_irq_cycles(0);write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_siocnt(0x6083);assert(serial_get_irq_cycles()==5242);
     assert(!update_serial(5241));assert(update_serial(1));assert(!(read_ioreg(REG_SIOCNT)&0x80));

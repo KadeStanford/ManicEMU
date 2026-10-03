@@ -386,6 +386,12 @@ static void init_post_processing(void)
 /* Video post processing END */
 
 /* Fast forward override */
+static bool trade_speed_locked;
+static bool trade_busy(void) {
+   enum MTPhase p = MT_phase();
+   return MT_active() && (p == MT_WAITING || p == MT_LINKED ||
+      p == MT_SUSPENDED || p == MT_RESTORE || p == MT_BROKEN);
+}
 void set_fastforward_override(bool fastforward)
 {
    struct retro_fastforwarding_override ff_override;
@@ -396,7 +402,14 @@ void set_fastforward_override(bool fastforward)
    ff_override.ratio        = -1.0f;
    ff_override.notification = true;
 
-   if (fastforward)
+   if (trade_busy())
+   {
+      ff_override.ratio = 1.0f;
+      ff_override.fastforward = false;
+      ff_override.notification = false;
+      ff_override.inhibit_toggle = true;
+   }
+   else if (fastforward)
    {
       ff_override.fastforward    = true;
       ff_override.inhibit_toggle = true;
@@ -865,6 +878,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device) {}
 
 void retro_reset(void)
 {
+   if (trade_busy()) { MT_failure("Game reset during a link session. Restore the pre-trade checkpoint."); return; }
    reset_gba();
 }
 
@@ -886,6 +900,8 @@ bool retro_serialize(void* data, size_t size)
 
 bool retro_unserialize(const void* data, size_t size)
 {
+   if (trade_busy() && MT_phase() != MT_RESTORE)
+      return false; // Rewind/load-state cannot replace one peer's live cable state.
    if (size != GBA_STATE_MEM_SIZE)
       return false;
 
@@ -1165,6 +1181,7 @@ static void check_variables(bool started_from_load)
       turbo_a_counter = 0;
       turbo_b_counter = 0;
    }
+   if (MT_active()) serial_mode = SERIAL_MODE_SERIAL_POKE;
 }
 
 static void set_input_descriptors()
@@ -1351,8 +1368,9 @@ bool retro_load_game_special(unsigned game_type,
 void retro_unload_game(void)
 {
    MT_unloaded();
-   if (libretro_ff_enabled)
+   if (libretro_ff_enabled || trade_speed_locked)
       set_fastforward_override(false);
+   trade_speed_locked = false;
 
    libretro_supports_bitmasks    = false;
    libretro_supports_ff_override = false;
@@ -1393,6 +1411,11 @@ size_t retro_get_memory_size(unsigned id)
 void retro_run(void)
 {
    bool updated = false;
+   bool locked = trade_busy();
+   if (locked != trade_speed_locked) {
+      trade_speed_locked = locked;
+      set_fastforward_override(libretro_ff_enabled);
+   }
 
    MTGBA trade = { manic_trade_start, manic_trade_receive, manic_trade_stop,
       retro_serialize_size, retro_serialize, retro_unserialize, gamepak_backup };
