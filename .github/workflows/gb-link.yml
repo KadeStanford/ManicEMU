@@ -48,3 +48,11 @@ jobs:
         with:
           name: ManicGBA-Trade-unsigned
           path: TradeLink/build/*.framework
+      - name: Verify native in-game discovery UI in iOS simulator
+        run: bash TradeLink/scripts/simulator-smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GBA-Trade-UI-smoke
+          path: |
+            TradeLink/build-simulator/smoke.json
+            TradeLink/build-simulator/gba-trade-ui.png
