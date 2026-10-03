@@ -18,7 +18,9 @@ jobs:
           git clone --depth 1 --branch v1.2.8 https://github.com/KhronosGroup/MoltenVK.git "$RUNNER_TEMP/moltenvk-source"
           cd "$RUNNER_TEMP/moltenvk-source"
           test "$(git rev-parse HEAD)" = 1d98babb721c03667f65e7f6197ca2a356d19198
-          ./fetchDependencies --iossim --parallel-build
+          # Upstream --parallel-build installs an EXIT 'kill 0' trap, which
+          # terminates the Actions runner's process group after dependencies.
+          ./fetchDependencies --iossim --no-parallel-build
           make iossim
       - name: Exercise real simulator driver with Vulkan preflight
         run: |

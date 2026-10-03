@@ -43,13 +43,24 @@ static void logger(int level,const char *format,...) {
     int n=vsnprintf(line,sizeof(line),format,args);va_end(args);
     if(n>0&&logFD>=0){write(logFD,line,MIN((size_t)n,sizeof(line)-1));fsync(logFD);}
 }
+#ifdef MANIC_GAME_VULKAN
+#include "simulator_vulkan_frontend.h"
+#endif
 static bool environment(unsigned command,void *data) {
     unsigned cmd=command&~0x10000U;
+#ifdef MANIC_GAME_VULKAN
+    if(cmd==14||cmd==41||cmd==43||cmd==56||cmd==73)return vkEnvironment(cmd,data);
+#endif
     switch(cmd) {
         case 27:*(void **)data=(void *)logger;return true;
         case 9:case 30:case 31:*(const char **)data=root.fileSystemRepresentation;return true;
         case 15:{Variable *v=data;
-            if(!strcmp(v->key,"citra_graphics_api"))v->value="Software";
+            if(!strcmp(v->key,"citra_graphics_api"))v->value=
+#ifdef MANIC_GAME_VULKAN
+                "Vulkan";
+#else
+                "Software";
+#endif
             else if(!strcmp(v->key,"citra_use_cpu_jit"))v->value="disabled";
             else if(!strcmp(v->key,"citra_is_new_3ds"))v->value="New 3DS";
             else if(!strcmp(v->key,"citra_resolution_factor"))v->value="1";
@@ -63,6 +74,9 @@ static bool environment(unsigned command,void *data) {
     }
 }
 static void video(const void *pixels,unsigned width,unsigned height,size_t pitch) {
+#ifdef MANIC_GAME_VULKAN
+    if(pixels==(void *)-1){vulkanVideo(width,height);return;}
+#endif
     if(!pixels||pixels==(void *)-1)return;
     frames++;bool visible=false;
     for(unsigned y=0;y<height&&!visible;y+=MAX(1,height/32))
@@ -106,6 +120,9 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         report=[@{@"actual_game_load_attempted":@NO,@"game_execution_completed":@NO,
             @"plugin_menu_verified":@NO,@"renderer":@"Software",
             @"original_inputs_and_saves_unchanged":@YES} mutableCopy];
+#ifdef MANIC_GAME_VULKAN
+        report[@"renderer"]=@"Vulkan";
+#endif
         logFD=open([root stringByAppendingPathComponent:@"core-runtime.log"].fileSystemRepresentation,O_CREAT|O_WRONLY|O_APPEND,0600);
         signalFD=open([root stringByAppendingPathComponent:@"fatal-signal.bin"].fileSystemRepresentation,O_CREAT|O_WRONLY|O_EXCL,0600);
         struct sigaction action={0};action.sa_sigaction=fatalSignal;action.sa_flags=SA_SIGINFO;
@@ -160,6 +177,19 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         Game game={gamePath.fileSystemRepresentation,NULL,0,NULL};
         report[@"actual_game_load_attempted"]=@YES;bool loaded=load(&game);
         report[@"retro_load_game_returned"]=@(loaded);checkpoint(loaded?@"retro_run":@"load_rejected");
+#ifdef MANIC_GAME_VULKAN
+        if(loaded){
+            if(!initializeVulkan()){report[@"vulkan_initialization_failed"]=@YES;checkpoint(@"vulkan_initialization_failed");return;}
+            Dl_info driver={0};dladdr(vkGet,&driver);
+            const struct mach_header_64 *h=driver.dli_fbase;const uint8_t *command=(const void *)(h+1);uint64_t size=0;
+            for(uint32_t i=0;i<h->ncmds;i++){const struct load_command *l=(const void *)command;
+                if(l->cmd==LC_SEGMENT_64){const struct segment_command_64 *s=(const void *)command;if(!strcmp(s->segname,"__TEXT"))size=s->vmsize;}command+=l->cmdsize;}
+            [images addObject:@{@"name":@"moltenvk-probe.dylib",@"base":@((uintptr_t)driver.dli_fbase),@"text_size":@(size)}];report[@"loaded_images"]=images;
+            checkpoint(@"vulkan_context_reset");
+            if(!hardware.context_reset){checkpoint(@"missing_vulkan_context_reset");return;}
+            hardware.context_reset();report[@"vulkan_context_reset_returned"]=@YES;
+        }
+#endif
         if(loaded){
             NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:120];
             while(!shutdownRequested&&runCalls<3600&&deadline.timeIntervalSinceNow>0){

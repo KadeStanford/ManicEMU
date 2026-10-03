@@ -6,6 +6,10 @@ build="$PWD/build-probe"
 app="$build/GameProbe.app"
 mkdir -p "$app"
 cp "$build/GameProbe" "$app/GameProbe"
+if [[ -n "${MANIC_PROBE_VULKAN_DRIVER:-}" ]]; then
+  cp "$MANIC_PROBE_VULKAN_DRIVER" "$app/moltenvk-probe.dylib"
+  codesign --force --sign - "$app/moltenvk-probe.dylib"
+fi
 python3 - "$build/original-core-download.dylib" "$app/game-probe-core.dylib" <<'PY'
 import hashlib,pathlib,struct,sys,os
 b=pathlib.Path(sys.argv[1]).read_bytes()
@@ -87,7 +91,7 @@ PY
     [[ -s "$container/Documents/fatal-signal.bin" ]] && break
     if [[ -s "$container/Documents/game-probe.json" ]] && python3 - "$container/Documents/game-probe.json" <<'PY'
 import json,sys
-sys.exit(0 if json.load(open(sys.argv[1])).get('stage') in ['completed','dlopen_failed','missing_entrypoint'] else 1)
+sys.exit(0 if json.load(open(sys.argv[1])).get('stage') in ['completed','dlopen_failed','missing_entrypoint','vulkan_initialization_failed','missing_vulkan_context_reset'] else 1)
 PY
     then break; fi
     sleep 1

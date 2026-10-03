@@ -1,0 +1,24 @@
+name: Vulkan private frontend compile check
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/Tests/**', '.github/workflows/vulkan-frontend-compile.yml']
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Compile the real Vulkan diagnostic frontend
+        run: |
+          curl --fail --location --retry 3 --silent --show-error https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.8/MoltenVK-ios.tar -o "$RUNNER_TEMP/sdk.tar"
+          test "$(shasum -a 256 "$RUNNER_TEMP/sdk.tar" | cut -d' ' -f1)" = 778980f84f1afe7f5058df469fe9715d767a9891afb5497dd90ff29a7fa384a1
+          mkdir "$RUNNER_TEMP/vulkan-sdk"
+          tar -xf "$RUNNER_TEMP/sdk.tar" -C "$RUNNER_TEMP/vulkan-sdk"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" -fobjc-arc -Wall -Werror -Wno-unused-parameter \
+            -DMANIC_GAME_VULKAN=1 -I "$RUNNER_TEMP/vulkan-sdk/MoltenVK/MoltenVK/include" -I OriginalCoreRepair/Tests/vendor \
+            OriginalCoreRepair/Tests/simulator_game_probe.m -framework UIKit -framework Foundation -framework CoreGraphics -o "$RUNNER_TEMP/VulkanGameProbe"
