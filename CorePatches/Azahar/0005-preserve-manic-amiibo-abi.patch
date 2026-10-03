@@ -1,0 +1,36 @@
+diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -888,2 +888,20 @@ extern "C" RETRO_API void retro_azahar_install_cia(const char* path) {
+     retro_install_cia(path);
+ }
++
++// Preserve every Manic-specific entry point from the supplied Azahar core.
++// Its extension ABI reports version 1 (mov w0, #1; ret).
++extern "C" RETRO_API unsigned retro_azahar_extension_version() {
++    return 1;
++}
++
++extern "C" RETRO_API bool retro_azahar_load_amiibo(const char* path) {
++    return retro_load_amiibo(path);
++}
++
++extern "C" RETRO_API bool retro_azahar_is_searching_amiibo() {
++    return retro_is_searching_amiibo();
++}
++
++extern "C" RETRO_API void retro_azahar_remove_amiibo() {
++    retro_remove_amiibo();
++}
+diff --git a/src/citra_libretro/libretro.osx.def b/src/citra_libretro/libretro.osx.def
+--- a/src/citra_libretro/libretro.osx.def
++++ b/src/citra_libretro/libretro.osx.def
+@@ -34,4 +34,8 @@ _retro_keyboard_input
+ _retro_azahar_set_keyboard_callback
+ _retro_azahar_keyboard_input
+ _retro_azahar_install_cia
+ _retro_install_cia
++_retro_azahar_extension_version
++_retro_azahar_load_amiibo
++_retro_azahar_is_searching_amiibo
++_retro_azahar_remove_amiibo

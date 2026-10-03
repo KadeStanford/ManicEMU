@@ -1,7 +1,7 @@
 name: Azahar iOS source build probe
 on:
   push:
-    branches: [feature/dual-airplay-foundation]
+    branches: [feature/dual-airplay-foundation, recovery/dual-airplay-azahar]
     paths:
       - '.github/workflows/azahar-build-probe.yml'
       - 'CorePatches/Azahar/**'
@@ -49,7 +49,8 @@ jobs:
           core=azahar-build/bin/Release/azahar_libretro.dylib
           test -s "$core"
           install_name_tool -id '@rpath/azahar.libretro.framework/azahar.libretro' "$core"
-          for symbol in _retro_azahar_set_keyboard_callback _retro_azahar_keyboard_input _retro_azahar_install_cia; do
+          for symbol in _retro_azahar_set_keyboard_callback _retro_azahar_keyboard_input _retro_azahar_install_cia \
+            _retro_azahar_extension_version _retro_azahar_load_amiibo _retro_azahar_is_searching_amiibo _retro_azahar_remove_amiibo; do
             nm -gU "$core" | grep -Fq "$symbol"
           done
           file "$core"
