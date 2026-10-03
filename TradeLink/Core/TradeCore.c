@@ -69,7 +69,7 @@ void MT_leave(void) {
         g.out_head=g.out_count=g.in_head=g.in_count=0;g.tx=g.rx=g.acked=0;fn=g.stopped;
     }pthread_mutex_unlock(&lock);if(fn)fn("Cable session ended");
 }
-void MT_complete(void) { pthread_mutex_lock(&lock);if(g.leaving&&!g.out_count)g.complete=1;pthread_mutex_unlock(&lock); }
+int MT_complete(void) { int done;pthread_mutex_lock(&lock);done=g.leaving&&!g.out_count&&!g.in_count;if(done)g.complete=1;pthread_mutex_unlock(&lock);return done; }
 size_t MT_pending(void) { size_t n;pthread_mutex_lock(&lock);n=g.out_count;pthread_mutex_unlock(&lock);return n; }
 void MT_connect(unsigned role,const uint8_t session[16]) {
     pthread_mutex_lock(&lock);
@@ -92,7 +92,7 @@ void MT_poll_receive(void) {
 int MT_frame(const MTGBA *gba) {
     enum MTPhase phase;int capture=0,start=0,restore=0;unsigned role=0;MTSnapshot fn=NULL;
     pthread_mutex_lock(&lock);g.gba=*gba;phase=g.phase;
-    if(g.complete){if(g.started&&gba->stop)gba->stop();g.started=g.captured=g.leaving=g.complete=0;g.phase=phase=MT_IDLE;free(g.state);g.state=NULL;g.state_size=0;g.in_count=0;g.tx=g.rx=g.acked=0;}
+    if(g.complete){if(g.started&&gba->stop)gba->stop();g.started=g.captured=g.leaving=g.complete=0;g.phase=phase=MT_IDLE;free(g.state);g.state=NULL;g.state_size=0;g.out_head=g.in_head=g.out_count=g.in_count=0;g.tx=g.rx=g.acked=0;}
     if(phase==MT_WAITING&&!g.captured)capture=1;
     if(phase==MT_LINKED&&!g.started){g.started=1;start=1;role=g.role;}
     if(phase==MT_RESTORE)restore=1;

@@ -32,7 +32,7 @@ int MT_active(void);
 enum MTPhase MT_phase(void);
 void MT_request(void); // Called at the first Gen3 cable handshake, on core thread.
 void MT_leave(void);
-void MT_complete(void);
+int MT_complete(void); // True only after both incoming and outgoing queues drain.
 size_t MT_pending(void);
 int MT_frame(const MTGBA *gba); // Core thread only. No UI/network code executes here.
 void MT_connect(unsigned role, const uint8_t session[16]);

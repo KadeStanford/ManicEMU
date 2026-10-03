@@ -7,7 +7,7 @@
 #import <objc/runtime.h>
 #include "TradeCore.h"
 
-static NSString *const Protocol = @"g3-fc4afeb-mtr1";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr1";
 static NSString *const Service = @"manic-trade";
 static UIViewController *presenter(void) {
     UIViewController *vc=nil;
@@ -64,7 +64,7 @@ static NSString *gameTitle(NSString *code) {
     NSError *error;if(![_session sendData:d toPeers:@[_partner] withMode:MCSessionSendDataReliable error:&error]&&![command isEqual:@"PAUSE"])[self halt:@"The connection stopped. Your pre-trade backups are safe."];
 }
 - (BOOL)valid:(NSDictionary *)meta {
-    if(![meta isKindOfClass:NSDictionary.class]||![meta[@"v"] isEqual:Protocol]||!unhex(meta[@"room"]))return NO;
+    if(![meta isKindOfClass:NSDictionary.class]||![meta[@"v"] isEqual:TradeProtocol]||!unhex(meta[@"room"]))return NO;
     NSString *code=meta[@"code"];
     if(![code isKindOfClass:NSString.class]||code.length!=4)return NO;
     NSData *a=[_meta[@"code"] dataUsingEncoding:NSASCIIStringEncoding],*b=[code dataUsingEncoding:NSASCIIStringEncoding];
@@ -74,7 +74,7 @@ static NSString *gameTitle(NSString *code) {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;
     _ending=NO;_fatal=NO;_localDone=_remoteDone=_sentDone=NO;_ready=_peerReady=NO;_cursor=0;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
-    _meta=@{@"v":Protocol,@"room":hex(_room),@"code":code};
+    _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     _identity=[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"%@ · %@",UIDevice.currentDevice.model,[_epoch substringToIndex:4]]];
     // Copy only the current game's core-owned battery/checkpoint; no file scans.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -156,7 +156,7 @@ static NSString *gameTitle(NSString *code) {
         }
     }
     if(_localDone&&!MT_pending()&&!_sentDone){_sentDone=YES;[self control:@"DONE"];}
-    if(_localDone&&_remoteDone&&!MT_pending()){MT_complete();[self cleanup];return;}
+    if(_localDone&&_remoteDone&&MT_complete()){[self cleanup];return;}
     static unsigned count=0;if(++count%40==0)[self control:@"PING"];
 }
 - (void)ended:(NSString *)reason {
@@ -194,12 +194,12 @@ static NSString *gameTitle(NSString *code) {
         NSString *command=meta[@"MT"];
         if([command isEqual:@"HELLO"]){
             self->_peerReady=YES;if(!self->_ready)return;
-            NSData *other=unhex(meta[@"room"]);BOOL first=MT_phase()==MT_WAITING;
+            NSData *other=unhex(meta[@"room"]);BOOL first=MT_phase()==MT_WAITING,resuming=MT_phase()==MT_SUSPENDED;
             if(first){BOOL parent=memcmp(self->_room.bytes,other.bytes,16)<0;NSData *sessionID=parent?self->_room:other;MT_connect(parent?0:1,sessionID.bytes);}
             else if(MT_phase()==MT_SUSPENDED)MT_resume();
             [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
             self->_cursor=0;self->_lastResend=CACurrentMediaTime();
-            if(first)[self control:@"HELLO"];
+            if(first||resuming)[self control:@"HELLO"];
         }else if([command isEqual:@"PAUSE"]){MT_suspend();self->_ready=self->_peerReady=NO;[self halt:@"The other game paused. Return to both games and reconnect."];}
         else if([command isEqual:@"DONE"]){self->_remoteDone=YES;[self tick:nil];}
         else if(![command isEqual:@"PING"]){self->_fatal=YES;[self halt:@"Unknown trade message. Restore the pre-trade checkpoint."];}
@@ -223,7 +223,7 @@ static NSString *gameTitle(NSString *code) {
     dispatch_async(dispatch_get_main_queue(),^{[self->_peers removeObjectForKey:peer];[self finder];});
 }
 - (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didNotStartAdvertisingPeer:(NSError *)error {dispatch_async(dispatch_get_main_queue(),^{MT_cancel();[self cleanup];[self notice:@"Nearby trading unavailable" message:@"Allow Local Network access for Manic in iOS Settings, then enter the cable club again."];});}
-- (void)browser:(MCNearbyServiceBrowser *)browser didNotStartBrowsingForPeers:(NSError *)error { [self advertiser:nil didNotStartAdvertisingPeer:error]; }
+- (void)browser:(MCNearbyServiceBrowser *)browser didNotStartBrowsingForPeers:(NSError *)error { [self advertiser:_advertiser didNotStartAdvertisingPeer:error]; }
 - (void)session:(MCSession *)session didReceiveStream:(NSInputStream *)stream withName:(NSString *)name fromPeer:(MCPeerID *)peer {[stream close];}
 - (void)session:(MCSession *)session didStartReceivingResourceWithName:(NSString *)name fromPeer:(MCPeerID *)peer withProgress:(NSProgress *)progress {[progress cancel];}
 - (void)session:(MCSession *)session didFinishReceivingResourceWithName:(NSString *)name fromPeer:(MCPeerID *)peer atURL:(NSURL *)url withError:(NSError *)error {}

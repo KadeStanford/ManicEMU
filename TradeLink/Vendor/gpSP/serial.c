@@ -76,8 +76,8 @@ uint16_t serial_mul_siocnt() {
 
 cpu_alert_type write_rcnt(u16 value) {
   u16 oldval = read_ioreg(REG_RCNT);
-  u32 pvmode = get_serial_mode(oldval, read_ioreg(REG_RCNT));
-  u32 nwmode = get_serial_mode(value, read_ioreg(REG_RCNT));
+  u32 pvmode = get_serial_mode(read_ioreg(REG_SIOCNT), oldval);
+  u32 nwmode = get_serial_mode(read_ioreg(REG_SIOCNT), value);
 
   write_ioreg(REG_RCNT, value);
   if (MT_active() && get_serial_mode(read_ioreg(REG_SIOCNT), value) != SERIAL_MODE_MULTI)
@@ -112,6 +112,8 @@ cpu_alert_type write_siocnt(u16 value) {
   u16 newval = (value & 0x7F8B) | (oldval & 0x0004);
   u32 pvmode = get_serial_mode(oldval, read_ioreg(REG_RCNT));
   u32 nwmode = get_serial_mode(newval, read_ioreg(REG_RCNT));
+  if (MT_active() && pvmode == SERIAL_MODE_MULTI && nwmode != SERIAL_MODE_MULTI)
+    MT_leave();
 
   switch (nwmode) {
   case SERIAL_MODE_NORMAL:
