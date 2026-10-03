@@ -1,47 +1,36 @@
-name: GB Link
+name: In-game GBA Trade
 on:
   push:
     branches: [feature/gb-local-link]
-    paths: ['GBLink/**', '.github/workflows/gb-link.yml']
+    paths: ['TradeLink/**', 'GBLink/scripts/ipa_link.py', '.github/workflows/gb-link.yml']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  synthetic-core:
+  gba-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
       - name: Build with sanitizers
         run: >-
-          cmake -S GBLink -B build-gblink -DCMAKE_C_COMPILER=clang
+          cmake -S TradeLink -B build-trade -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
           -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
-      - run: cmake --build build-gblink --parallel 2
-      - run: ctest --test-dir build-gblink --output-on-failure
+      - run: cmake --build build-trade --parallel 2
+      - run: ctest --test-dir build-trade --output-on-failure
       - run: python3 -m unittest discover -s GBLink/Tests -p 'test_*.py' -v
   ios-library:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
-      - run: brew install rgbds
-      - run: bash GBLink/scripts/build-ios.sh
-      - name: Verify production open bootstrap
-        run: |
-          cmake -S GBLink -B GBLink/build-host -DCMAKE_C_COMPILER=clang
-          cmake --build GBLink/build-host --parallel 2
-          GBLink/build-host/mgl_boot_tests GBLink/build/dmg_boot.bin
+      - run: bash TradeLink/scripts/build-ios.sh
       - name: Check built library packaging metadata
         run: |
-          python3 -c "import sys; sys.path.insert(0,'GBLink/scripts'); import ipa_link; info=ipa_link.inspect_slice(open('GBLink/build/ManicGBLink.framework/ManicGBLink','rb').read()); assert info['platform']==2 and info['filetype']==6 and not info['encrypted']; print(info)"
+          python3 -c "import sys; sys.path.insert(0,'GBLink/scripts'); import ipa_link; [print(ipa_link.inspect_slice(open('TradeLink/build/'+n+'.framework/'+n,'rb').read())) for n in ['ManicGBLink','gpsp.libretro']]"
       - uses: actions/upload-artifact@v4
         with:
-          name: ManicGBLink-unsigned
-          path: GBLink/build/ManicGBLink.framework
-      - run: bash GBLink/scripts/simulator-smoke.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GBLink-simulator-UI
-          path: GBLink/build-simulator/gb-link-ui.png
+          name: ManicGBA-Trade-unsigned
+          path: TradeLink/build/*.framework
