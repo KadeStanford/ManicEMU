@@ -71,6 +71,8 @@ static void check(NSString *key,BOOL passed);
 @implementation ExternalWindow @end
 @interface TestTouchInputView : UIView @end
 @implementation TestTouchInputView @end
+@interface GameView : UIView @end
+@implementation GameView @end
 
 // Exercise MoltenVK's public presentation pattern without calling Context end.
 static void presentWithoutContext(CAMetalLayer *layer) {
@@ -152,6 +154,15 @@ static void gpu(void) {
         [root.view addSubview:touchArea];[m refresh];
         touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
         check(@"skin_and_rotation_changes_follow_live_touch_region",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
+        CGRect portraitBounds=root.view.bounds;
+        root.view.bounds=CGRectMake(0,0,900,400);
+        UIView *mainSlot=[[GameView alloc] initWithFrame:CGRectMake(180,10,500,380)];
+        [root.view addSubview:mainSlot];touchArea.frame=CGRectMake(740,240,140,105);[m refresh];
+        check(@"landscape_uses_larger_skin_slot",CGRectEqualToRect(m.phoneSurface.frame,mainSlot.frame));
+        m.liveViewport=CGRectMake(0,0,256,384);[m touch:CGPointMake(0.2,0.8)];
+        check(@"landscape_touch_maps_into_bottom_screen",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-51.2)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-345.6)<0.001);
+        root.view.bounds=portraitBounds;[mainSlot removeFromSuperview];touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
+        check(@"return_to_portrait_restores_touch_slot",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
         [m.phoneSurface layoutIfNeeded];[m.externalSurface layoutIfNeeded];
         Context *context=[Context new];id<MTLCommandBuffer> frame=[context prepare:m.plan.source];
         [context nextDrawable];[context end];
@@ -175,9 +186,43 @@ static void gpu(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         check(@"vulkan_style_swap_keeps_presenting_without_context",masPresentedFrames>firstPresent&&ends==1&&loads==1&&stops==0);
         check(@"vulkan_style_swap_reverses_actual_output_pixels",masPresentedPhonePixel==0xFFFF0000&&masPresentedTVPixel==0xFF00FF00);
+        check(@"sink_drawable_acquisition_runs_off_emulation_thread",masSinkAcquisitionsOnMain==0);
+        // Simulate a blocked external presentation queue. Matched producer
+        // buffers continue to complete; the three-slot pool bounds capture work.
+        MASPlan *perfPlan=m.plan;
+        dispatch_semaphore_t entered=dispatch_semaphore_create(0),resume=dispatch_semaphore_create(0);
+        dispatch_async(perfPlan.displayQueue,^{dispatch_semaphore_signal(entered);dispatch_semaphore_wait(resume,DISPATCH_TIME_FOREVER);});
+        dispatch_semaphore_wait(entered,DISPATCH_TIME_FOREVER);
+        id<MTLDevice> perfDevice=perfPlan.source.device;
+        MTLTextureDescriptor *perfDesc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:256 height:384 mipmapped:NO];
+        perfDesc.usage=MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+        TestSourceDrawable *perfSource=[TestSourceDrawable new];perfSource.texture=[perfDevice newTextureWithDescriptor:perfDesc];
+        id<MTLCommandQueue> perfQueue=[perfDevice newCommandQueue];
+        CFTimeInterval timings[2];
+        for(unsigned enabled=0;enabled<2;enabled++) {
+            m.plan=enabled?perfPlan:nil;
+            CFTimeInterval start=CACurrentMediaTime();
+            for(unsigned i=0;i<20;i++) {
+                id<MTLCommandBuffer> producer=[perfQueue commandBuffer];
+                MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+                pass.colorAttachments[0].texture=perfSource.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+                id<MTLRenderCommandEncoder> encoder=[producer renderCommandEncoderWithDescriptor:pass];[encoder endEncoding];
+                captureFrame((id)perfSource,perfPlan.source,producer);
+                [producer commit];[producer waitUntilCompleted];
+            }
+            timings[enabled]=CACurrentMediaTime()-start;
+        }
+        m.plan=perfPlan;
+        NSLog(@"Matched synthetic producer GPU timings: AirPlay off %.3f ms; blocked AirPlay on %.3f ms (20 frames)",timings[0]*1000,timings[1]*1000);
+        check(@"blocked_sink_cannot_block_producer_gpu_completion",timings[1]<1.0&&masSnapshotsSkipped>=17);
+        check(@"capture_pool_bounded_under_sink_backpressure",dispatch_semaphore_wait(perfPlan.snapshotSlots,DISPATCH_TIME_NOW)!=0);
+        dispatch_semaphore_signal(resume);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
+        [self.external.rootViewController.view addSubview:vc.view];[m refresh];
+        check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
+        [root.view addSubview:vc.view];[m refresh];
         [core stop];check(@"stop_cleans_up_without_save_or_core_reload",stops==1&&loads==1&&!m.dual);
         gpu();
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Optional overlay for the original Manic/RetroArch Metal renderer. The emulator
-// produces one frame; both displays sample it on that same command buffer.
+// produces one frame; bounded GPU snapshots feed independent display work.
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
@@ -30,11 +30,15 @@ static Ivar layerIvar,drawableIvar,bufferIvar,encoderIvar;
 static unsigned masEncodedFrames;
 static unsigned masPresentedFrames;
 static uint32_t masPresentedPhonePixel,masPresentedTVPixel;
+static unsigned masSinkAcquisitionsOnMain,masSnapshotsSkipped;
 #endif
 
 @interface MASPlan : NSObject
 @property(strong) CAMetalLayer *source,*phone,*external;
 @property(strong) id<MTLCommandQueue> presentationQueue;
+@property(strong) dispatch_queue_t displayQueue;
+@property(strong) dispatch_semaphore_t snapshotSlots;
+@property(strong) NSMutableArray *freeSnapshots;
 @property BOOL threeDS,swapped,originalFramebufferOnly;
 @end
 @implementation MASPlan @end
@@ -77,6 +81,16 @@ static UIView *findTouchArea(UIView *view) {
     for(UIView *child in view.subviews){UIView *found=findTouchArea(child);if(found)return found;}
     return nil;
 }
+static void findScreenSlots(UIView *view,UIView *parent,CGRect *largest) {
+    // DeltaCore keeps a GameView for each skin outputFrame, including the empty
+    // main slot when the libretro view has moved to the external window.
+    if([NSStringFromClass(view.class) hasSuffix:@".GameView"] ||
+       [NSStringFromClass(view.class) isEqualToString:@"GameView"]) {
+        CGRect r=[view convertRect:view.bounds toView:parent];
+        if(r.size.width*r.size.height>largest->size.width*largest->size.height)*largest=r;
+    }
+    for(UIView *child in view.subviews)findScreenSlots(child,parent,largest);
+}
 static BOOL externalWindow(UIWindow *w) {
     if(!w)return NO;
 #ifdef MAS_TESTING
@@ -99,7 +113,8 @@ static NSString *canonical(BOOL threeDS) {
     CAMetalLayer *layer=(CAMetalLayer *)self.layer;
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     layer.contentsScale=scale;
-    layer.drawableSize=CGSizeMake(MAX(1,self.bounds.size.width*scale),MAX(1,self.bounds.size.height*scale));
+    CGSize size=CGSizeMake(MAX(1,self.bounds.size.width*scale),MAX(1,self.bounds.size.height*scale));
+    if(!CGSizeEqualToSize(layer.drawableSize,size))layer.drawableSize=size;
 }
 - (void)sendTouches:(NSSet<UITouch *> *)touches {
     if(!self.touchSurface) return;
@@ -204,16 +219,22 @@ static NSString *canonical(BOOL threeDS) {
     CGRect r=self.phoneRegion;r.origin.x*=sx;r.origin.y*=sy;r.size.width*=sx;r.size.height*=sy;
     UIView *touchArea=findTouchArea(self.phoneParent);
     if(touchArea)r=[touchArea convertRect:touchArea.bounds toView:self.phoneParent];
+    if(bounds.width>bounds.height) {
+        CGRect large=CGRectZero;findScreenSlots(self.phoneParent,self.phoneParent,&large);
+        if(!CGRectIsEmpty(large))r=large;
+    }
     self.phoneSurface.frame=CGRectIntersection(self.phoneParent.bounds,r);
     self.externalSurface.frame=external.bounds;
     self.swapButton.frame=CGRectMake(MAX(0,CGRectGetMaxX(self.phoneSurface.frame)-164),
                                      MAX(self.phoneParent.safeAreaInsets.top,CGRectGetMinY(self.phoneSurface.frame)-38),164,34);
-    [self.swapButton setTitle:self.swapped?@"Swap · TV touchpad":@"Swap screens" forState:UIControlStateNormal];
+    [self.swapButton setTitle:self.swapped?@"Swap Â· TV touchpad":@"Swap screens" forState:UIControlStateNormal];
     [self.phoneSurface setNeedsLayout];[self.externalSurface setNeedsLayout];
     MASPlan *old=self.plan;
     if(old.source==source&&old.swapped==self.swapped&&old.threeDS==self.threeDS)return;
     MASPlan *p=[MASPlan new];p.source=source;p.phone=(CAMetalLayer *)self.phoneSurface.layer;
     p.external=(CAMetalLayer *)self.externalSurface.layer;p.threeDS=self.threeDS;p.swapped=self.swapped;
+    p.displayQueue=dispatch_queue_create("org.manicemu.airplay.display",DISPATCH_QUEUE_SERIAL);
+    p.snapshotSlots=dispatch_semaphore_create(3);p.freeSnapshots=[NSMutableArray new];
     p.originalFramebufferOnly=old.source==source?old.originalFramebufferOnly:source.framebufferOnly;
     self.plan=p;
 }
@@ -263,13 +284,17 @@ static id masDrawable(id self,SEL cmd) {
 // Vulkan uses MetalLayerView/MoltenVK and never calls the Metal Context end hook.
 // Observe its actual swapchain drawable and copy after the producing command
 // buffer completes, independently of whether the source layer is occluded.
-static void copyPresentedFrame(id<CAMetalDrawable> presented,CAMetalLayer *layer) {
-            MASManager *m=MASManager.shared;MASPlan *live=m.plan;
-            if(live.source!=layer)return;
-            id<MTLTexture> texture=((id<CAMetalDrawable>)presented).texture;
-            MASViewport vp={0,0,(unsigned)texture.width,(unsigned)texture.height,
-                            (unsigned)texture.width,(unsigned)texture.height};
-            if(driverViewport)driverViewport(&vp);
+// Bound capture memory and discard stale display frames without waiting on the
+// emulation thread. Reusable private textures detach source drawables from the
+// phone/TV presentation queues, so a slow AirPlay sink cannot exhaust the core's
+// swapchain or block a Metal completion callback.
+static void recycleSnapshot(MASPlan *plan,id<MTLTexture> texture) {
+    @synchronized(plan.freeSnapshots){[plan.freeSnapshots addObject:texture];}
+    dispatch_semaphore_signal(plan.snapshotSlots);
+}
+static void presentSnapshot(id<MTLTexture> texture,MASPlan *live,MASViewport vp) {
+            MASManager *m=MASManager.shared;
+            if(m.plan!=live){recycleSnapshot(live,texture);return;}
             CGRect region=CGRectMake((CGFloat)vp.x/texture.width,(CGFloat)vp.y/texture.height,
                                      (CGFloat)vp.width/texture.width,(CGFloat)vp.height/texture.height);
             CGRect top=region,bottom=region;
@@ -281,7 +306,7 @@ static void copyPresentedFrame(id<CAMetalDrawable> presented,CAMetalLayer *layer
             CGSize topSize=live.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
             CGSize bottomSize=live.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
             if(!phone||!tv||!MASDrawCrop(buffer,texture,phone.texture,live.swapped?top:bottom,live.swapped?topSize:bottomSize)||
-               !MASDrawCrop(buffer,texture,tv.texture,live.swapped?bottom:top,live.swapped?bottomSize:topSize))return;
+               !MASDrawCrop(buffer,texture,tv.texture,live.swapped?bottom:top,live.swapped?bottomSize:topSize)){recycleSnapshot(live,texture);return;}
 #ifdef MAS_TESTING
             id<MTLBuffer> phoneReadback=[texture.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
             id<MTLBuffer> tvReadback=[texture.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
@@ -296,12 +321,12 @@ static void copyPresentedFrame(id<CAMetalDrawable> presented,CAMetalLayer *layer
 #endif
             [buffer presentDrawable:phone];[buffer presentDrawable:tv];
             [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-                // Keep the source drawable alive until both copies have finished.
-                (void)presented;
+                recycleSnapshot(live,texture);
                 dispatch_async(dispatch_get_main_queue(),^{
                     if(m.plan!=live||finished.status!=MTLCommandBufferStatusCompleted)return;
                     m.liveViewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
-                    m.phoneSurface.hidden=NO;m.externalSurface.hidden=NO;
+                    if(m.phoneSurface.hidden)m.phoneSurface.hidden=NO;
+                    if(m.externalSurface.hidden)m.externalSurface.hidden=NO;
 #ifdef MAS_TESTING
                     masPresentedFrames++;
                     masPresentedPhonePixel=*(uint32_t *)phoneReadback.contents;
@@ -311,6 +336,41 @@ static void copyPresentedFrame(id<CAMetalDrawable> presented,CAMetalLayer *layer
             }];
             [buffer commit];
 }
+static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTLCommandBuffer> producer) {
+    MASPlan *plan=MASManager.shared.plan;
+    if(plan.source!=layer)return;
+    if(dispatch_semaphore_wait(plan.snapshotSlots,DISPATCH_TIME_NOW)!=0) {
+#ifdef MAS_TESTING
+        masSnapshotsSkipped++;
+#endif
+        return;
+    }
+    id<MTLTexture> source=drawable.texture,snapshot=nil;
+    @synchronized(plan.freeSnapshots){snapshot=plan.freeSnapshots.lastObject;if(snapshot)[plan.freeSnapshots removeLastObject];}
+    if(snapshot.width!=source.width||snapshot.height!=source.height||snapshot.pixelFormat!=source.pixelFormat) {
+        MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:source.width height:source.height mipmapped:NO];
+        desc.storageMode=MTLStorageModePrivate;desc.usage=MTLTextureUsageShaderRead;
+        snapshot=[source.device newTextureWithDescriptor:desc];
+    }
+    if(!snapshot){dispatch_semaphore_signal(plan.snapshotSlots);return;}
+    MASViewport vp={0,0,(unsigned)source.width,(unsigned)source.height,(unsigned)source.width,(unsigned)source.height};
+    if(driverViewport)driverViewport(&vp);
+    @synchronized(plan){if(!plan.presentationQueue)plan.presentationQueue=[source.device newCommandQueue];}
+    id<MTLCommandBuffer> buffer=producer?:[plan.presentationQueue commandBuffer];
+    id<MTLBlitCommandEncoder> blit=[buffer blitCommandEncoder];
+    if(!blit){recycleSnapshot(plan,snapshot);return;}
+    [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
+              sourceSize:MTLSizeMake(source.width,source.height,1) toTexture:snapshot destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
+    [blit endEncoding];
+    [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        // Retain the source only through this GPU copy, never through sink waits.
+        (void)drawable;
+        if(finished.status!=MTLCommandBufferStatusCompleted){recycleSnapshot(plan,snapshot);return;}
+        dispatch_async(plan.displayQueue,^{presentSnapshot(snapshot,plan,vp);});
+    }];
+    if(!producer)[buffer commit];
+}
+static void copyPresentedFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer) {captureFrame(drawable,layer,nil);}
 static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
     CAMetalLayer *layer=objc_getAssociatedObject(drawable,sourceKey);
     id<MTLCommandBuffer> buffer=(__bridge id)scheduledBuffer;
@@ -322,6 +382,7 @@ static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
 static void masPresent(id self,SEL cmd) {recordScheduledPresentation(self);originalPresent(self,cmd);}
 static void masPresentAtTime(id self,SEL cmd,CFTimeInterval t) {recordScheduledPresentation(self);originalPresentAtTime(self,cmd,t);}
 static void masScheduled(id self,SEL cmd,MTLCommandBufferHandler action) {
+    if(!MASManager.shared.plan){originalScheduled(self,cmd,action);return;}
     if(!objc_getAssociatedObject(self,framesKey)&&MASManager.shared.plan) {
         NSMutableArray *frames=[NSMutableArray new];objc_setAssociatedObject(self,framesKey,frames,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [(id<MTLCommandBuffer>)self addCompletedHandler:^(id<MTLCommandBuffer> finished) {
@@ -349,6 +410,9 @@ static void hookPresentation(id<CAMetalDrawable> drawable) {
 }
 static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
     MASPlan *p=MASManager.shared.plan;
+#ifdef MAS_TESTING
+    if((layer==p.phone||layer==p.external)&&NSThread.isMainThread)masSinkAcquisitionsOnMain++;
+#endif
     if(p.source==layer)layer.framebufferOnly=NO;
     id<CAMetalDrawable> drawable=originalLayerDrawable(layer,cmd);
     if(p.source==layer&&drawable) {
@@ -372,34 +436,13 @@ static void masEnd(id self,SEL cmd) {
     id<CAMetalDrawable> drawable=object_getIvar(self,drawableIvar);
     id<MTLCommandBuffer> buffer=object_getIvar(self,bufferIvar);
     if(p.source==layer&&drawable&&buffer&&!layer.framebufferOnly) {
-        MASViewport *vp=((MASViewport *(*)(id,SEL))objc_msgSend)(self,NSSelectorFromString(@"viewport"));
         id<MTLRenderCommandEncoder> encoder=object_getIvar(self,encoderIvar);
         if(encoder){[encoder endEncoding];object_setIvar(self,encoderIvar,nil);}
-        CGRect normalized=CGRectMake((CGFloat)vp->x/drawable.texture.width,(CGFloat)vp->y/drawable.texture.height,
-                                      (CGFloat)vp->width/drawable.texture.width,(CGFloat)vp->height/drawable.texture.height);
-        CGRect top=normalized,bottom=normalized;
-        top.size.height*=0.5;bottom.origin.y+=bottom.size.height*0.5;bottom.size.height*=0.5;
-        if(p.threeDS){bottom.origin.x+=bottom.size.width*0.1;bottom.size.width*=0.8;}
-        id<CAMetalDrawable> phone=[p.phone nextDrawable],external=[p.external nextDrawable];
-        CGSize topSize=p.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
-        CGSize bottomSize=p.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
-        BOOL good=phone&&external&&MASDrawCrop(buffer,drawable.texture,phone.texture,p.swapped?top:bottom,p.swapped?topSize:bottomSize)&&
-                                      MASDrawCrop(buffer,drawable.texture,external.texture,p.swapped?bottom:top,p.swapped?bottomSize:topSize);
-        if(good) {
-            objc_setAssociatedObject(drawable,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        captureFrame(drawable,layer,buffer);
+        objc_setAssociatedObject(drawable,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 #ifdef MAS_TESTING
-            masEncodedFrames++;
+        masEncodedFrames++;
 #endif
-            CGRect live=CGRectMake(vp->x,vp->y,vp->width,vp->height);
-            [buffer presentDrawable:phone];[buffer presentDrawable:external];
-            [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished){
-                dispatch_async(dispatch_get_main_queue(),^{
-                    if(m.plan!=p)return;
-                    if(finished.status==MTLCommandBufferStatusCompleted){m.liveViewport=live;m.phoneSurface.hidden=NO;m.externalSurface.hidden=NO;}
-                    else {m.disabled=YES;[m removeSurfaces];(m.threeDS?original3DS:originalNDS)(m.core,NSSelectorFromString(m.threeDS?@"set3DSCustomLayout:":@"setNDSCustomLayout:"),m.requestedLayout);}
-                });
-            }];
-        }
     }
     originalEnd(self,cmd);
 }
