@@ -39,7 +39,7 @@ jobs:
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
-            -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=OFF -DENABLE_OPENGL=OFF \
+            -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON -DENABLE_OPENGL=OFF \
             -DENABLE_LTO=OFF -DENABLE_TESTS=OFF 2>&1 | tee "$RUNNER_TEMP/azahar-configure.log"
           cmake --build azahar-build --target azahar_libretro --config Release --parallel 3 \
             -- CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/azahar-build.log"
