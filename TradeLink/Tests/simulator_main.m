@@ -4,10 +4,18 @@
 #include <assert.h>
 #include <string.h>
 @interface LibretroCore : NSObject
++ (instancetype)sharedInstance;
 - (BOOL)loadGame:(NSString *)path corePath:(NSString *)core completion:(id)completion;
+- (void)pause;
+- (void)resume;
+- (BOOL)isPaused;
 @end
-@implementation LibretroCore
+@implementation LibretroCore {BOOL _paused;}
++ (instancetype)sharedInstance {static LibretroCore *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
 - (BOOL)loadGame:(NSString *)path corePath:(NSString *)core completion:(id)completion {return YES;}
+- (void)pause {_paused=YES;}
+- (void)resume {_paused=NO;}
+- (BOOL)isPaused {return _paused;}
 @end
 static uint8_t battery[MT_SAVE_SIZE],state[512];
 static void start(unsigned role){}static void receive(const void *p,size_t n,unsigned peer){}static void stop(void){}
@@ -36,7 +44,9 @@ static MTGBA gba={start,receive,stop,size,save,load,battery};
         NSArray<NSURL *> *folders=[NSFileManager.defaultManager contentsOfDirectoryAtURL:base includingPropertiesForKeys:nil options:0 error:nil];assert(folders.count==1);
         NSData *saved=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"synthetic.sav"]];assert(saved.length==MT_SAVE_SIZE&&((const uint8_t *)saved.bytes)[0]==0x45);
         NSData *checkpoint=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"pre-trade.gpspstate"]];assert(checkpoint.length==sizeof(state)&&((const uint8_t *)checkpoint.bytes)[0]==0x67);
-        NSDictionary *report=@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES};
+        uint8_t session[16]={1};MT_connect(0,session);assert(MT_frame(&gba));
+        [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_SUSPENDED&&[[LibretroCore sharedInstance] isPaused]);
+        NSDictionary *report=@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES};
         NSData *json=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];assert([json writeToURL:[documents URLByAppendingPathComponent:@"smoke.json"] atomically:YES]);
         NSLog(@"PASS: GBA in-game discovery picker and automatic backup UI smoke");
     });return YES;

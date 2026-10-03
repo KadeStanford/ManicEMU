@@ -46,7 +46,8 @@ Manic battery saving still updates the current game's save through its existing
 frontend. Neither the user-supplied IPA nor files on connected devices are edited
 by the packaging/build scripts.
 
-Disconnect/backgrounding suspends the cable; a 1.5-second receive timeout occurs
+Disconnect/backgrounding or Manic's public pause action suspends the cable;
+reconnect resumes the existing frontend through its public bridge. A 1.5-second receive timeout occurs
 before gpSP's normal four-second peer timeout. Reconnect uses the same peer,
 session identity and retained sequence queues. Duplicate retransmissions are
 acknowledged without being executed twice. A lost/overflowed core packet requires

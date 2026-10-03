@@ -5,10 +5,19 @@
 #import <CommonCrypto/CommonDigest.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include "TradeCore.h"
 
 static NSString *const TradeProtocol = @"g3-fc4afeb-mtr1";
 static NSString *const Service = @"manic-trade";
+static void resumeFrontend(void) {
+    Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
+    SEL paused=NSSelectorFromString(@"isPaused"),resume=NSSelectorFromString(@"resume");
+    if(![cls respondsToSelector:shared])return;
+    id bridge=((id (*)(id,SEL))objc_msgSend)(cls,shared);
+    if([bridge respondsToSelector:paused]&&[bridge respondsToSelector:resume]&&((BOOL (*)(id,SEL))objc_msgSend)(bridge,paused))
+        ((void (*)(id,SEL))objc_msgSend)(bridge,resume);
+}
 static UIViewController *presenter(void) {
     UIViewController *vc=nil;
     for(UIScene *s in UIApplication.sharedApplication.connectedScenes) if([s isKindOfClass:UIWindowScene.class])
@@ -135,6 +144,7 @@ static NSString *gameTitle(NSString *code) {
     [self dismissDialog];
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Trade paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
     if(!_fatal)[a addAction:[UIAlertAction actionWithTitle:@"Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        resumeFrontend();
         self->_ready=YES;self->_cursor=0;
         if([self->_session.connectedPeers containsObject:self->_partner])[self control:@"HELLO"];
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
@@ -199,6 +209,7 @@ static NSString *gameTitle(NSString *code) {
             NSData *other=unhex(meta[@"room"]);BOOL first=MT_phase()==MT_WAITING,resuming=MT_phase()==MT_SUSPENDED;
             if(first){BOOL parent=memcmp(self->_room.bytes,other.bytes,16)<0;NSData *sessionID=parent?self->_room:other;MT_connect(parent?0:1,sessionID.bytes);}
             else if(MT_phase()==MT_SUSPENDED)MT_resume();
+            resumeFrontend();
             [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
             self->_cursor=0;self->_lastResend=CACurrentMediaTime();
             if(first||resuming)[self control:@"HELLO"];
@@ -241,11 +252,20 @@ static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8Str
     if(MT_phase()==MT_CANCELLED){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Trading stopped" message:s];}
     else [[ManicTrade shared] halt:s];
 });}
+static void (*originalPause)(id,SEL);
+static void tradePause(id bridge,SEL selector) {
+    BOOL linked=MT_phase()==MT_LINKED;
+    if(linked)MT_suspend(); // Suspend before the frontend stops issuing frames.
+    originalPause(bridge,selector);
+    if(linked)dispatch_async(dispatch_get_main_queue(),^{[[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];});
+}
 __attribute__((constructor)) static void install_trade(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MGLInjectTrade"] boolValue])return;
     Class cls=NSClassFromString(@"LibretroCore");SEL sel=NSSelectorFromString(@"loadGame:corePath:completion:");
     Method method=cls?class_getInstanceMethod(cls,sel):NULL;
     if(!method||method_getNumberOfArguments(method)!=5)return;
+    Method pause=class_getInstanceMethod(cls,NSSelectorFromString(@"pause"));
+    if(pause&&method_getNumberOfArguments(pause)==2){originalPause=(void *)method_getImplementation(pause);method_setImplementation(pause,(IMP)tradePause);}
     // Use Manic's existing gpSP selection. Changing only the loaded dylib would
     // mislabel new save states as mGBA in the frontend's persisted metadata.
     // Core selection happens once at launch; pairing never swaps/restarts cores.
