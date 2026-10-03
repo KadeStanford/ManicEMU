@@ -1,0 +1,36 @@
+diff --git a/src/core/hle/service/plgldr/plgldr.cpp b/src/core/hle/service/plgldr/plgldr.cpp
+--- a/src/core/hle/service/plgldr/plgldr.cpp
++++ b/src/core/hle/service/plgldr/plgldr.cpp
+@@ -128,17 +128,20 @@ void PLG_LDR::OnProcessRun(Kernel::Process& process, Kernel::KernelSystem& kernel) {
+     } else {
+         const std::string plugin_root =
+             FileUtil::GetUserPath(FileUtil::UserPath::SDMCDir) + "luma/plugins/";
+-        const std::string plugin_tid =
+-            plugin_root + fmt::format("{:016X}", process.codeset->program_id);
+-        FileUtil::FSTEntry entry;
+-        FileUtil::ScanDirectoryTree(plugin_tid, entry);
+-        for (const auto& child : entry.children) {
+-            if (!child.isDirectory && child.physicalName.ends_with(".3gx")) {
+-                plgldr_context.is_default_path = false;
+-                plgldr_context.plugin_path = child.physicalName;
+-                if (plugin_loader.Load(plgldr_context, process, kernel, *this) ==
+-                    Loader::ResultStatus::Success) {
+-                    return;
++        // iOS storage can preserve case. Files downloaded through Files commonly
++        // use a lowercase title-id directory, while the original probe used uppercase.
++        for (const auto& title_id : {fmt::format("{:016X}", process.codeset->program_id),
++                                     fmt::format("{:016x}", process.codeset->program_id)}) {
++            FileUtil::FSTEntry entry;
++            FileUtil::ScanDirectoryTree(plugin_root + title_id, entry);
++            for (const auto& child : entry.children) {
++                if (!child.isDirectory && child.physicalName.ends_with(".3gx")) {
++                    plgldr_context.is_default_path = false;
++                    plgldr_context.plugin_path = child.physicalName;
++                    if (plugin_loader.Load(plgldr_context, process, kernel, *this) ==
++                        Loader::ResultStatus::Success) {
++                        return;
++                    }
+                 }
+             }
+         }
+
