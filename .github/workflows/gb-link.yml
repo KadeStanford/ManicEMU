@@ -1,7 +1,7 @@
 name: In-game GBA Link
 on:
   push:
-    branches: [feature/gb-local-link]
+    branches: [feature/gb-local-link, recovery/dual-airplay-azahar]
     paths: ['TradeLink/**', 'GBLink/scripts/ipa_link.py', '.github/workflows/gb-link.yml']
   workflow_dispatch:
 permissions:
