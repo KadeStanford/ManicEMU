@@ -7,6 +7,8 @@ This tests engine scheduling and transport, not real battle/game logic.
 from network_test import Peer, handshake, settle, close
 from transition_test import command_pair, reopen, block
 from exit_test import room_exit
+from pathlib import Path
+import json
 
 
 def measure(master, slave, calls, expected):
@@ -21,7 +23,10 @@ def measure(master, slave, calls, expected):
     for i,p in enumerate((master,slave)):
         assert p.clocks-clocks[i]==expected and p.polls-polls[i]==expected
         assert p.videos-videos[i]==calls
-    return [p.audio-audio[i] for i,p in enumerate((master,slave))]
+    return {'actual_frames':[p.clocks-clocks[i] for i,p in enumerate((master,slave))],
+            'input_polls':[p.polls-polls[i] for i,p in enumerate((master,slave))],
+            'displayed_images':[p.videos-videos[i] for i,p in enumerate((master,slave))],
+            'audio_samples':[p.audio-audio[i] for i,p in enumerate((master,slave))]}
 
 
 def main():
@@ -40,7 +45,7 @@ def main():
         # Forward unchanged turn/block halfwords while the negotiated mode is live.
         for seed in (17,61,127):block(master,slave,28,seed)
         accelerated=measure(master,slave,120,240)
-        for a,b in zip(normal,accelerated):assert abs(a-b)<250, (a,b)
+        for a,b in zip(normal['audio_samples'],accelerated['audio_samples']):assert abs(a-b)<250, (a,b)
         print(f'MEASURE: 120 frontend calls: trade=120 actual frames; linked battle=240 '
               f'actual frames; audio samples normal={normal}, battle={accelerated}; '
               'one displayed frame/call and input polled for every emulated frame',flush=True)
@@ -71,6 +76,12 @@ def main():
         for p in (master,slave):p.command('sio 2000')
         settle(master,slave);reopen(master,slave);command_pair(master,slave,0x2222,0x1111)
         room_exit(master,slave,flushes=2)
+        Path('battle-speed-metrics.json').write_text(json.dumps({
+            'frontend_calls_per_peer':120,'normal':normal,'accelerated':accelerated,
+            'maximum_peer_lead_frames':4,'wire_version':6,
+            'fixture':'Two real gpSP cores, legal ARM-loop ROM; no Pokemon game logic or physical phones',
+            'measurement_limit':'Frames per frontend call and audio/input counts, not physical-device wall-clock speed',
+        },indent=2)+'\n')
         print('PASS: trade -> accelerated battle -> trade; four-frame run-ahead stall/release; '
               'result/hold/real-drop gates, bilateral recovery, normal return/exit, saves and fresh bootstrap')
     finally:close(master);close(slave)

@@ -8,7 +8,7 @@ mkdir -p "$app/Frameworks"
 cp -R "$root/build-simulator/ManicGBLink.framework" "$app/Frameworks/"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" -fobjc-arc \
-  -I "$root/Core" "$root/Tests/simulator_main.m" -F "$app/Frameworks" -framework ManicGBLink -framework UIKit -framework Foundation -framework MultipeerConnectivity \
+  -I "$root/Core" "$root/Tests/simulator_main.m" -F "$app/Frameworks" -framework ManicGBLink -framework UIKit -framework Foundation -framework MultipeerConnectivity -framework QuartzCore \
   -Wl,-rpath,@executable_path/Frameworks -Wl,-export_dynamic -o "$app/TradeSmoke"
 cat > "$app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

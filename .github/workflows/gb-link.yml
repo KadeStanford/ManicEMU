@@ -36,6 +36,12 @@ jobs:
           cmake --build build-mgba --parallel 2
       - name: Verify mGBA battery preservation and state incompatibility
         run: python3 TradeLink/Tests/save_migrate.py build-trade/save_migrate build-mgba/mgba_libretro.so build-trade/libgpsp.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GBA-battle-speed-metrics
+          path: |
+            build-trade/battle-speed-metrics.json
+            build-trade/Testing/Temporary/LastTest.log
   ios-library:
     runs-on: macos-latest
     steps:
