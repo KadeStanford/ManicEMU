@@ -16,13 +16,14 @@ def reopen(master, slave, delay=5, first_slave=False):
     # create a new pairing/checkpoint, flush SRAM, or consume serial while off.
     first, second = (slave, master) if first_slave else (master, slave)
     for peer in (first, second):
+        epoch = peer.epoch
         for value in (0x2000, 0x6003, 0x2000, 0x2000, 0x6003, 0x2000):
             peer.command(f'sio {value:x}')
         peer.command('idle 300000')
         peer.command(f'frames {delay}')
         peer.command('rcnt 0')
         peer.command('sio 6003')
-        assert peer.phase == 3 and peer.flushes == 0
+        assert peer.phase == 3 and peer.flushes == 0 and peer.epoch == epoch
     settle(master, slave)
     handshake(master, slave)
 
@@ -64,7 +65,9 @@ def finish(master, slave):
         peer.command('frames 179')
         assert peer.phase == 3 and peer.flushes == 0
         peer.command('frame')
-    settle(master, slave)
+    for _ in range(3):
+        settle(master, slave)
+        for peer in (master, slave):peer.command('frame')
     for peer in (master, slave):
         peer.command('frame')
         assert peer.phase == 1 and peer.flushes == 1 and peer.sram == 0x99
@@ -148,7 +151,30 @@ def reset_without_close():
     print('PASS: mode resets without close intent never finalize or overwrite saves')
 
 
+def asymmetric_idle():
+    master, slave = Peer(0), Peer(1)
+    try:
+        handshake(master, slave)
+        command_pair(master, slave, 0x5fff)
+        for peer in (master, slave):peer.command('sio 2000')
+        settle(master, slave)
+        master.command('frames 200')
+        slave.command('frames 60')
+        settle(master, slave)
+        master.command('frames 200')
+        assert master.phase == slave.phase == 3 and master.flushes == slave.flushes == 0
+        # Only one quiet-ready notification is present. The slower game reopens
+        # before its deadline, cancelling the faster peer's finalization too.
+        reopen(master, slave, first_slave=True)
+        command_pair(master, slave, 0x2222, 0x1122)
+        block(master, slave, 200, 89)
+    finally:
+        close(master);close(slave)
+    print('PASS: unequal frame rates require both quiet-ready barriers; slower reopen cancels both exits')
+
+
 if __name__ == '__main__':
     party_entry()
     battle_transitions()
     reset_without_close()
+    asymmetric_idle()

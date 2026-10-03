@@ -80,8 +80,11 @@ cpu_alert_type write_rcnt(u16 value) {
   u32 nwmode = get_serial_mode(read_ioreg(REG_SIOCNT), value);
 
   write_ioreg(REG_RCNT, value);
-  if (MT_active())
+  if (MT_active()) {
     MT_serial_state(nwmode == SERIAL_MODE_MULTI && (read_ioreg(REG_SIOCNT) & 0x4000));
+    if (nwmode != SERIAL_MODE_MULTI || !(read_ioreg(REG_SIOCNT) & 0x4000))
+      serial_irq_cycles = 0;
+  }
 
   switch (nwmode) {
   case SERIAL_MODE_GPIO:

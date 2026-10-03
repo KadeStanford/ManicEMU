@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 
-enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6 };
+enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6, QUIET=7 };
 typedef struct { uint64_t sequence; unsigned type; uint8_t data[MT_DATA_SIZE]; } Message;
 static struct {
     enum MTPhase phase;
@@ -13,6 +13,7 @@ static struct {
     int enabled, active, started, captured, leaving, remote_left, stopped_core, persisted, completed;
     int local_ready, remote_ready;
     int serial_on, peer_serial_on, close_sent, close_received;
+    int idle_ready, peer_idle_ready;
     unsigned quiet;
     uint64_t frames, serial_generation, peer_serial_generation, diagnostic_revision;
     char diagnostics[128][176];
@@ -67,6 +68,7 @@ static void clear_session(void) {
     g.out_head=g.out_count=g.in_head=g.in_count=0;g.tx=g.rx=g.acked=g.round=0;
     g.local_ready=g.remote_ready=0;g.mode=MT_MODE_UNKNOWN;
     g.peer_serial_on=1;g.close_sent=g.close_received=0;g.quiet=0;
+    g.idle_ready=g.peer_idle_ready=0;
     g.serial_generation=g.peer_serial_generation=0;
 }
 static int queue(unsigned type,const void *data) { // Caller holds lock; controls share the serial sequence.
@@ -105,13 +107,14 @@ void MT_request(void) { pthread_mutex_lock(&lock);if(g.active&&g.phase==MT_IDLE)
 void MT_serial_state(int enabled) {
     int ok=1;enabled=!!enabled;pthread_mutex_lock(&lock);
     if(g.serial_on!=enabled){
-        g.serial_on=enabled;g.quiet=0;
+        g.serial_on=enabled;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;
         if(enabled)g.close_sent=g.close_received=0;
         diagnostic(enabled?"serial-on":"serial-off",0);
         if(g.active&&(g.phase==MT_LINKED||g.phase==MT_SUSPENDED)&&!g.leaving){
             uint8_t data[24]={0};data[0]=(uint8_t)enabled;write64(data+8,++g.serial_generation);ok=queue(SERIAL,data);
         }
     }pthread_mutex_unlock(&lock);if(!ok)fault("Cable state queue overflow; current save and backups retained");
+    if(!enabled&&MT_phase()==MT_CANCELLED)MT_leave();
 }
 void MT_leave(void) { // Core-thread hardware DisableSerial, never a UI/network disconnect.
     int ok=1;MTNotice fn=NULL;pthread_mutex_lock(&lock);
@@ -135,7 +138,7 @@ size_t MT_pending(void) { size_t n;pthread_mutex_lock(&lock);n=g.out_count;pthre
 void MT_connect(unsigned role,const uint8_t session[16]) {
     pthread_mutex_lock(&lock);if(g.phase==MT_WAITING&&g.captured&&role<2&&session){g.role=role;memcpy(g.session,session,16);g.phase=MT_LINKED;diagnostic("pair",role);}pthread_mutex_unlock(&lock);
 }
-static void suspend_locked(uint64_t round) { g.round=round;g.local_ready=g.remote_ready=0;g.phase=MT_SUSPENDED;diagnostic("pause",0); }
+static void suspend_locked(uint64_t round) { g.round=round;g.local_ready=g.remote_ready=0;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;g.phase=MT_SUSPENDED;diagnostic("pause",0); }
 void MT_suspend(void) {
     int ok=1;pthread_mutex_lock(&lock);
     if(g.phase==MT_LINKED&&!g.leaving&&!g.remote_left){uint8_t data[24]={0};suspend_locked(g.round+1);write64(data,g.round);ok=queue(PAUSE,data);}
@@ -167,7 +170,12 @@ int MT_frame(const MTGBA *gba) {
     // notifications and close commands are retained and the stream is quiet.
     if((phase==MT_LINKED||phase==MT_CLOSING)&&g.started&&!g.leaving&&!g.serial_on&&!g.peer_serial_on&&g.close_sent&&g.close_received&&!g.out_count&&!g.in_count){
         if(!g.quiet)diagnostic("quiet-start",0);
-        if(++g.quiet>=MT_CLOSE_QUIET_FRAMES){g.leaving=1;g.phase=phase=MT_CLOSING;if(!queue(CLOSE,NULL)){pthread_mutex_unlock(&lock);fault("Link close queue overflow");return 0;}diagnostic("final-close",0);}
+        if(g.quiet<MT_CLOSE_QUIET_FRAMES)g.quiet++;
+        if(g.quiet>=MT_CLOSE_QUIET_FRAMES&&!g.idle_ready){
+            uint8_t data[24]={0};write64(data,g.serial_generation);g.idle_ready=1;
+            if(!queue(QUIET,data)){pthread_mutex_unlock(&lock);fault("Link idle queue overflow");return 0;}diagnostic("quiet-ready",0);
+        }
+        if(g.idle_ready&&g.peer_idle_ready&&!g.out_count){g.leaving=1;g.phase=phase=MT_CLOSING;if(!queue(CLOSE,NULL)){pthread_mutex_unlock(&lock);fault("Link close queue overflow");return 0;}diagnostic("final-close",0);}
     }else g.quiet=0;
     if(phase==MT_WAITING&&!g.captured)capture=1;
     if(phase==MT_LINKED&&!g.started){g.started=1;start=1;role=g.role;}
@@ -215,7 +223,7 @@ static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/blo
 void MT_send(uint16_t recipient,const void *data,size_t size) {
     (void)recipient;if(!data||size!=MT_DATA_SIZE||!valid_data(data)){fault("Invalid GBA serial packet");return;}
     int ok=1,supported=1;pthread_mutex_lock(&lock);
-    if((g.phase==MT_LINKED||g.phase==MT_CLOSING)&&!g.leaving){supported=classify(data,1);if(supported)ok=queue(DATA,data);g.quiet=0;}
+    if((g.phase==MT_LINKED||g.phase==MT_CLOSING)&&!g.leaving){supported=classify(data,1);if(supported)ok=queue(DATA,data);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;}
     pthread_mutex_unlock(&lock);
     if(!supported)fault("Four-player Multi Battle requires four consoles. Use Single or Double Battle with two phones.");
     else if(!ok)fault("Connection stalled; games paused and pre-link backups retained");
@@ -227,11 +235,11 @@ int MT_next_packet(uint64_t after,uint8_t packet[MT_PACKET_SIZE]) {
 }
 void MT_ack_packet(uint8_t packet[MT_PACKET_SIZE]) { pthread_mutex_lock(&lock);envelope(packet,ACK,g.rx);pthread_mutex_unlock(&lock); }
 int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) {
-    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=3||p[6]||p[7]||p[5]<DATA||p[5]>SERIAL)return -1;
+    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=3||p[6]||p[7]||p[5]<DATA||p[5]>QUIET)return -1;
     uint64_t seq=read64(p+24);unsigned type=p[5];int result=0,supported=1;
     if(type==DATA&&!valid_data(p+32))return -1;
     if(type==SERIAL){if(p[32]>1||!read64(p+40))return -1;for(unsigned i=33;i<56;i++)if((i<40||i>=48)&&p[i])return -1;}
-    else if(type!=DATA){unsigned begin=(type==PAUSE||type==READY)?40:32;for(unsigned i=begin;i<MT_PACKET_SIZE;i++)if(p[i])return -1;}
+    else if(type!=DATA){unsigned begin=(type==PAUSE||type==READY||type==QUIET)?40:32;for(unsigned i=begin;i<MT_PACKET_SIZE;i++)if(p[i])return -1;}
     pthread_mutex_lock(&lock);
     if(!g.captured||memcmp(p+8,g.session,16)){pthread_mutex_unlock(&lock);return -1;}
     if(g.completed){if(seq>(type==ACK?g.tx:g.rx)){pthread_mutex_unlock(&lock);return -1;}envelope(ack,ACK,g.rx);pthread_mutex_unlock(&lock);return type==ACK?2:0;}
@@ -243,10 +251,16 @@ int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) 
     }else{
         if(!seq||seq>g.rx+1||(seq==g.rx+1&&type==DATA&&g.in_count==MT_QUEUE_SIZE)){pthread_mutex_unlock(&lock);return -1;}
         if(seq==g.rx+1){
-            if(type==DATA){supported=classify(p+32,0);g.quiet=0;Message *m=&g.in[(g.in_head+g.in_count)%MT_QUEUE_SIZE];m->sequence=seq;m->type=DATA;memcpy(m->data,p+32,MT_DATA_SIZE);g.in_count++;}
+            if(type==DATA){supported=classify(p+32,0);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;Message *m=&g.in[(g.in_head+g.in_count)%MT_QUEUE_SIZE];m->sequence=seq;m->type=DATA;memcpy(m->data,p+32,MT_DATA_SIZE);g.in_count++;}
             else if(type==CLOSE){g.remote_left=1;g.phase=MT_CLOSING;}
             else if(type==SERIAL){uint64_t generation=read64(p+40);if(generation<=g.peer_serial_generation){pthread_mutex_unlock(&lock);return -1;}
-                g.peer_serial_generation=generation;g.peer_serial_on=p[32];g.quiet=0;if(g.peer_serial_on)g.close_sent=g.close_received=0;diagnostic("peer-serial",p[32]);}
+                g.peer_serial_generation=generation;g.peer_serial_on=p[32];g.quiet=0;g.idle_ready=g.peer_idle_ready=0;if(g.peer_serial_on)g.close_sent=g.close_received=0;diagnostic("peer-serial",p[32]);}
+            else if(type==QUIET){
+                // A faster phone cannot finalize while the slower game is still
+                // preparing to reopen. Readiness belongs to this OFF generation.
+                if(!g.peer_serial_on&&read64(p+32)==g.peer_serial_generation)g.peer_idle_ready=1;
+                diagnostic("peer-quiet",0);
+            }
             else if(!g.leaving&&!g.remote_left){uint64_t round=read64(p+32);if(!round){pthread_mutex_unlock(&lock);return -1;}
                 if(type==PAUSE&&round>g.round)suspend_locked(round);
                 else if(type==READY&&round==g.round&&g.phase==MT_SUSPENDED){g.remote_ready=1;if(g.local_ready)g.phase=MT_LINKED;}

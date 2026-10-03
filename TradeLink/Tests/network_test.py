@@ -40,6 +40,7 @@ class Peer:
                 self.mode = int(words[12])
                 self.sram = int(words[14])
                 self.flushes = int(words[16])
+                self.epoch = int(words[18])
             elif line.startswith('EXPECTED '):
                 self.expected = int(line.split()[1])
 
@@ -182,7 +183,9 @@ def lifecycle():
                     first.command('frames 200');assert first.flushes==0, 'one-sided idle finalized'
                 second.command('leave');settle(m,s)
                 for peer in (m,s):peer.command('frames 180')
-                settle(m,s)
+                for _ in range(3):
+                    settle(m,s)
+                    for peer in (m,s):peer.command('frame')
                 for peer in (m,s):
                     peer.command('frame');assert peer.phase==1 and peer.flushes==1
                     peer.command('stopped')

@@ -27,7 +27,7 @@ static int persist(const uint8_t *b,const uint8_t *s,size_t n){
 }
 static void report(void){
     uint8_t p[56];while(MT_next_packet(cursor,p)){cursor=0;for(unsigned i=24;i<32;i++)cursor=(cursor<<8)|p[i];packet("PACKET",p);}
-    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes);puts("END");fflush(stdout);
+    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch());puts("END");fflush(stdout);
 }
 int main(int argc,char **argv){
     assert(argc==2||argc==3);unsigned role=(unsigned)atoi(argv[1]);assert(role<2);if(argc==3)save_path=argv[2];MT_set_persist(persist);

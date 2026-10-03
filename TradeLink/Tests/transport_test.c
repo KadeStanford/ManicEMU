@@ -85,7 +85,7 @@ int main(void){
     roundtrip();MT_suspend();roundtrip();for(unsigned i=0;i<200;i++)assert(!MT_frame(&gba)&&flushes==prior);
     MT_resume();roundtrip();battery[0]=0x99;state[0]=0xaa;
     for(unsigned i=0;i<MT_CLOSE_QUIET_FRAMES;i++)assert(MT_frame(&gba));
-    roundtrip();assert(MT_frame(&gba)&&MT_complete()&&flushes==prior+1);
+    roundtrip();assert(MT_frame(&gba));roundtrip();assert(MT_frame(&gba)&&MT_complete()&&flushes==prior+1);
     char log[24576];uint64_t revision;size_t bytes=MT_diagnostics(log,sizeof(log),&revision);
     assert(bytes>0&&bytes<sizeof(log)&&revision>0&&strstr(log,"serial-off")&&strstr(log,"complete"));
     assert(!strstr(log,"/synthetic.gba"));char tiny[1];assert(MT_diagnostics(tiny,1,NULL)==0&&tiny[0]==0);MT_unloaded();
