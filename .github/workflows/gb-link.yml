@@ -21,6 +21,20 @@ jobs:
       - run: cmake --build build-trade --parallel 2
       - run: ctest --test-dir build-trade --output-on-failure
       - run: python3 -m unittest discover -s GBLink/Tests -p 'test_*.py' -v
+      - name: Read official mGBA source for cross-core battery check
+        uses: actions/checkout@v4
+        with:
+          repository: mgba-emu/mgba
+          ref: c3c8e5e813f245028de118a56734e1dc0f35ce2a
+          path: build-mgba-source
+          lfs: false
+          submodules: false
+      - name: Build reference mGBA libretro core
+        run: |
+          cmake -S build-mgba-source -B build-mgba -DBUILD_LIBRETRO=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_SHARED=OFF -DBUILD_STATIC=OFF -DDISABLE_DEPS=ON
+          cmake --build build-mgba --parallel 2
+      - name: Verify mGBA battery preservation and state incompatibility
+        run: python3 TradeLink/Tests/save_migrate.py build-trade/save_migrate build-mgba/mgba_libretro.so build-trade/libgpsp.so
   ios-library:
     runs-on: macos-latest
     steps:
