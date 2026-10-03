@@ -43,6 +43,17 @@ jobs:
             -DENABLE_LTO=OFF -DENABLE_TESTS=OFF 2>&1 | tee "$RUNNER_TEMP/azahar-configure.log"
           cmake --build azahar-build --target azahar_libretro --config Release --parallel 3 \
             -- CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/azahar-build.log"
+      - name: Verify Manic dynamic entry points
+        shell: bash
+        run: |
+          core=azahar-build/bin/Release/azahar_libretro.dylib
+          test -s "$core"
+          for symbol in _retro_azahar_set_keyboard_callback _retro_azahar_keyboard_input _retro_azahar_install_cia; do
+            nm -gU "$core" | grep -Fq "$symbol"
+          done
+          file "$core"
+          otool -D "$core"
+          otool -L "$core"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -50,5 +61,5 @@ jobs:
           path: |
             ${{ runner.temp }}/azahar-configure.log
             ${{ runner.temp }}/azahar-build.log
-            azahar-build/src/citra_libretro/Release/*
+            azahar-build/bin/Release/azahar_libretro.dylib
 
