@@ -10,13 +10,14 @@ permissions:
   contents: read
 jobs:
   sideload-build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           lfs: true
           submodules: recursive
+      - run: xcodebuild -version
       - name: Build unsigned sideload app
         shell: bash
         run: |
