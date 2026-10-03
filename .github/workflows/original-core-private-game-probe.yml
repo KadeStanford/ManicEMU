@@ -1,17 +1,20 @@
 name: Private original-core game and plugin diagnostic
 on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/private-game-run.json']
   workflow_dispatch:
-    inputs:
-      plugin_enabled:
-        description: Enable the existing 3GX loader in the isolated core copy
-        type: boolean
-        default: true
 permissions:
   contents: read
 jobs:
   private-game:
+    name: Original core with plugin loader ${{ matrix.plugin_enabled }}
     runs-on: macos-15
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin_enabled: ['0', '1']
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
@@ -60,7 +63,7 @@ jobs:
         run: bash OriginalCoreRepair/Tests/simulator-probe.sh
       - name: Execute private game and supplied plugin
         env:
-          MANIC_PROBE_PLUGIN_ENABLED: ${{ inputs.plugin_enabled && '1' || '0' }}
+          MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
         run: |
           bash OriginalCoreRepair/Tests/simulator-game-probe.sh \
             "$RUNNER_TEMP/manic-private-inputs/game.cxi" \
@@ -118,7 +121,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: private-game-sanitized-diagnostic-summary
+          name: private-game-${{ matrix.plugin_enabled }}-sanitized-diagnostic-summary
           path: |
             OriginalCoreRepair/Tests/build-probe/private-game-summary.json
             OriginalCoreRepair/Tests/build-probe/private-runtime-evidence.enc
