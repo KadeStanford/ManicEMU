@@ -53,9 +53,17 @@ static bool initializeVulkan(void){
     pthread_mutex_init(&queueMutex,&attributes);pthread_mutexattr_destroy(&attributes);
     VkApplicationInfo fallback={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.pApplicationName="Private Manic runtime",.apiVersion=VK_API_VERSION_1_1};
     const VkApplicationInfo *application=negotiation.get_application_info?negotiation.get_application_info():&fallback;
-    const char *extensions[]={"VK_KHR_portability_enumeration","VK_KHR_get_physical_device_properties2"};
-    VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.flags=VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
-        .pApplicationInfo=application,.enabledExtensionCount=2,.ppEnabledExtensionNames=extensions};
+    PFN_vkEnumerateInstanceExtensionProperties enumerateExtensions=(void *)vkGet(NULL,"vkEnumerateInstanceExtensionProperties");
+    uint32_t extensionCount=0;enumerateExtensions(NULL,&extensionCount,NULL);
+    VkExtensionProperties *available=calloc(extensionCount,sizeof(*available));enumerateExtensions(NULL,&extensionCount,available);
+    const char *extensions[2];uint32_t enabledCount=0;bool portabilityEnumeration=false;
+    for(uint32_t i=0;i<extensionCount;i++){
+        if(!strcmp(available[i].extensionName,"VK_KHR_portability_enumeration")){extensions[enabledCount++]="VK_KHR_portability_enumeration";portabilityEnumeration=true;}
+        else if(!strcmp(available[i].extensionName,"VK_KHR_get_physical_device_properties2"))extensions[enabledCount++]="VK_KHR_get_physical_device_properties2";
+    }
+    free(available);
+    VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.flags=portabilityEnumeration?VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR:0,
+        .pApplicationInfo=application,.enabledExtensionCount=enabledCount,.ppEnabledExtensionNames=extensions};
     PFN_vkCreateInstance create=(void *)vkGet(NULL,"vkCreateInstance");checkpoint(@"vulkan_create_instance");
     if(create(&info,NULL,&vkInterface.instance)!=VK_SUCCESS)return false;
     VPROC(vkEnumeratePhysicalDevices);uint32_t count=0;vkEnumeratePhysicalDevices(vkInterface.instance,&count,NULL);

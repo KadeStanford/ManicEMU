@@ -49,11 +49,21 @@ static void uncaughtException(NSException *exception) {
         if(!get){checkpoint(@"missing_vkGetInstanceProcAddr");return;}
         Dl_info location={0};dladdr(get,&location);moltenBase=(uintptr_t)location.dli_fbase;
         PFN_vkCreateInstance create=(void *)get(VK_NULL_HANDLE,"vkCreateInstance");
-        const char *extensions[]={"VK_KHR_portability_enumeration","VK_KHR_get_physical_device_properties2"};
+        PFN_vkEnumerateInstanceExtensionProperties enumerateExtensions=(void *)get(VK_NULL_HANDLE,"vkEnumerateInstanceExtensionProperties");
+        uint32_t extensionCount=0;enumerateExtensions(NULL,&extensionCount,NULL);
+        VkExtensionProperties *available=calloc(extensionCount,sizeof(*available));enumerateExtensions(NULL,&extensionCount,available);
+        const char *extensions[2];uint32_t enabledCount=0;bool portabilityEnumeration=false;
+        NSMutableArray *names=[NSMutableArray new];
+        for(uint32_t i=0;i<extensionCount;i++){
+            [names addObject:@(available[i].extensionName)];
+            if(!strcmp(available[i].extensionName,"VK_KHR_portability_enumeration")){extensions[enabledCount++]="VK_KHR_portability_enumeration";portabilityEnumeration=true;}
+            else if(!strcmp(available[i].extensionName,"VK_KHR_get_physical_device_properties2"))extensions[enabledCount++]="VK_KHR_get_physical_device_properties2";
+        }
+        free(available);state[@"advertised_instance_extensions"]=names;
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.pApplicationName="Manic Vulkan preflight",.apiVersion=VK_API_VERSION_1_1};
         VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-            .flags=VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,.pApplicationInfo=&application,
-            .enabledExtensionCount=2,.ppEnabledExtensionNames=extensions};
+            .flags=portabilityEnumeration?VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR:0,.pApplicationInfo=&application,
+            .enabledExtensionCount=enabledCount,.ppEnabledExtensionNames=extensions};
         VkInstance instance=VK_NULL_HANDLE;checkpoint(@"vkCreateInstance");
         VkResult result=create(&info,NULL,&instance);state[@"instance_result"]=@(result);
         if(result!=VK_SUCCESS){checkpoint(@"failed");return;}
