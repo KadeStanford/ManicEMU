@@ -77,6 +77,10 @@ static void logPerformance(MASPlan *p) {
 @interface MASManager : NSObject
 @property(atomic,strong) MASPlan *plan;
 @property(weak) UIView *coreView,*phoneParent;
+@property(weak) UIView *externalSourceParent;
+@property(weak) UIWindow *externalTarget;
+@property(strong) UIView *producerHost;
+@property CGRect externalSourceFrame;
 @property(strong) MASSurface *phoneSurface,*externalSurface;
 @property(strong) UIButton *swapButton;
 @property(strong) id core;
@@ -185,6 +189,12 @@ static NSString *effectiveLayout(MASManager *m) {
     if(old)old.source.framebufferOnly=old.originalFramebufferOnly;
     BOOL hadSurfaces=self.phoneSurface!=nil;
     self.plan=nil;
+    UIView *source=self.coreView;
+    if(source.superview==self.producerHost&&self.externalSourceParent) {
+        [self.externalSourceParent addSubview:source];source.frame=self.externalSourceFrame;
+    }
+    [self.producerHost removeFromSuperview];self.producerHost=nil;
+    self.externalSourceParent=nil;self.externalTarget=nil;
     if(hadSurfaces)[self releaseTouch];
     [self.phoneSurface removeFromSuperview]; [self.externalSurface removeFromSuperview]; [self.swapButton removeFromSuperview];
     self.phoneSurface=nil;self.externalSurface=nil;self.swapButton=nil;
@@ -216,7 +226,7 @@ static NSString *effectiveLayout(MASManager *m) {
     self.inputRegion=CGRectMake(v[4]/UIScreen.mainScreen.scale,v[5]/UIScreen.mainScreen.scale,
                                v[6]/UIScreen.mainScreen.scale,v[7]/UIScreen.mainScreen.scale);
     UIView *view=self.coreView;
-    if(view.superview && view.window && !externalWindow(view.window)) {
+    if(view.superview && view.superview!=self.producerHost && view.window && !externalWindow(view.window)) {
         self.phoneParent=view.superview;self.phoneLayout=layout;self.phoneBounds=view.superview.bounds.size;
         CGRect r=CGRectMake(v[4]/v[8]*view.bounds.size.width,v[5]/v[9]*view.bounds.size.height,
                             v[6]/v[8]*view.bounds.size.width,v[7]/v[9]*view.bounds.size.height);
@@ -237,8 +247,14 @@ static NSString *effectiveLayout(MASManager *m) {
 }
 - (void)refresh {
     logPerformance(self.plan);
-    UIView *view=self.coreView;UIWindow *external=view.window;
-    BOOL active=self.dual&&!self.disabled&&externalWindow(external)&&self.phoneParent.window&&!CGRectIsEmpty(self.phoneRegion);
+    UIView *view=self.coreView;
+    UIWindow *external=externalWindow(view.window)?view.window:
+        (view.superview==self.producerHost?self.externalTarget:nil);
+    BOOL connected=externalWindow(external)&&!external.hidden;
+#ifndef MAS_TESTING
+    connected&=[UIScreen.screens containsObject:external.screen];
+#endif
+    BOOL active=self.dual&&!self.disabled&&connected&&self.phoneParent.window&&!CGRectIsEmpty(self.phoneRegion);
     if(!active) {
         BOOL wasActive=self.plan!=nil;
         [self removeSurfaces];
@@ -248,6 +264,19 @@ static NSString *effectiveLayout(MASManager *m) {
         return;
     }
     CAMetalLayer *source=findLayer(view.layer);if(!source)return;
+    if(view.superview!=self.producerHost) {
+        // The original frontend moved this source onto the AirPlay screen. Its
+        // nextDrawable/presentation pacing therefore still throttles emulation,
+        // even when the snapshot queue drops frames. Keep the producer on the
+        // phone screen; only our independent crop sink remains on AirPlay.
+        self.externalSourceParent=view.superview;self.externalSourceFrame=view.frame;
+        self.externalTarget=external;
+        self.producerHost=[[UIView alloc] initWithFrame:CGRectMake(0,0,1,1)];
+        self.producerHost.userInteractionEnabled=NO;self.producerHost.clipsToBounds=YES;
+        [self.phoneParent insertSubview:self.producerHost atIndex:0];
+        CGSize sourceSize=view.bounds.size;
+        [self.producerHost addSubview:view];view.frame=(CGRect){CGPointZero,sourceSize};
+    }
     if(!self.phoneSurface) {
         self.phoneSurface=[self surface];self.phoneSurface.touchSurface=YES;
         [self.phoneParent addSubview:self.phoneSurface];

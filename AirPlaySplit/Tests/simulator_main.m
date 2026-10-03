@@ -208,6 +208,8 @@ static void gpu(void) {
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
+        check(@"producer_stays_on_phone_screen_while_tv_sink_is_external",vc.view.window==self.window&&m.externalSurface.window==self.external&&vc.view.superview==m.producerHost);
+        check(@"producer_relocation_keeps_original_render_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
         for(NSUInteger factor=1;factor<=4;factor*=2) {
             [core set3DSCustomLayout:@"0,0,400,240,0,0,0,0,400,240"];
@@ -298,9 +300,11 @@ static void gpu(void) {
         dispatch_semaphore_signal(resume);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
+        check(@"disconnect_removes_producer_host_without_reparenting_host_phone_view",!m.producerHost&&vc.view.superview==root.view);
         check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
         [self.external.rootViewController.view addSubview:vc.view];[m refresh];
         check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
+        check(@"reconnect_keeps_producer_on_phone_again",vc.view.window==self.window&&m.externalTarget==self.external);
         [root.view addSubview:vc.view];[m refresh];
         [core stop];check(@"stop_cleans_up_without_save_or_core_reload",stops==1&&loads==1&&!m.dual);
         gpu();
