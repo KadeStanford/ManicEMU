@@ -252,7 +252,7 @@ static NSString *effectiveLayout(MASManager *m) {
         (view.superview==self.producerHost?self.externalTarget:nil);
     BOOL connected=externalWindow(external)&&!external.hidden;
 #ifndef MAS_TESTING
-    connected&=[UIScreen.screens containsObject:external.screen];
+    connected=connected&&[UIScreen.screens containsObject:external.screen];
 #endif
     BOOL active=self.dual&&!self.disabled&&connected&&self.phoneParent.window&&!CGRectIsEmpty(self.phoneRegion);
     if(!active) {
