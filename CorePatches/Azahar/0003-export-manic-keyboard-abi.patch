@@ -1,11 +1,14 @@
 diff --git a/src/citra_libretro/libretro.osx.def b/src/citra_libretro/libretro.osx.def
 --- a/src/citra_libretro/libretro.osx.def
 +++ b/src/citra_libretro/libretro.osx.def
-@@ -31,3 +31,6 @@ _retro_remove_amiibo
+@@ -30,4 +30,7 @@ _retro_is_searching_amiibo
+ _retro_remove_amiibo
  _retro_set_keyboard_callback
  _retro_keyboard_input
- _retro_install_cia
 +_retro_azahar_set_keyboard_callback
 +_retro_azahar_keyboard_input
 +_retro_azahar_install_cia
+-_retro_install_cia
+\ No newline at end of file
++_retro_install_cia
 
