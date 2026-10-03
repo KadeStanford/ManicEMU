@@ -53,6 +53,8 @@ int main(int argc,char **argv){
             for(unsigned i=0;i<2;i++){write_siocnt(0x2000);write_rcnt(0);write_siocnt(0x6003);}
             write_siocnt(0x2000);for(unsigned i=0;i<5;i++)retro_run();write_rcnt(0);write_siocnt(0x6003);
             write_ioreg(REG_SIOMLT_SEND,0);write_siocnt(0x6083);assert(MT_phase()==MT_IDLE);
+            assert(serial_get_irq_cycles()==2621);assert(update_serial(2621)); // First IRQ lets DoHandshake write B9A0.
+            assert(!(read_ioreg(REG_SIOCNT)&0x80));
             write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_siocnt(0x2083);assert(MT_phase()==MT_IDLE); // IRQ disabled.
             write_siocnt(0x6083);assert(MT_phase()==MT_WAITING);retro_run();
         }else if(!strncmp(line,"connect",7)){

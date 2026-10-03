@@ -76,6 +76,10 @@ static NSMutableDictionary *report;
         NSData *saved=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"synthetic.sav"]];assert(saved.length==MT_SAVE_SIZE&&((const uint8_t *)saved.bytes)[0]==0x45);
         NSData *checkpoint=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"pre-trade.gpspstate"]];assert(checkpoint.length==sizeof(state)&&((const uint8_t *)checkpoint.bytes)[0]==0x67);
         uint8_t session[16]={1};MT_connect(0,session);assert(MT_frame(&gba));
+        // A frontend pause/resume around normal result/save processing must
+        // round-trip without requesting explicit Reconnect.
+        [[LibretroCore sharedInstance] pause];assert([[LibretroCore sharedInstance] isPaused]);
+        [[LibretroCore sharedInstance] resume];loopback();assert(MT_frame(&gba)&&MT_phase()==MT_LINKED);
         [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_SUSPENDED&&[[LibretroCore sharedInstance] isPaused]);
         Class cls=NSClassFromString(@"ManicTrade");id manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
         SEL halt=NSSelectorFromString(@"halt:");((void (*)(id,SEL,id))objc_msgSend)(manager,halt,@"Synthetic unexpected drop");
