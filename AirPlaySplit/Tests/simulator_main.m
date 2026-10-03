@@ -66,7 +66,7 @@ static void gpu(void) {
     id<MTLTexture> top=[device newTextureWithDescriptor:desc];desc.width=320;
     id<MTLTexture> bottom=[device newTextureWithDescriptor:desc];
     id<MTLCommandBuffer> cb=[[device newCommandQueue] commandBuffer];
-    check(@"both_crops_encoded_on_one_frame",MASDrawCrop(cb,source,top,CGRectMake(0,0,1,0.5))&&MASDrawCrop(cb,source,bottom,CGRectMake(0.1,0.5,0.8,0.5)));
+    check(@"both_crops_encoded_on_one_frame",MASDrawCrop(cb,source,top,CGRectMake(0,0,1,0.5),CGSizeMake(400,240))&&MASDrawCrop(cb,source,bottom,CGRectMake(0.1,0.5,0.8,0.5),CGSizeMake(320,240)));
     [cb commit];[cb waitUntilCompleted];check(@"gpu_command_completed",cb.status==MTLCommandBufferStatusCompleted);
     uint8_t a[4],c[4];[top getBytes:a bytesPerRow:4 fromRegion:MTLRegionMake2D(200,120,1,1) mipmapLevel:0];
     [bottom getBytes:c bytesPerRow:4 fromRegion:MTLRegionMake2D(160,120,1,1) mipmapLevel:0];
@@ -75,11 +75,16 @@ static void gpu(void) {
     check(@"source_texture_preserved",[pixels isEqual:unchanged]);
     // Repeat with crops reversed to validate the actual swap rendering path.
     desc.width=400;desc.height=240;id<MTLTexture> swapped=[device newTextureWithDescriptor:desc];
-    cb=[[device newCommandQueue] commandBuffer];MASDrawCrop(cb,source,swapped,CGRectMake(0.1,0.5,0.8,0.5));[cb commit];[cb waitUntilCompleted];
+    cb=[[device newCommandQueue] commandBuffer];MASDrawCrop(cb,source,swapped,CGRectMake(0.1,0.5,0.8,0.5),CGSizeMake(320,240));[cb commit];[cb waitUntilCompleted];
     [swapped getBytes:a bytesPerRow:4 fromRegion:MTLRegionMake2D(200,120,1,1) mipmapLevel:0];
     check(@"swap_renders_other_live_screen",a[0]==0&&a[1]==255);
     [swapped getBytes:a bytesPerRow:4 fromRegion:MTLRegionMake2D(0,120,1,1) mipmapLevel:0];
     check(@"aspect_fit_has_black_bars",a[0]==0&&a[1]==0);
+    // Source can be distorted by an existing frontend viewport. Console aspect
+    // must still be restored when presenting either crop.
+    cb=[[device newCommandQueue] commandBuffer];MASDrawCrop(cb,source,swapped,CGRectMake(0.1,0.5,0.8,0.25),CGSizeMake(320,240));[cb commit];[cb waitUntilCompleted];
+    [swapped getBytes:a bytesPerRow:4 fromRegion:MTLRegionMake2D(0,120,1,1) mipmapLevel:0];
+    check(@"intermediate_viewport_cannot_distort_screen_aspect",a[0]==0&&a[1]==0);
 }
 @interface TestApp : UIResponder <UIApplicationDelegate>
 @property(strong,nonatomic) UIWindow *window,*external;

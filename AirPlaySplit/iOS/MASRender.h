@@ -4,5 +4,5 @@
 
 // Crop coordinates use Metal's top-left texture origin, normalized to [0,1].
 BOOL MASDrawCrop(id<MTLCommandBuffer> buffer, id<MTLTexture> source,
-                 id<MTLTexture> destination, CGRect crop);
+                 id<MTLTexture> destination, CGRect crop, CGSize screenSize);
 CGRect MASFit(CGSize content, CGSize bounds);

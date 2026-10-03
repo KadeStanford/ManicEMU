@@ -238,8 +238,10 @@ static void masEnd(id self,SEL cmd) {
         top.size.height*=0.5;bottom.origin.y+=bottom.size.height*0.5;bottom.size.height*=0.5;
         if(p.threeDS){bottom.origin.x+=bottom.size.width*0.1;bottom.size.width*=0.8;}
         id<CAMetalDrawable> phone=[p.phone nextDrawable],external=[p.external nextDrawable];
-        BOOL good=phone&&external&&MASDrawCrop(buffer,drawable.texture,phone.texture,p.swapped?top:bottom)&&
-                                      MASDrawCrop(buffer,drawable.texture,external.texture,p.swapped?bottom:top);
+        CGSize topSize=p.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
+        CGSize bottomSize=p.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
+        BOOL good=phone&&external&&MASDrawCrop(buffer,drawable.texture,phone.texture,p.swapped?top:bottom,p.swapped?topSize:bottomSize)&&
+                                      MASDrawCrop(buffer,drawable.texture,external.texture,p.swapped?bottom:top,p.swapped?bottomSize:topSize);
         if(good) {
             CGRect live=CGRectMake(vp->x,vp->y,vp->width,vp->height);
             [buffer presentDrawable:phone];[buffer presentDrawable:external];

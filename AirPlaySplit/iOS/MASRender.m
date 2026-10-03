@@ -9,9 +9,10 @@ CGRect MASFit(CGSize content, CGSize bounds) {
     return CGRectMake((bounds.width-size.width)/2,(bounds.height-size.height)/2,size.width,size.height);
 }
 
-BOOL MASDrawCrop(id<MTLCommandBuffer> buffer,id<MTLTexture> source,id<MTLTexture> destination,CGRect crop) {
+BOOL MASDrawCrop(id<MTLCommandBuffer> buffer,id<MTLTexture> source,id<MTLTexture> destination,CGRect crop,CGSize screenSize) {
     if(!buffer || !source || !destination || source==destination || CGRectIsEmpty(crop) ||
-       crop.origin.x<0 || crop.origin.y<0 || CGRectGetMaxX(crop)>1.00001 || CGRectGetMaxY(crop)>1.00001) return NO;
+       crop.origin.x<0 || crop.origin.y<0 || CGRectGetMaxX(crop)>1.00001 || CGRectGetMaxY(crop)>1.00001 ||
+       screenSize.width<=0 || screenSize.height<=0) return NO;
     static id<MTLDevice> cachedDevice;
     static id<MTLRenderPipelineState> cachedPipeline;
     static MTLPixelFormat cachedFormat;
@@ -45,8 +46,9 @@ BOOL MASDrawCrop(id<MTLCommandBuffer> buffer,id<MTLTexture> source,id<MTLTexture
     pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,1);
     id<MTLRenderCommandEncoder> encoder=[buffer renderCommandEncoderWithDescriptor:pass];
     if(!encoder) return NO;
-    CGRect fit=MASFit(CGSizeMake(source.width*crop.size.width,source.height*crop.size.height),
-                      CGSizeMake(destination.width,destination.height));
+    // The original viewport may stretch the combined frame. Preserve the
+    // console screen aspect independently of the intermediate texture shape.
+    CGRect fit=MASFit(screenSize,CGSizeMake(destination.width,destination.height));
     [encoder setViewport:(MTLViewport){fit.origin.x,fit.origin.y,fit.size.width,fit.size.height,0,1}];
     vector_float4 region={(float)crop.origin.x,(float)crop.origin.y,(float)crop.size.width,(float)crop.size.height};
     [encoder setRenderPipelineState:pipeline];
