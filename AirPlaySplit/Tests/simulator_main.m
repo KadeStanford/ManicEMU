@@ -72,6 +72,23 @@ static void check(NSString *key,BOOL passed);
 @interface TestTouchInputView : UIView @end
 @implementation TestTouchInputView @end
 
+// Exercise MoltenVK's public presentation pattern without calling Context end.
+static void presentWithoutContext(CAMetalLayer *layer) {
+    layer.device=MTLCreateSystemDefaultDevice();layer.drawableSize=CGSizeMake(256,384);
+    id<CAMetalDrawable> drawable=[layer nextDrawable];
+    check(@"swapchain_drawable_available",drawable!=nil);
+    id<MTLCommandBuffer> buffer=[[layer.device newCommandQueue] commandBuffer];
+    MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture=drawable.texture;
+    pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+    pass.colorAttachments[0].clearColor=MTLClearColorMake(0,1,0,1);
+    id<MTLRenderCommandEncoder> encoder=[buffer renderCommandEncoderWithDescriptor:pass];
+    [encoder endEncoding];
+    [buffer addScheduledHandler:^(id<MTLCommandBuffer> _) {[drawable present];}];
+    [buffer commit];
+}
+
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
 static void gpu(void) {
@@ -143,6 +160,17 @@ static void gpu(void) {
         [core set3DSCustomLayout:@"0,0,800,480,0,0,0,0,800,480"];
         [m touch:CGPointMake(0.25,0.75)];
         check(@"touch_maps_to_3ds_centered_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-140)<0.001);
+        [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
+        BOOL previousSwap=m.swapped;
+        [core setNDSCustomLayout:@"0,0,0,0,0,0,800,600,800,600"];
+        check(@"original_app_swap_action_updates_display_assignment",m.swapped!=previousSwap);
+        presentWithoutContext(m.plan.source);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        check(@"vulkan_style_presentation_reaches_both_outputs_without_context",masPresentedFrames>0&&ends==1&&!m.phoneSurface.hidden&&!m.externalSurface.hidden);
+        unsigned firstPresent=masPresentedFrames;
+        [m swap];presentWithoutContext(m.plan.source);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        check(@"vulkan_style_swap_keeps_presenting_without_context",masPresentedFrames>firstPresent&&ends==1&&loads==1&&stops==0);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
@@ -151,6 +179,8 @@ static void gpu(void) {
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         [data writeToFile:[dir stringByAppendingPathComponent:@"smoke.json"] atomically:YES];
+        });
+        });
     });return YES;
 }
 @end

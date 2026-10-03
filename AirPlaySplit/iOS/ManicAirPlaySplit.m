@@ -5,6 +5,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <dlfcn.h>
 #import "MASRender.h"
 
 typedef struct { int x,y; unsigned width,height,full_width,full_height; } MASViewport;
@@ -16,13 +17,18 @@ static void (*original3DS)(id,SEL,id);
 static void (*originalTouch)(id,SEL,CGFloat,CGFloat);
 static void (*originalEnd)(id,SEL);
 static id (*originalDrawable)(id,SEL);
+static id (*originalLayerDrawable)(id,SEL);
+static bool (*driverViewport)(MASViewport *);
+static const void *encodedKey=&encodedKey;
 static Ivar layerIvar,drawableIvar,bufferIvar,encoderIvar;
 #ifdef MAS_TESTING
 static unsigned masEncodedFrames;
+static unsigned masPresentedFrames;
 #endif
 
 @interface MASPlan : NSObject
 @property(strong) CAMetalLayer *source,*phone,*external;
+@property(strong) id<MTLCommandQueue> copyQueue;
 @property BOOL threeDS,swapped,originalFramebufferOnly;
 @end
 @implementation MASPlan @end
@@ -122,11 +128,23 @@ static NSString *canonical(BOOL threeDS) {
 }
 - (void)layout:(NSString *)layout threeDS:(BOOL)threeDS {
     NSAssert(NSThread.isMainThread,@"Layout must run on the UI thread");
+    NSString *previous=self.requestedLayout;
     self.threeDS=threeDS; self.dual=layout!=nil; self.requestedLayout=layout;
     NSArray *parts=[layout componentsSeparatedByString:@","];
     if(parts.count!=10) {self.dual=NO;[self removeSurfaces];return;}
     CGFloat v[10];for(int i=0;i<10;i++) {v[i]=[parts[i] doubleValue];if(!isfinite(v[i])){self.dual=NO;[self removeSurfaces];return;}}
     if(v[8]<=0||v[9]<=0) {self.dual=NO;[self removeSurfaces];return;}
+    // The original app's Swap Screen action exchanges the two layout rectangles.
+    // Keep that existing control connected to the same display assignment.
+    NSArray *old=[previous componentsSeparatedByString:@","];
+    if(self.plan && old.count==10) {
+        BOOL exchanged=YES,different=NO;
+        for(int i=0;i<4;i++) {
+            exchanged&=fabs(v[i]-[old[i+4] doubleValue])<0.001 && fabs(v[i+4]-[old[i] doubleValue])<0.001;
+            different|=fabs(v[i]-[old[i] doubleValue])>0.001;
+        }
+        if(exchanged&&different&&fabs(v[8]-[old[8] doubleValue])<0.001&&fabs(v[9]-[old[9] doubleValue])<0.001)self.swapped=!self.swapped;
+    }
     self.inputRegion=CGRectMake(v[4]/UIScreen.mainScreen.scale,v[5]/UIScreen.mainScreen.scale,
                                v[6]/UIScreen.mainScreen.scale,v[7]/UIScreen.mainScreen.scale);
     UIView *view=self.coreView;
@@ -236,6 +254,52 @@ static id masDrawable(id self,SEL cmd) {
     if(plan.source==layer)layer.framebufferOnly=NO;
     return originalDrawable(self,cmd);
 }
+// Vulkan uses MetalLayerView/MoltenVK and never calls the Metal Context end hook.
+// Observe the actual swapchain drawable and wait for its presentation before
+// reading it. The same path also covers a Metal renderer with a different layer.
+static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
+    MASPlan *p=MASManager.shared.plan;
+    if(p.source==layer)layer.framebufferOnly=NO;
+    id<CAMetalDrawable> drawable=originalLayerDrawable(layer,cmd);
+    if(p.source==layer&&drawable) {
+        [drawable addPresentedHandler:^(id<MTLDrawable> presented) {
+            if([objc_getAssociatedObject(presented,encodedKey) boolValue])return;
+            MASManager *m=MASManager.shared;MASPlan *live=m.plan;
+            if(live.source!=layer)return;
+            id<MTLTexture> texture=((id<CAMetalDrawable>)presented).texture;
+            MASViewport vp={0,0,(unsigned)texture.width,(unsigned)texture.height,
+                            (unsigned)texture.width,(unsigned)texture.height};
+            if(driverViewport)driverViewport(&vp);
+            CGRect region=CGRectMake((CGFloat)vp.x/texture.width,(CGFloat)vp.y/texture.height,
+                                     (CGFloat)vp.width/texture.width,(CGFloat)vp.height/texture.height);
+            CGRect top=region,bottom=region;
+            top.size.height*=0.5;bottom.origin.y+=bottom.size.height*0.5;bottom.size.height*=0.5;
+            if(live.threeDS){bottom.origin.x+=bottom.size.width*0.1;bottom.size.width*=0.8;}
+            id<CAMetalDrawable> phone=[live.phone nextDrawable],tv=[live.external nextDrawable];
+            @synchronized(live){if(!live.copyQueue)live.copyQueue=[texture.device newCommandQueue];}
+            id<MTLCommandBuffer> buffer=[live.copyQueue commandBuffer];
+            CGSize topSize=live.threeDS?CGSizeMake(400,240):CGSizeMake(256,192);
+            CGSize bottomSize=live.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
+            if(!phone||!tv||!MASDrawCrop(buffer,texture,phone.texture,live.swapped?top:bottom,live.swapped?topSize:bottomSize)||
+               !MASDrawCrop(buffer,texture,tv.texture,live.swapped?bottom:top,live.swapped?bottomSize:topSize))return;
+            [buffer presentDrawable:phone];[buffer presentDrawable:tv];
+            [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+                // Keep the source drawable alive until both copies have finished.
+                (void)presented;
+                dispatch_async(dispatch_get_main_queue(),^{
+                    if(m.plan!=live||finished.status!=MTLCommandBufferStatusCompleted)return;
+                    m.liveViewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
+                    m.phoneSurface.hidden=NO;m.externalSurface.hidden=NO;
+#ifdef MAS_TESTING
+                    masPresentedFrames++;
+#endif
+                });
+            }];
+            [buffer commit];
+        }];
+    }
+    return drawable;
+}
 static void masEnd(id self,SEL cmd) {
     MASManager *m=MASManager.shared;MASPlan *p=m.plan;
     CAMetalLayer *layer=object_getIvar(self,layerIvar);
@@ -256,6 +320,7 @@ static void masEnd(id self,SEL cmd) {
         BOOL good=phone&&external&&MASDrawCrop(buffer,drawable.texture,phone.texture,p.swapped?top:bottom,p.swapped?topSize:bottomSize)&&
                                       MASDrawCrop(buffer,drawable.texture,external.texture,p.swapped?bottom:top,p.swapped?bottomSize:topSize);
         if(good) {
+            objc_setAssociatedObject(drawable,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 #ifdef MAS_TESTING
             masEncodedFrames++;
 #endif
@@ -303,6 +368,8 @@ static void install(void) {
     originalTouch=(void *)replace(core,@"sendTouchEventX:y:",(IMP)masTouch,4);
     originalDrawable=(void *)replace(context,@"nextDrawable",(IMP)masDrawable,2);
     originalEnd=(void *)replace(context,@"end",(IMP)masEnd,2);
+    originalLayerDrawable=(void *)replace(CAMetalLayer.class,@"nextDrawable",(IMP)masLayerDrawable,2);
+    driverViewport=(void *)dlsym(RTLD_DEFAULT,"video_driver_get_viewport_info");
     MASManager *m=MASManager.shared;
     m.timer=[NSTimer scheduledTimerWithTimeInterval:0.2 target:m selector:@selector(refresh) userInfo:nil repeats:YES];
 }
