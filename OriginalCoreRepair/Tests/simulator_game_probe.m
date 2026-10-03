@@ -89,9 +89,10 @@ static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     // A short Select press after execution has started; no save interaction.
     if(port!=0||device!=1)return 0;
-    // Fresh sandbox boot can spend many frames preparing game data. Probe Select
-    // repeatedly after that interval, rather than only during the loading screen.
-    return id==2&&runCalls>=1200&&runCalls%300<6;
+    // Vapecord displays its own first-run notice before entering the menu loop.
+    // Acknowledge it in this disposable sandbox, then make one Select press.
+    if(id==8)return (runCalls>=1200&&runCalls<1206)||(runCalls>=1800&&runCalls<1806);
+    return id==2&&runCalls>=2700&&runCalls<2706;
 }
 @interface GameProbeApp : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
