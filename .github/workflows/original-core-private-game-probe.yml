@@ -55,7 +55,7 @@ jobs:
           mkdir -p OriginalCoreRepair/Tests/build-probe
           xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
             -fobjc-arc -Wall -Werror OriginalCoreRepair/Tests/simulator_game_probe.m \
-            -framework UIKit -framework Foundation -o OriginalCoreRepair/Tests/build-probe/GameProbe
+            -framework UIKit -framework Foundation -framework CoreGraphics -o OriginalCoreRepair/Tests/build-probe/GameProbe
       - name: Verify original core initialization
         run: bash OriginalCoreRepair/Tests/simulator-probe.sh
       - name: Execute private game and supplied plugin
