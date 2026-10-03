@@ -1336,7 +1336,7 @@ bool retro_load_game(const struct retro_game_info* info)
 
    set_memory_descriptors();
 
-   MT_loaded(info->path, (const uint8_t *)gamepak_code);
+   MT_loaded(info->path, gamepak_buffers[0] + 0xac);
    if (MT_active()) serial_mode = SERIAL_MODE_SERIAL_POKE;
 
    return true;

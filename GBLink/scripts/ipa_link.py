@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add the open-source GB link library to a separate unencrypted sideload IPA.
+"""Embed the in-game GBA trade plugin and gpSP core in a new sideload IPA.
 
 Does not decrypt apps, sign/install apps, fetch apps, or modify the input IPA.
 Uses Python 3 standard library only; Windows, Linux and macOS are supported.
@@ -147,56 +147,69 @@ def app_info(archive):
     return entries, path, info, binary_path, binary, binary_info
 
 
-def repackage(source, framework, output):
+def framework_files(framework, name):
+    framework = pathlib.Path(framework)
+    if framework.name != name + '.framework' or not (framework / name).is_file():
+        raise ValueError('Provide the built ' + name + '.framework directory')
+    library_info = inspect_slice((framework / name).read_bytes())
+    if library_info['encrypted'] or library_info['filetype'] != 6:
+        raise ValueError('Expected an unencrypted arm64 dynamic library')
+    if library_info['platform'] != 2:
+        raise ValueError('Framework is not built for physical iOS; simulator/macOS binaries cannot be embedded')
+    info = plistlib.loads((framework / 'Info.plist').read_bytes())
+    if info.get('CFBundleExecutable') != name or info.get('CFBundlePackageType') != 'FMWK':
+        raise ValueError('Invalid framework Info.plist')
+    if any(p.is_symlink() for p in framework.rglob('*')):
+        raise ValueError('Framework symlinks are unsupported')
+    return sorted(p for p in framework.rglob('*') if p.is_file())
+
+
+def repackage(source, framework, output, gpsp=None):
     source, framework, output = pathlib.Path(source), pathlib.Path(framework), pathlib.Path(output)
     if source.resolve() == output.resolve() or output.exists():
         raise ValueError("Choose a new output path; input and existing outputs are preserved")
-    if framework.name != "ManicGBLink.framework" or not (framework / "ManicGBLink").is_file():
-        raise ValueError("Provide the built ManicGBLink.framework directory")
-    library = (framework / "ManicGBLink").read_bytes()
-    library_info = inspect_slice(library)
-    if library_info["encrypted"] or library_info["filetype"] != 6:
-        raise ValueError("Expected an unencrypted arm64 dynamic library")
-    if library_info["platform"] != 2:
-        raise ValueError("Framework is not built for physical iOS; simulator/macOS binaries cannot be embedded")
-    framework_info = plistlib.loads((framework / 'Info.plist').read_bytes())
-    if framework_info.get('CFBundleExecutable') != 'ManicGBLink' or framework_info.get('CFBundlePackageType') != 'FMWK':
-        raise ValueError("Invalid framework Info.plist")
+    files = framework_files(framework, 'ManicGBLink')
+    if gpsp is None:
+        raise ValueError('The GBA trade build requires gpsp.libretro.framework too')
+    gpsp = pathlib.Path(gpsp)
+    core_files = framework_files(gpsp, 'gpsp.libretro')
     with zipfile.ZipFile(source) as original:
         entries, plist_path, info, binary_path, binary, binary_info = app_info(original)
         if binary_info['platform'] != 2:
             raise ValueError("Input app is not built for physical iOS")
         patched = patch_macho(binary)  # Validate all blockers before creating output.
-        info["MGLInjectGBLink"] = True
+        info.pop('MGLInjectGBLink', None)
+        info['MGLInjectTrade'] = True
         original_min = tuple(int(n) for n in info.get('MinimumOSVersion', '0').split('.'))
         if original_min < (15,):
             info['MinimumOSVersion'] = '15.0'
-        info["NSLocalNetworkUsageDescription"] = "Connect with your friend for local Game Boy link play."
+        info["NSLocalNetworkUsageDescription"] = "Find nearby players when starting a Game Boy Advance cable trade."
         services = info.setdefault("NSBonjourServices", [])
         if not isinstance(services, list):
             raise ValueError("Invalid Bonjour service list")
-        if "_manic-gblink._tcp" not in services:
-            services.append("_manic-gblink._tcp")
+        if "_manic-trade._tcp" not in services:
+            services.append("_manic-trade._tcp")
         app = plist_path.rsplit("/", 1)[0]
         prefix = app + "/Frameworks/ManicGBLink.framework/"
         if any(i.filename.startswith(prefix) for i in entries):
             raise ValueError("Framework already present")
-        files = sorted(p for p in framework.rglob("*") if p.is_file())
-        if any(p.is_symlink() for p in framework.rglob("*")):
-            raise ValueError("Framework symlinks are unsupported")
+        core_prefix = app + '/Frameworks/gpsp.libretro.framework/'
         with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as target:
             for item in entries:
                 if "_CodeSignature" in pathlib.PurePosixPath(item.filename).parts:
                     continue  # Invalidated signatures are replaced by the user's signer.
+                if item.filename.startswith(core_prefix):
+                    continue  # Replace only the selected emulator core, not app resources.
                 contents = patched if item.filename == binary_path else (
                     plistlib.dumps(info, fmt=plistlib.FMT_BINARY) if item.filename == plist_path else original.read(item))
                 target.writestr(item, contents)
-            for file in files:
+            for base, name, bundle_files in [(framework, 'ManicGBLink', files), (gpsp, 'gpsp.libretro', core_files)]:
+              for file in bundle_files:
                 # Downloads on Windows lose POSIX executable bits. Record the
                 # framework's ordinary iOS bundle permissions in the ZIP.
-                entry = zipfile.ZipInfo.from_file(file, prefix + file.relative_to(framework).as_posix())
+                entry = zipfile.ZipInfo.from_file(file, app + '/Frameworks/' + base.name + '/' + file.relative_to(base).as_posix())
                 entry.create_system = 3
-                entry.external_attr = (0o100755 if file.name == 'ManicGBLink' else 0o100644) << 16
+                entry.external_attr = (0o100755 if file.name == name else 0o100644) << 16
                 entry.compress_type = zipfile.ZIP_DEFLATED
                 target.writestr(entry, file.read_bytes())
     return output
@@ -207,6 +220,7 @@ def main():
     parser.add_argument("ipa")
     parser.add_argument("--inspect", action="store_true", help="Read only: report architecture, encryption and header padding")
     parser.add_argument("--framework")
+    parser.add_argument('--gpsp-framework')
     parser.add_argument("--output")
     args = parser.parse_args()
     if args.inspect:
@@ -215,9 +229,9 @@ def main():
             print(json.dumps({"bundle_id": info.get("CFBundleIdentifier"), "executable": executable,
                               "architecture": "arm64", **binary_info}, indent=2))
     else:
-        if not args.framework or not args.output:
-            parser.error("--framework and --output are required for repackaging")
-        print(repackage(args.ipa, args.framework, args.output))
+        if not args.framework or not args.gpsp_framework or not args.output:
+            parser.error('--framework, --gpsp-framework and --output are required for repackaging')
+        print(repackage(args.ipa, args.framework, args.output, args.gpsp_framework))
         print("UNSIGNED: re-sign the app and every embedded framework with your existing sideload tool. No device installation performed.")
 
 

@@ -58,6 +58,10 @@ class IPATests(unittest.TestCase):
             (framework / 'ManicGBLink').write_bytes(macho(filetype=6))
             (framework / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'ManicGBLink', 'CFBundlePackageType': 'FMWK'}))
             (framework / 'LICENSE').write_text('test license')
+            gpsp = root / 'gpsp.libretro.framework'; gpsp.mkdir()
+            (gpsp / 'gpsp.libretro').write_bytes(macho(filetype=6))
+            (gpsp / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'gpsp.libretro', 'CFBundlePackageType': 'FMWK'}))
+            (gpsp / 'gpSP-COPYING').write_text('test GPL license')
             info = {'CFBundleExecutable': 'Manic', 'CFBundleIdentifier': 'test.manic',
                     'NSBonjourServices': ['_ra_netplay._tcp'], 'TestUnrelatedSetting': 'keep'}
             with zipfile.ZipFile(source, 'w') as z:
@@ -65,9 +69,11 @@ class IPATests(unittest.TestCase):
                 z.writestr('Payload/Manic.app/Manic', macho())
                 z.writestr('Payload/Manic.app/unrelated.txt', b'preserve me')
                 z.writestr('Payload/Manic.app/System.core', b'synthetic original resource archive')
+                z.writestr('Payload/Manic.app/Frameworks/gpsp.libretro.framework/gpsp.libretro', b'old core')
+                z.writestr('Payload/Manic.app/Frameworks/gpsp.libretro.framework/obsolete.txt', b'old bundle resource')
                 z.writestr('Payload/Manic.app/_CodeSignature/CodeResources', b'invalidated signature')
             checksum = hashlib.sha256(source.read_bytes()).hexdigest()
-            ipa.repackage(source, framework, out)
+            ipa.repackage(source, framework, out, gpsp)
             self.assertEqual(checksum, hashlib.sha256(source.read_bytes()).hexdigest())
             with zipfile.ZipFile(out) as z:
                 self.assertEqual(z.read('Payload/Manic.app/unrelated.txt'), b'preserve me')
@@ -75,18 +81,24 @@ class IPATests(unittest.TestCase):
                 changed = plistlib.loads(z.read('Payload/Manic.app/Info.plist'))
                 self.assertEqual(changed['TestUnrelatedSetting'], 'keep')
                 self.assertEqual(changed['CFBundleIdentifier'], 'test.manic')
-                self.assertTrue(changed['MGLInjectGBLink'])
+                self.assertTrue(changed['MGLInjectTrade'])
                 self.assertEqual(changed['MinimumOSVersion'], '15.0')
                 self.assertIn('_ra_netplay._tcp', changed['NSBonjourServices'])
                 self.assertNotIn('Payload/Manic.app/_CodeSignature/CodeResources', z.namelist())
                 self.assertIn('Payload/Manic.app/Frameworks/ManicGBLink.framework/LICENSE', z.namelist())
                 library = z.getinfo('Payload/Manic.app/Frameworks/ManicGBLink.framework/ManicGBLink')
+                self.assertEqual(z.read('Payload/Manic.app/Frameworks/gpsp.libretro.framework/gpsp.libretro'), macho(filetype=6))
+                self.assertNotIn('Payload/Manic.app/Frameworks/gpsp.libretro.framework/obsolete.txt', z.namelist())
+                self.assertIn('_manic-trade._tcp', changed['NSBonjourServices'])
+                self.assertNotIn('MGLInjectGBLink', changed)
+                core = z.getinfo('Payload/Manic.app/Frameworks/gpsp.libretro.framework/gpsp.libretro')
+                self.assertEqual(core.external_attr >> 16, 0o100755)
                 self.assertEqual(library.create_system, 3)
                 self.assertEqual(library.external_attr >> 16, 0o100755)
             with self.assertRaisesRegex(ValueError, 'preserved'):
-                ipa.repackage(source, framework, out)
+                ipa.repackage(source, framework, out, gpsp)
             with self.assertRaisesRegex(ValueError, 'preserved'):
-                ipa.repackage(source, framework, source)
+                ipa.repackage(source, framework, source, gpsp)
 
     def test_zip_paths_and_duplicates(self):
         for names in [['../escape'], ['/absolute'], ['a\\b'], ['a', 'a']]:

@@ -1120,11 +1120,9 @@ enum GameOption: Int, CaseIterable {
         
         var allOptions = Set(GameOption.allCases)
         allOptions.remove(.editLink)
-        // A separate linked pair starts from battery saves. Do not run it over
-        // the normal emulator or advertise it for GBA titles like FireRed.
-        if game.gameType != .gb || scene == .gaming || PlayViewController.isGaming {
-            allOptions.remove(.gbLink)
-        }
+        // Keep the persisted enum value stable, but retire the standalone GB UI.
+        // GBA nearby trading now opens from the game's cable handshake.
+        allOptions.remove(.gbLink)
         
         if GameType.gameTypes(multiPlatformFileExtension: game.fileExtension).count == 0 {
             allOptions.remove(.platformChange)

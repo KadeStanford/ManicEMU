@@ -22,24 +22,8 @@ extension GameOption {
         
         switch self {
         case .gbLink:
-            guard !PlayViewController.isGaming else {
-                UIView.makeToast(message: "Close regular gameplay before opening Game Boy Link.")
-                return
-            }
-            guard firstGame.gameType == .gb,
-                  let path = Bundle.main.path(forResource: "ManicGBLink", ofType: "framework", inDirectory: "Frameworks"),
-                  let library = dlopen(path + "/ManicGBLink", RTLD_NOW | RTLD_LOCAL),
-                  let symbol = dlsym(library, "MGLPresent") else {
-                UIView.makeToast(message: "Build and embed the ManicGBLink framework first. See GBLink/README.md in this fork.")
-                return
-            }
-            typealias PresentLink = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void
-            let present = unsafeBitCast(symbol, to: PresentLink.self)
-            let rom = firstGame.romUrl as NSURL
-            let save = FileManager.default.fileExists(atPath: firstGame.gameSaveUrl.path) ? firstGame.gameSaveUrl as NSURL : nil
-            // The library retains these objects before returning. It reads both
-            // files, and exports new SRAM copies without changing core settings.
-            present(nil, Unmanaged.passUnretained(rom).toOpaque(), save.map { Unmanaged.passUnretained($0).toOpaque() })
+            // Retained only for old persisted menu preferences.
+            UIView.makeToast(message: "Start a cable trade inside a supported GBA game to find nearby players.")
 
         case .rename:
             GameInfoView.show(readyAction: .rename, game: firstGame)

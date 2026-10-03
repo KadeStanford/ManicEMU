@@ -249,7 +249,6 @@ extern u32 gamepak_size;
 extern u32 gamepak_buffer_count;
 extern bool gamepak_mini_materialized;
 extern bool gamepak_header_nonstandard;
-extern char gamepak_code[5];
 extern char gamepak_filename[512];
 
 cpu_alert_type dma_transfer(unsigned dma_chan, int *cycles);
