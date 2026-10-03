@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 
-enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6, QUIET=7 };
+enum { DATA=1, ACK=2, CLOSE=3, PAUSE=4, READY=5, SERIAL=6, QUIET=7, HOLD=8, RELEASE=9 };
 typedef struct { uint64_t sequence; unsigned type; uint8_t data[MT_DATA_SIZE]; } Message;
 static struct {
     enum MTPhase phase;
@@ -15,6 +15,8 @@ static struct {
     int serial_on, peer_serial_on, close_sent, close_received;
     int idle_ready, peer_idle_ready;
     int room_exit_sent, room_exit_received;
+    int local_hold, remote_hold;
+    uint64_t hold_generation, peer_hold_generation, hold_release_sequence;
     unsigned link_type;
     unsigned quiet;
     uint64_t frames, serial_generation, peer_serial_generation, diagnostic_revision;
@@ -45,7 +47,7 @@ static void diagnostic(const char *event,unsigned detail) { // Caller holds lock
 size_t MT_diagnostics(char *buffer,size_t capacity,uint64_t *revision) {
     size_t used=0;pthread_mutex_lock(&lock);if(revision)*revision=g.diagnostic_revision;
     if(buffer&&capacity){
-        int n=snprintf(buffer,capacity,"Manic GBA link v0.5; game=%.4s; epoch=%llu; metadata only\n",g.code,(unsigned long long)g.epoch);
+        int n=snprintf(buffer,capacity,"Manic GBA link v0.6; game=%.4s; epoch=%llu; metadata only\n",g.code,(unsigned long long)g.epoch);
         used=n>0?(size_t)n:0;if(used>=capacity)used=capacity-1;
         for(size_t i=0;i<g.diagnostic_count;i++){
             const char *line=g.diagnostics[(g.diagnostic_head+i)%128];size_t size=strlen(line);
@@ -59,7 +61,7 @@ void MT_serial_registers(uint16_t siocnt,uint16_t rcnt) {
 static uint64_t read64(const uint8_t *p) { uint64_t v=0; for(unsigned i=0;i<8;i++)v=(v<<8)|p[i];return v; }
 static void write64(uint8_t *p,uint64_t v) { for(int i=7;i>=0;i--){p[i]=v;v>>=8;} }
 static void envelope(uint8_t *out,unsigned type,uint64_t seq) {
-    memset(out,0,MT_PACKET_SIZE);memcpy(out,"MTR1",4);out[4]=4;out[5]=type;
+    memset(out,0,MT_PACKET_SIZE);memcpy(out,"MTR1",4);out[4]=5;out[5]=type;
     memcpy(out+8,g.session,16);write64(out+24,seq);
 }
 static int valid_data(const uint8_t *p) {
@@ -75,6 +77,7 @@ static void clear_session(void) {
     g.peer_serial_on=1;g.close_sent=g.close_received=0;g.quiet=0;
     g.idle_ready=g.peer_idle_ready=0;
     g.room_exit_sent=g.room_exit_received=0;g.link_type=0;
+    g.local_hold=g.remote_hold=0;g.hold_generation=g.peer_hold_generation=g.hold_release_sequence=0;
     g.serial_generation=g.peer_serial_generation=0;
 }
 static int queue(unsigned type,const void *data) { // Caller holds lock; controls share the serial sequence.
@@ -116,7 +119,7 @@ void MT_serial_state(int enabled) {
         g.serial_on=enabled;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;
         if(enabled){g.close_sent=g.close_received=0;g.room_exit_sent=g.room_exit_received=0;}
         diagnostic(enabled?"serial-on":"serial-off",0);
-        if(g.active&&(g.phase==MT_LINKED||g.phase==MT_SUSPENDED)&&!g.leaving){
+        if(g.active&&(g.phase==MT_LINKED||g.phase==MT_SUSPENDED||g.phase==MT_HELD)&&!g.leaving){
             uint8_t data[24]={0};data[0]=(uint8_t)enabled;write64(data+8,++g.serial_generation);ok=queue(SERIAL,data);
         }
     }pthread_mutex_unlock(&lock);if(!ok)fault("Cable state queue overflow; current save and backups retained");
@@ -131,10 +134,15 @@ void MT_leave(void) { // Core-thread hardware DisableSerial, never a UI/network 
 int MT_finishing(void) { int v;pthread_mutex_lock(&lock);v=g.leaving||g.remote_left;pthread_mutex_unlock(&lock);return v; }
 static int terminal_locked(void) {
     if(g.completed)return 1;
-    if(g.phase!=MT_LINKED&&g.phase!=MT_SUSPENDED&&g.phase!=MT_CLOSING)return 0;
+    if(g.phase!=MT_LINKED&&g.phase!=MT_SUSPENDED&&g.phase!=MT_CLOSING&&g.phase!=MT_HELD)return 0;
     if(g.serial_on||!g.room_exit_sent||!g.room_exit_received)return 0;
     // Never turn a transport loss with unacknowledged serial DATA into success.
     for(size_t i=0;i<g.out_count;i++)if(g.out[(g.out_head+i)%MT_QUEUE_SIZE].type==DATA)return 0;
+    return 1;
+}
+static int quiet_close_allowed(void) { // FR/LG's known subconnections return to the room; they are not exits.
+    if(!memcmp(g.code,"BPR",3)||!memcmp(g.code,"BPG",3))
+        return g.link_type!=0x1122&&g.link_type!=0x1133&&g.link_type!=0x1144&&g.link_type!=0x2211;
     return 1;
 }
 int MT_terminal_exit(void) { int v;pthread_mutex_lock(&lock);v=terminal_locked();pthread_mutex_unlock(&lock);return v; }
@@ -158,14 +166,24 @@ void MT_connect(unsigned role,const uint8_t session[16]) {
     pthread_mutex_lock(&lock);if(g.phase==MT_WAITING&&g.captured&&role<2&&session){g.role=role;memcpy(g.session,session,16);g.phase=MT_LINKED;diagnostic("pair",role);}pthread_mutex_unlock(&lock);
 }
 static void suspend_locked(uint64_t round) { g.round=round;g.local_ready=g.remote_ready=0;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;g.phase=MT_SUSPENDED;diagnostic("pause",0); }
+static enum MTPhase hold_phase_locked(void) { return g.local_hold||g.remote_hold||g.hold_release_sequence>g.acked?MT_HELD:MT_LINKED; }
+void MT_frontend_hold(int held) {
+    int ok=1;held=!!held;pthread_mutex_lock(&lock);
+    if((g.phase==MT_LINKED||g.phase==MT_HELD||(!held&&g.phase==MT_SUSPENDED))&&!g.leaving&&!g.remote_left&&!terminal_locked()&&g.local_hold!=held){
+        uint8_t data[24]={0};g.local_hold=held;write64(data,++g.hold_generation);ok=queue(held?HOLD:RELEASE,data);
+        if(!held)g.hold_release_sequence=g.tx;
+        if(g.phase!=MT_SUSPENDED)g.phase=hold_phase_locked();
+        g.quiet=0;g.idle_ready=g.peer_idle_ready=0;diagnostic(held?"frontend-hold":"frontend-release",0);
+    }pthread_mutex_unlock(&lock);if(!ok)fault("Frontend hold queue overflow; backups retained");
+}
 void MT_suspend(void) {
     int ok=1;pthread_mutex_lock(&lock);
-    if(g.phase==MT_LINKED&&!g.leaving&&!g.remote_left&&!terminal_locked()){uint8_t data[24]={0};suspend_locked(g.round+1);write64(data,g.round);ok=queue(PAUSE,data);}
+    if((g.phase==MT_LINKED||g.phase==MT_HELD)&&!g.leaving&&!g.remote_left&&!terminal_locked()){uint8_t data[24]={0};suspend_locked(g.round+1);write64(data,g.round);ok=queue(PAUSE,data);}
     pthread_mutex_unlock(&lock);if(!ok)fault("Link pause queue overflow; backups retained");
 }
 void MT_resume(void) {
     int ok=1;pthread_mutex_lock(&lock);
-    if(g.phase==MT_SUSPENDED&&g.started&&!g.local_ready){uint8_t data[24]={0};g.local_ready=1;write64(data,g.round);ok=queue(READY,data);if(g.remote_ready)g.phase=MT_LINKED;}
+    if(g.phase==MT_SUSPENDED&&g.started&&!g.local_ready){uint8_t data[24]={0};g.local_ready=1;write64(data,g.round);ok=queue(READY,data);if(g.remote_ready)g.phase=hold_phase_locked();}
     pthread_mutex_unlock(&lock);if(!ok)fault("Link resume queue overflow; backups retained");
 }
 void MT_cancel(void) { pthread_mutex_lock(&lock);if(g.phase==MT_WAITING)g.phase=MT_CANCELLED;pthread_mutex_unlock(&lock); }
@@ -173,7 +191,7 @@ void MT_restore(void) { pthread_mutex_lock(&lock);if(g.captured&&!g.leaving&&(g.
 void MT_poll_receive(void) {
     for(unsigned n=0;n<MT_QUEUE_SIZE;n++){
         Message m;MTGBA gba;unsigned peer;int deliver;pthread_mutex_lock(&lock);
-        if((g.phase!=MT_LINKED&&g.phase!=MT_CLOSING&&!(g.phase==MT_SUSPENDED&&terminal_locked()))||!g.started||!g.in_count){pthread_mutex_unlock(&lock);break;}
+        if((g.phase!=MT_LINKED&&g.phase!=MT_CLOSING&&!((g.phase==MT_SUSPENDED||g.phase==MT_HELD)&&terminal_locked()))||!g.started||!g.in_count){pthread_mutex_unlock(&lock);break;}
         if(!g.leaving&&g.gba.receive_capacity&&!g.gba.receive_capacity(1-g.role)){pthread_mutex_unlock(&lock);break;}
         m=g.in[g.in_head];g.in_head=(g.in_head+1)%MT_QUEUE_SIZE;g.in_count--;gba=g.gba;peer=1-g.role;deliver=!g.leaving;
         pthread_mutex_unlock(&lock);if(deliver&&gba.receive)gba.receive(m.data,MT_DATA_SIZE,peer);
@@ -183,7 +201,7 @@ int MT_frame(const MTGBA *gba) {
     enum MTPhase phase;int capture=0,start=0,restore=0,persist=0,stop=0,finish=0;unsigned role=0;
     MTSnapshot fn=NULL;MTPersist writer=NULL;MTNotice notice=NULL;
     pthread_mutex_lock(&lock);g.gba=*gba;phase=g.phase;g.frames++;
-    if(phase==MT_SUSPENDED&&terminal_locked()&&!g.peer_serial_on&&!g.in_count){g.phase=phase=MT_LINKED;diagnostic("terminal-unsuspend",0);}
+    if((phase==MT_SUSPENDED||phase==MT_HELD)&&terminal_locked()&&!g.peer_serial_on&&!g.in_count){g.phase=phase=MT_LINKED;diagnostic("terminal-unsuspend",0);}
     // FireRed/LeafGreen room termination sends CAFE/17 from each player, then
     // directly closes hardware, without 5FFF. This is explicit terminal intent,
     // distinct from menu/animation/battle handoffs; no quiet timer is needed.
@@ -194,7 +212,7 @@ int MT_frame(const MTGBA *gba) {
     // menu, and battle entry/return. A toggle (even with 5FFF) is not an exit.
     // Keep the existing transport/backup until both ordered hardware-idle
     // notifications and close commands are retained and the stream is quiet.
-    if((phase==MT_LINKED||phase==MT_CLOSING)&&g.started&&!g.leaving&&!g.serial_on&&!g.peer_serial_on&&g.close_sent&&g.close_received&&!g.out_count&&!g.in_count){
+    if((phase==MT_LINKED||phase==MT_CLOSING)&&g.started&&!g.leaving&&quiet_close_allowed()&&!g.serial_on&&!g.peer_serial_on&&g.close_sent&&g.close_received&&!g.out_count&&!g.in_count){
         if(!g.quiet)diagnostic("quiet-start",0);
         if(g.quiet<MT_CLOSE_QUIET_FRAMES)g.quiet++;
         if(g.quiet>=MT_CLOSE_QUIET_FRAMES&&!g.idle_ready){
@@ -230,7 +248,7 @@ int MT_frame(const MTGBA *gba) {
         // Keep identity/rx tombstone until next request to ACK late duplicates.
         g.completed=1;g.phase=MT_IDLE;g.started=0;free(g.state);g.state=NULL;g.state_size=0;notice=g.stopped;finish=1;diagnostic("complete",0);
     }phase=g.phase;pthread_mutex_unlock(&lock);if(finish&&notice)notice("Link completed");
-    return phase!=MT_WAITING&&phase!=MT_SUSPENDED&&phase!=MT_RESTORE&&phase!=MT_BROKEN;
+    return phase!=MT_WAITING&&phase!=MT_SUSPENDED&&phase!=MT_HELD&&phase!=MT_RESTORE&&phase!=MT_BROKEN;
 }
 static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/block payloads remain opaque.
     if(!(p[4]&0x80))return 1;
@@ -255,7 +273,7 @@ static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/blo
 void MT_send(uint16_t recipient,const void *data,size_t size) {
     (void)recipient;if(!data||size!=MT_DATA_SIZE||!valid_data(data)){fault("Invalid GBA serial packet");return;}
     int ok=1,supported=1;pthread_mutex_lock(&lock);
-    if((g.phase==MT_LINKED||g.phase==MT_CLOSING)&&!g.leaving){supported=classify(data,1);if(supported)ok=queue(DATA,data);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;}
+    if((g.phase==MT_LINKED||g.phase==MT_HELD||g.phase==MT_CLOSING)&&!g.leaving){supported=classify(data,1);if(supported)ok=queue(DATA,data);g.quiet=0;g.idle_ready=g.peer_idle_ready=0;}
     pthread_mutex_unlock(&lock);
     if(!supported)fault("Four-player Multi Battle requires four consoles. Use Single or Double Battle with two phones.");
     else if(!ok)fault("Connection stalled; games paused and pre-link backups retained");
@@ -267,19 +285,20 @@ int MT_next_packet(uint64_t after,uint8_t packet[MT_PACKET_SIZE]) {
 }
 void MT_ack_packet(uint8_t packet[MT_PACKET_SIZE]) { pthread_mutex_lock(&lock);envelope(packet,ACK,g.rx);pthread_mutex_unlock(&lock); }
 int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) {
-    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=4||p[6]||p[7]||p[5]<DATA||p[5]>QUIET)return -1;
+    if(!p||size!=MT_PACKET_SIZE||memcmp(p,"MTR1",4)||p[4]!=5||p[6]||p[7]||p[5]<DATA||p[5]>RELEASE)return -1;
     uint64_t seq=read64(p+24);unsigned type=p[5];int result=0,supported=1;
     if(type==DATA&&!valid_data(p+32))return -1;
     if(type==SERIAL){if(p[32]>1||!read64(p+40))return -1;for(unsigned i=33;i<56;i++)if((i<40||i>=48)&&p[i])return -1;}
-    else if(type!=DATA){unsigned begin=(type==PAUSE||type==READY||type==QUIET)?40:32;for(unsigned i=begin;i<MT_PACKET_SIZE;i++)if(p[i])return -1;}
+    else if(type!=DATA){unsigned begin=(type==PAUSE||type==READY||type==QUIET||type==HOLD||type==RELEASE)?40:32;for(unsigned i=begin;i<MT_PACKET_SIZE;i++)if(p[i])return -1;if((type==HOLD||type==RELEASE)&&!read64(p+32))return -1;}
     pthread_mutex_lock(&lock);
     if(!g.captured||memcmp(p+8,g.session,16)){pthread_mutex_unlock(&lock);return -1;}
     if(g.completed){if(seq>(type==ACK?g.tx:g.rx)){pthread_mutex_unlock(&lock);return -1;}envelope(ack,ACK,g.rx);pthread_mutex_unlock(&lock);return type==ACK?2:0;}
-    if(g.phase!=MT_LINKED&&g.phase!=MT_SUSPENDED&&g.phase!=MT_CLOSING){pthread_mutex_unlock(&lock);return -1;}
+    if(g.phase!=MT_LINKED&&g.phase!=MT_SUSPENDED&&g.phase!=MT_CLOSING&&g.phase!=MT_HELD){pthread_mutex_unlock(&lock);return -1;}
     if(type==ACK){
         if(seq>g.tx){pthread_mutex_unlock(&lock);return -1;}
         while(g.out_count&&g.out[g.out_head].sequence<=seq){g.out_head=(g.out_head+1)%MT_QUEUE_SIZE;g.out_count--;}
         if(seq>g.acked)g.acked=seq;
+        if(g.phase==MT_HELD)g.phase=hold_phase_locked();
     }else{
         if(!seq||seq>g.rx+1||(seq==g.rx+1&&type==DATA&&g.in_count==MT_QUEUE_SIZE)){pthread_mutex_unlock(&lock);return -1;}
         if(seq==g.rx+1){
@@ -293,9 +312,14 @@ int MT_receive_packet(const uint8_t *p,size_t size,uint8_t ack[MT_PACKET_SIZE]) 
                 if(!g.peer_serial_on&&read64(p+32)==g.peer_serial_generation)g.peer_idle_ready=1;
                 diagnostic("peer-quiet",0);
             }
+            else if((type==HOLD||type==RELEASE)&&!g.leaving&&!g.remote_left){
+                uint64_t generation=read64(p+32);if(generation<=g.peer_hold_generation){pthread_mutex_unlock(&lock);return -1;}
+                g.peer_hold_generation=generation;g.remote_hold=type==HOLD;g.quiet=0;g.idle_ready=g.peer_idle_ready=0;
+                if(g.phase!=MT_SUSPENDED&&g.phase!=MT_CLOSING)g.phase=hold_phase_locked();diagnostic(type==HOLD?"peer-hold":"peer-release",0);
+            }
             else if(!g.leaving&&!g.remote_left){uint64_t round=read64(p+32);if(!round){pthread_mutex_unlock(&lock);return -1;}
                 if(type==PAUSE&&round>g.round&&!terminal_locked())suspend_locked(round);
-                else if(type==READY&&round==g.round&&g.phase==MT_SUSPENDED){g.remote_ready=1;if(g.local_ready)g.phase=MT_LINKED;}
+                else if(type==READY&&round==g.round&&g.phase==MT_SUSPENDED){g.remote_ready=1;if(g.local_ready)g.phase=hold_phase_locked();}
             }g.rx=seq;result=1;
         }envelope(ack,ACK,g.rx);
     }pthread_mutex_unlock(&lock);

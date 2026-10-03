@@ -10,7 +10,7 @@
 #include "FrontendSave.h"
 #include <dlfcn.h>
 
-static NSString *const TradeProtocol = @"g3-fc4afeb-mtr4";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr5";
 static NSString *const Service = @"manic-trade";
 static void resumeFrontend(void) {
     Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
@@ -49,6 +49,7 @@ static NSString *gameTitle(NSString *code) {
 - (void)saveFailed:(NSString *)message;
 - (void)halt:(NSString *)reason;
 - (void)frontendPaused;
+- (void)frontendResumed;
 @end
 @implementation ManicTrade {
     MCSession *_session;
@@ -97,6 +98,7 @@ static NSString *gameTitle(NSString *code) {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;_coreEpoch=MT_epoch();
     _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;_saveWarning=nil;
     _recoveryDialog=nil;_recoveryFatal=NO;_frontendPausedForLink=NO;
+    _heard=_lastResend=CACurrentMediaTime();
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -201,6 +203,7 @@ static NSString *gameTitle(NSString *code) {
     }]];_recoveryDialog=a;_recoveryFatal=_fatal;[self show:a];
 }
 - (void)frontendPaused {_frontendPausedForLink=YES;}
+- (void)frontendResumed {_frontendPausedForLink=NO;}
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
 - (void)writeDiagnostics {
     char buffer[24576];uint64_t revision=0;size_t length=MT_diagnostics(buffer,sizeof(buffer),&revision);
@@ -219,7 +222,7 @@ static NSString *gameTitle(NSString *code) {
         if(_partner&&![_session.connectedPeers containsObject:_partner])MT_peer_disconnected();
     }
     enum MTPhase phase=MT_phase();
-    if(phase==MT_LINKED&&_lastPhase==MT_SUSPENDED){
+    if(phase==MT_LINKED&&(_lastPhase==MT_SUSPENDED||_lastPhase==MT_HELD)){
         [self dismissDialog];_recoveryDialog=nil;_recoveryFatal=NO;
         if(_frontendPausedForLink){_frontendPausedForLink=NO;resumeFrontend();}
         [_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
@@ -227,8 +230,8 @@ static NSString *gameTitle(NSString *code) {
     _lastPhase=phase;
     if(!_partner||![_session.connectedPeers containsObject:_partner])return;
     CFTimeInterval now=CACurrentMediaTime();
-    if(phase==MT_LINKED||phase==MT_SUSPENDED||phase==MT_CLOSING){
-        if(phase==MT_LINKED&&!MT_terminal_exit()&&now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];}
+    if(phase==MT_LINKED||phase==MT_HELD||phase==MT_SUSPENDED||phase==MT_CLOSING){
+        if((phase==MT_LINKED||phase==MT_HELD)&&!MT_terminal_exit()&&now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];}
         if(now-_lastResend>0.75){_cursor=0;_lastResend=now;}
         for(unsigned i=0;i<64;i++){
             uint8_t bytes[MT_PACKET_SIZE];if(!MT_next_packet(_cursor,bytes))break;
@@ -362,16 +365,16 @@ static int persist(const uint8_t *battery,const uint8_t *state,size_t size) {
         return backup&&saved;
     }
 }
-static void (*originalPause)(id,SEL);
+static void (*originalPause)(id,SEL),(*originalResume)(id,SEL);
 static void tradePause(id bridge,SEL selector) {
-    BOOL linked=MT_phase()==MT_LINKED;
-    if(linked)MT_suspend(); // Suspend before the frontend stops issuing frames.
+    MT_frontend_hold(1); // Ordinary frontend save/menu pause is not network loss.
     originalPause(bridge,selector);
-    BOOL pausedForLink=linked&&MT_phase()==MT_SUSPENDED;
-    uint64_t epoch=MT_epoch();if(linked)dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch()){
-        if(pausedForLink)[[ManicTrade shared] frontendPaused];
-        [[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];
-    }});
+    uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch()&&((BOOL (*)(id,SEL))objc_msgSend)(bridge,NSSelectorFromString(@"isPaused")))[[ManicTrade shared] frontendPaused];});
+}
+static void tradeResume(id bridge,SEL selector) {
+    MT_frontend_hold(0); // RELEASE must be acknowledged before this core runs.
+    originalResume(bridge,selector);
+    uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] frontendResumed];});
 }
 __attribute__((constructor)) static void install_trade(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MGLInjectTrade"] boolValue])return;
@@ -379,7 +382,8 @@ __attribute__((constructor)) static void install_trade(void) {
     Method method=cls?class_getInstanceMethod(cls,sel):NULL;
     if(!method||method_getNumberOfArguments(method)!=5)return;
     Method pause=class_getInstanceMethod(cls,NSSelectorFromString(@"pause"));
-    if(pause&&method_getNumberOfArguments(pause)==2){originalPause=(void *)method_getImplementation(pause);method_setImplementation(pause,(IMP)tradePause);}
+    Method resume=class_getInstanceMethod(cls,NSSelectorFromString(@"resume"));
+    if(pause&&resume&&method_getNumberOfArguments(pause)==2&&method_getNumberOfArguments(resume)==2){originalPause=(void *)method_getImplementation(pause);originalResume=(void *)method_getImplementation(resume);method_setImplementation(pause,(IMP)tradePause);method_setImplementation(resume,(IMP)tradeResume);}
     // Use Manic's existing gpSP selection. Changing only the loaded dylib would
     // mislabel new save states as mGBA in the frontend's persisted metadata.
     // Core selection happens once at launch; pairing never swaps/restarts cores.

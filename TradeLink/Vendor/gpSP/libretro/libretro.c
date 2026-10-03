@@ -390,7 +390,7 @@ static bool trade_speed_locked;
 static bool trade_busy(void) {
    enum MTPhase p = MT_phase();
    return MT_active() && (p == MT_WAITING || p == MT_LINKED ||
-      p == MT_SUSPENDED || p == MT_RESTORE || p == MT_BROKEN || p == MT_CLOSING);
+      p == MT_SUSPENDED || p == MT_HELD || p == MT_RESTORE || p == MT_BROKEN || p == MT_CLOSING);
 }
 void set_fastforward_override(bool fastforward)
 {

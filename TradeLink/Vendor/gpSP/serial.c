@@ -218,10 +218,10 @@ u32 serial_next_event() {
 
 // Account for consumed cycles and return if a serial IRQ should be raised.
 bool update_serial(unsigned cycles) {
-  if (MT_active() && MT_local_closed()) return false;
+  if (MT_active() && MT_local_closed() && !MT_complete()) return false; // Tombstone must not disable a fresh bootstrap IRQ.
   if (MT_active() && (get_serial_mode(read_ioreg(REG_SIOCNT), read_ioreg(REG_RCNT)) != SERIAL_MODE_MULTI || !(read_ioreg(REG_SIOCNT) & 0x4000)))
     return false; // Disabled hardware must not consume words or fake IRQs.
-  if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED || MT_phase() == MT_BROKEN))
+  if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED || MT_phase() == MT_HELD || MT_phase() == MT_BROKEN))
     return false; // No handshake IRQ can complete before pairing/backup.
   // Might wanna check if the connected device has some update (IRQ).
   switch (serial_mode) {

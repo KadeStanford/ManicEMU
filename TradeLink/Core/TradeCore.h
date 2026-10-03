@@ -9,7 +9,7 @@
 #define MT_PACKET_SIZE 56
 #define MT_QUEUE_SIZE 512
 #define MT_CLOSE_QUIET_FRAMES 180 // ~3 seconds at normal GBA speed; reopening cancels finalization.
-enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN, MT_CLOSING };
+enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN, MT_CLOSING, MT_HELD };
 enum MTMode { MT_MODE_UNKNOWN, MT_MODE_TRADE, MT_MODE_SINGLE_BATTLE, MT_MODE_DOUBLE_BATTLE };
 typedef struct {
     void (*start)(unsigned role);
@@ -51,6 +51,7 @@ size_t MT_pending(void);
 int MT_frame(const MTGBA *gba); // Core thread only. No UI/network code executes here.
 void MT_connect(unsigned role, const uint8_t session[16]);
 void MT_suspend(void);
+void MT_frontend_hold(int held); // Ordered frontend pause/resume; distinct from network-loss recovery.
 void MT_resume(void);
 void MT_cancel(void);
 void MT_restore(void);

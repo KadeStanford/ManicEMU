@@ -59,8 +59,8 @@ static NSMutableDictionary *report;
         // new alerts on an alert that is still being dismissed.
         Class cls=NSClassFromString(@"ManicTrade");id<MCNearbyServiceBrowserDelegate> manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
         MCNearbyServiceBrowser *browser=object_getIvar(manager,class_getInstanceVariable(cls,"_browser"));
-        NSDictionary *one=@{@"v":@"g3-fc4afeb-mtr4",@"room":@"00000000000000000000000000000001",@"code":@"BPRE"};
-        NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr4",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
+        NSDictionary *one=@{@"v":@"g3-fc4afeb-mtr5",@"room":@"00000000000000000000000000000001",@"code":@"BPRE"};
+        NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr5",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player One"] withDiscoveryInfo:one];
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player Two"] withDiscoveryInfo:two];
     });
@@ -80,7 +80,7 @@ static NSMutableDictionary *report;
         // round-trip without requesting explicit Reconnect.
         [[LibretroCore sharedInstance] pause];assert([[LibretroCore sharedInstance] isPaused]);
         [[LibretroCore sharedInstance] resume];loopback();assert(MT_frame(&gba)&&MT_phase()==MT_LINKED);
-        [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_SUSPENDED&&[[LibretroCore sharedInstance] isPaused]);
+        [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_HELD&&[[LibretroCore sharedInstance] isPaused]);
         Class cls=NSClassFromString(@"ManicTrade");id manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
         SEL halt=NSSelectorFromString(@"halt:");((void (*)(id,SEL,id))objc_msgSend)(manager,halt,@"Synthetic unexpected drop");
         Ivar desired=class_getInstanceVariable(cls,"_dialog");id first=object_getIvar(manager,desired);
@@ -94,7 +94,8 @@ static NSMutableDictionary *report;
         NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         entry.data=strdup([[documents URLByAppendingPathComponent:@"active.sav"].path UTF8String]);entry.attr.i=0;
         files.elems=&entry;files.size=files.cap=1;
-        loopback();MT_resume();loopback();assert(MT_frame(&gba));[[LibretroCore sharedInstance] resume];
+        loopback();[[LibretroCore sharedInstance] resume];loopback();assert(MT_phase()==MT_SUSPENDED); // Genuine loss remains explicit.
+        MT_resume();loopback();assert(MT_frame(&gba));
         ((void (*)(id,SEL,id))objc_msgSend)(manager(),NSSelectorFromString(@"tick:"),nil);
         MT_serial_state(1);loopback();MT_serial_state(0);loopback();assert(MT_frame(&gba)&&MT_phase()==MT_LINKED);
         MT_serial_state(1);loopback();assert(MT_frame(&gba)&&save_calls==0);
@@ -141,7 +142,15 @@ static NSMutableDictionary *report;
         assert([((UIAlertController *)root.presentedViewController).title isEqual:@"Nearby players"]);
         report[@"colosseum_reentry_gets_fresh_discovery_picker"]=@YES;
         uint8_t session[16]={2};MT_connect(0,session);assert(MT_frame(&gba));MT_serial_state(1);loopback();command(0x2222,0x2233);
-        assert(MT_mode()==MT_MODE_SINGLE_BATTLE);halt(@"New battle interruption");id first=[manager() valueForKey:@"_dialog"];
+        assert(MT_mode()==MT_MODE_SINGLE_BATTLE);
+        unsigned before=recovery_presentations;
+        for(unsigned i=0;i<2;i++){
+            [[LibretroCore sharedInstance] pause];loopback();assert(MT_phase()==MT_HELD&&!MT_frame(&gba));
+            [[LibretroCore sharedInstance] resume];loopback();assert(MT_phase()==MT_LINKED&&MT_frame(&gba));
+        }assert(recovery_presentations==before);
+        report[@"battle_result_and_save_frontend_pauses_resume_without_recovery"]=@YES;
+        report[@"frontend_resume_does_not_clear_real_disconnect"]=@YES;
+        halt(@"New battle interruption");id first=[manager() valueForKey:@"_dialog"];
         halt(@"Repeated new interruption");assert(first==[manager() valueForKey:@"_dialog"]);
         MT_failure("Synthetic fatal packet loss");halt(@"Fatal packet loss");id fatal=[manager() valueForKey:@"_dialog"];
         assert(fatal!=first&&[fatal isKindOfClass:UIAlertController.class]);
