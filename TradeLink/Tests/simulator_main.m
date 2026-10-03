@@ -65,6 +65,11 @@ static NSMutableDictionary *report;
         NSData *checkpoint=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"pre-trade.gpspstate"]];assert(checkpoint.length==sizeof(state)&&((const uint8_t *)checkpoint.bytes)[0]==0x67);
         uint8_t session[16]={1};MT_connect(0,session);assert(MT_frame(&gba));
         [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_SUSPENDED&&[[LibretroCore sharedInstance] isPaused]);
+        Class cls=NSClassFromString(@"ManicTrade");id manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
+        SEL halt=NSSelectorFromString(@"halt:");((void (*)(id,SEL,id))objc_msgSend)(manager,halt,@"Synthetic unexpected drop");
+        Ivar desired=class_getInstanceVariable(cls,"_dialog");id first=object_getIvar(manager,desired);
+        ((void (*)(id,SEL,id))objc_msgSend)(manager,halt,@"Repeated disconnected callback");
+        assert(first==object_getIvar(manager,desired)); // One interruption owns ONE recovery alert.
         report=[@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"rapid_discovery_updates_show_both_players":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES} mutableCopy];
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{
