@@ -2,7 +2,9 @@ name: Azahar iOS source build probe
 on:
   push:
     branches: [feature/dual-airplay-foundation]
-    paths: ['.github/workflows/azahar-build-probe.yml']
+    paths:
+      - '.github/workflows/azahar-build-probe.yml'
+      - 'CorePatches/Azahar/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,11 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: manic-source
+          lfs: false
+          submodules: false
+      - uses: actions/checkout@v4
+        with:
           repository: Daiuno/azahar
           ref: 03da4a354cc10012418c28a935dd0c627e37a963
           path: azahar-source
           lfs: false
           submodules: recursive
+      - name: Enable the 3GX loader in the libretro frontend
+        run: git -C azahar-source apply ../manic-source/CorePatches/Azahar/0001-enable-3gx-loader-in-libretro.patch
       - name: Configure and build unsigned iOS libretro core
         shell: bash
         run: |
