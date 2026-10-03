@@ -1,7 +1,7 @@
 name: iOS source build probe
 on:
   push:
-    branches: [feature/dual-airplay-foundation]
+    branches: [feature/dual-airplay-foundation, recovery/dual-airplay-azahar]
     paths:
       - 'ManicEmu/**'
       - '.github/workflows/ios-build-probe.yml'
@@ -25,7 +25,7 @@ jobs:
           xcodebuild -project ManicEmu/ManicEmu.xcodeproj \
             -scheme ManicEmuSideload -configuration Release \
             -skipPackagePluginValidation \
-            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/manic-derived" \
             CODE_SIGNING_ALLOWED=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO build 2>&1 | tee "$RUNNER_TEMP/manic-build.log"
       - uses: actions/upload-artifact@v4
