@@ -9,6 +9,7 @@
 static NSString *lastLayout;
 static unsigned loads,stops,ends,touches,releases;
 static CGPoint touchPoint;
+static void check(NSString *key,BOOL passed);
 @interface LibretroCore : NSObject
 @property(strong) UIViewController *vc;
 + (instancetype)sharedInstance;
@@ -30,6 +31,10 @@ static CGPoint touchPoint;
 - (void)sendTouchEventX:(CGFloat)x y:(CGFloat)y {touches++;touchPoint=CGPointMake(x,y);}
 - (void)releaseTouchEvent {releases++;}
 @end
+@interface TestSourceDrawable : NSObject
+@property(strong) id<MTLTexture> texture;
+@end
+@implementation TestSourceDrawable @end
 @interface Context : NSObject {
     CAMetalLayer *_layer;
     id<CAMetalDrawable> _drawable;
@@ -40,11 +45,27 @@ static CGPoint touchPoint;
 - (void)end;
 - (id)nextDrawable;
 - (MASViewport *)viewport;
+- (id<MTLCommandBuffer>)prepare:(CAMetalLayer *)layer;
 @end
 @implementation Context
-- (void)end {ends++;}
+- (void)end {
+    check(@"existing_encoder_ended_exactly_once",_rce==nil);
+    [_commandBuffer commit];[_commandBuffer waitUntilCompleted];ends++;
+}
 - (id)nextDrawable {return _drawable;}
 - (MASViewport *)viewport {return &_viewport;}
+- (id<MTLCommandBuffer>)prepare:(CAMetalLayer *)layer {
+    _layer=layer;_layer.device=MTLCreateSystemDefaultDevice();
+    _commandBuffer=[[_layer.device newCommandQueue] commandBuffer];
+    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:256 height:384 mipmapped:NO];
+    desc.usage=MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+    TestSourceDrawable *d=[TestSourceDrawable new];d.texture=[_layer.device newTextureWithDescriptor:desc];_drawable=(id)d;
+    MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture=d.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+    pass.colorAttachments[0].storeAction=MTLStoreActionStore;pass.colorAttachments[0].clearColor=MTLClearColorMake(1,0,0,1);
+    _rce=[_commandBuffer renderCommandEncoderWithDescriptor:pass];
+    _viewport=(MASViewport){0,0,256,384,256,384};return _commandBuffer;
+}
 @end
 @interface ExternalWindow : UIWindow @end
 @implementation ExternalWindow @end
@@ -112,6 +133,10 @@ static void gpu(void) {
         [root.view addSubview:touchArea];[m refresh];
         touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
         check(@"skin_and_rotation_changes_follow_live_touch_region",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
+        [m.phoneSurface layoutIfNeeded];[m.externalSurface layoutIfNeeded];
+        Context *context=[Context new];id<MTLCommandBuffer> frame=[context prepare:m.plan.source];
+        [context nextDrawable];[context end];
+        check(@"renderer_hook_presents_both_live_drawables",masEncodedFrames==1&&frame.status==MTLCommandBufferStatusCompleted&&ends==1);
         m.liveViewport=CGRectMake(20,30,400,480);[m touch:CGPointMake(0.25,0.75)];
         check(@"touch_maps_to_ds_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-120)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-450)<0.001);
         [m swap];check(@"swap_does_not_reload_or_stop",m.plan.swapped&&loads==1&&stops==0);
@@ -120,6 +145,7 @@ static void gpu(void) {
         check(@"touch_maps_to_3ds_centered_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-140)<0.001);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
+        check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
         [core stop];check(@"stop_cleans_up_without_save_or_core_reload",stops==1&&loads==1&&!m.dual);
         gpu();
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;

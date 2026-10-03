@@ -17,6 +17,9 @@ static void (*originalTouch)(id,SEL,CGFloat,CGFloat);
 static void (*originalEnd)(id,SEL);
 static id (*originalDrawable)(id,SEL);
 static Ivar layerIvar,drawableIvar,bufferIvar,encoderIvar;
+#ifdef MAS_TESTING
+static unsigned masEncodedFrames;
+#endif
 
 @interface MASPlan : NSObject
 @property(strong) CAMetalLayer *source,*phone,*external;
@@ -253,6 +256,9 @@ static void masEnd(id self,SEL cmd) {
         BOOL good=phone&&external&&MASDrawCrop(buffer,drawable.texture,phone.texture,p.swapped?top:bottom,p.swapped?topSize:bottomSize)&&
                                       MASDrawCrop(buffer,drawable.texture,external.texture,p.swapped?bottom:top,p.swapped?bottomSize:topSize);
         if(good) {
+#ifdef MAS_TESTING
+            masEncodedFrames++;
+#endif
             CGRect live=CGRectMake(vp->x,vp->y,vp->width,vp->height);
             [buffer presentDrawable:phone];[buffer presentDrawable:external];
             [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished){
