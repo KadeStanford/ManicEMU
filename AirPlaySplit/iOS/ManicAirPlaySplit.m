@@ -550,8 +550,28 @@ static IMP replace(Class cls,NSString *name,IMP replacement,unsigned arguments) 
     if(!method||method_getNumberOfArguments(method)!=arguments)return NULL;
     return method_setImplementation(method,replacement);
 }
+static void prepareExistingPluginFolders(void) {
+    // The original core scans uppercase title IDs. Keep every user's original
+    // folder and file; provide a missing uppercase copy without overwriting it.
+    NSFileManager *files=NSFileManager.defaultManager;
+    NSString *documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    NSString *root=[documents stringByAppendingPathComponent:@"3DS/sdmc/luma/plugins"];
+    NSCharacterSet *hex=[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
+    for(NSString *name in [files contentsOfDirectoryAtPath:root error:nil]) {
+        if(name.length!=16||[name rangeOfCharacterFromSet:hex.invertedSet].location!=NSNotFound)continue;
+        NSString *upper=name.uppercaseString;if([upper isEqualToString:name])continue;
+        NSString *source=[root stringByAppendingPathComponent:name],*target=[root stringByAppendingPathComponent:upper];
+        NSDictionary *attributes=[files attributesOfItemAtPath:source error:nil];
+        if(![attributes[NSFileType] isEqual:NSFileTypeDirectory]||[files fileExistsAtPath:target])continue;
+        BOOL plugin=NO;
+        for(NSString *entry in [files contentsOfDirectoryAtPath:source error:nil])
+            if([entry.pathExtension isEqualToString:@"3gx"]) {plugin=YES;break;}
+        if(plugin)[files copyItemAtPath:source toPath:target error:nil];
+    }
+}
 static void install(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MASInjectAirPlaySplit"] boolValue])return;
+    prepareExistingPluginFolders();
     Class core=NSClassFromString(@"LibretroCore"),context=NSClassFromString(@"Context");
     layerIvar=class_getInstanceVariable(context,"_layer");drawableIvar=class_getInstanceVariable(context,"_drawable");
     bufferIvar=class_getInstanceVariable(context,"_commandBuffer");encoderIvar=class_getInstanceVariable(context,"_rce");
