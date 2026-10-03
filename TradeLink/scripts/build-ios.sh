@@ -21,8 +21,8 @@ for name in ManicGBLink gpsp.libretro; do
 <key>CFBundleIdentifier</key><string>org.manicemu.$(echo "$name" | tr '.' '-')</string>
 <key>CFBundleName</key><string>$name</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleShortVersionString</key><string>0.4</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.5</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>MinimumOSVersion</key><string>15.0</string>
 </dict></plist>
 PLIST

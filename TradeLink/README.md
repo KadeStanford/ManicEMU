@@ -5,14 +5,15 @@ session. It targets FireRed, LeafGreen, Ruby, Sapphire and Emerald (game-code
 prefixes BPR, BPG, AXV, AXP and BPE). Original Game Boy Red/Blue are a different
 protocol; the earlier GB experiment is archived under `GBLink`.
 
-The user reported that v0.3 paired two physical phones and entered FireRed's trade
-room, then showed the game's communication error when opening the party list.
-A new synthetic trace reproduces a concrete v0.3 defect: the game's temporary
-`DisableSerial` closes the network session and flushes the save prematurely.
-This revision preserves pairing through the game's close/reopen transitions.
-**The revised IPA still needs a physical two-phone trade, battle, and app-restart
-save check.** The regression proves the defect in that code path; it does not
-prove that every possible cause of the user's game error has been eliminated.
+The user reported a successful two-phone FireRed trade with v0.4 and that the
+result persisted after saving. They also reported two consecutive "Link paused"
+prompts while leaving through FireRed's own trade-room exit, and no discovery
+prompt on a subsequent Colosseum visit. Cold app restart was not established.
+v0.5 recognizes FireRed/LeafGreen's explicit exit-room keys and direct CloseLink,
+returns the session to IDLE, and gives each interruption one recovery alert.
+**The revised exit and battle behavior still needs physical two-phone testing.**
+Synthetic traces reproduce the stale-session defect and exercise the fix; they
+do not execute Pokemon game logic or establish actual battle compatibility.
 
 ## Use with existing progress
 
@@ -68,7 +69,7 @@ acknowledged without being executed twice. A lost/overflowed core packet require
 **Restore before link**, which restores that phone's checkpoint and battery on
 the core thread. Both phones must choose recovery consistently after an
 interrupted trade. The disk backups remain. There is no distributed atomic save
-commit, and a completed trade still needs the physical-device check. Restoration
+commit, and interrupted-trade recovery still needs the physical-device check. Restoration
 is never automatic and is rejected after final session shutdown. Temporary
 hardware shutdown retains both the current game and its pre-link checkpoint. Reconnect uses
 ordered PAUSE/READY rounds and requires both players' readiness; stale rounds,
@@ -82,7 +83,7 @@ command alone identifies a final exit. v0.3 incorrectly treated the first toggle
 as final. The source-derived reproduction failed at `CLOSING` with one premature
 save flush while its prior transport tests all passed.
 
-v0.4 sends ordered hardware OFF/ON notifications while preserving the session,
+v0.4 and v0.5 send ordered hardware OFF/ON notifications while preserving the session,
 roles and automatic pre-link checkpoint. It stops fake serial IRQs while hardware
 is disabled and resets the game-side handshake engine when it reopens. A final
 exit requires both games' `5FFF` commands, both hardware OFF notifications, all
@@ -93,6 +94,27 @@ Only then does the core send CLOSE fences, persist the current save and announce
 completion. The quiet window is an explicitly bounded protocol heuristic, not
 cycle-exact detection of game intent. A ROM hack that delays reopening beyond
 both quiet deadlines remains outside the verified trace.
+
+FireRed/LeafGreen's terminal room exit is a separate path. In the cable-club
+room (`1111`, `2233` or `2244`), both players send `CAFE/17`
+(`LINK_KEY_CODE_EXIT_ROOM`), then the exit script calls CloseLink directly,
+without sending `5FFF`. v0.4 missed this and stayed paired forever, blocking the
+next discovery request. v0.5 finishes once those commands and earlier DATA are
+acknowledged, both hardware OFF controls are accepted, and the inbox is drained.
+It uses ordered CLOSE fences and the same core-owned save persistence; there is
+no quiet timer on this explicit path. Once acknowledged bilateral exit intent
+and local hardware closure are known, a missing peer OFF/CLOSE control from a
+transport disconnect can be treated as expected. Unacknowledged DATA still
+requires recovery. Reopening hardware clears all room-exit intent. A single exit
+key, EXIT_SEAT (`1D`) or a non-room link type cannot claim a successful ending.
+The bounded quiet fallback above remains for other Gen3 endings/handoffs.
+
+Recovery UI has one alert per interruption. Repeated timeout, pause and
+disconnect notifications reuse it; queued alerts are checked again before
+presentation and discarded after terminal exit. Successful reconnect clears
+that alert so a later interruption can recover. Fatal protocol errors still
+escalate to checkpoint recovery. No configurable link settings or home buttons
+were added.
 
 A final close ACK lost to an expected peer
 disconnect may be waived; unacknowledged serial DATA may not. Late duplicates are
@@ -130,8 +152,8 @@ master schedule (5242 emulated cycles), busy-bit/IRQ behavior and both direction
 of actual serial words across isolated engines. Network packets carry those
 24-byte serial frames inside a sequenced 56-byte envelope. Encrypted
 MultipeerConnectivity handles discovery and reliable local transport. MTR1 wire
-version 3 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL and QUIET in one sequence. Both
-phones must use v0.4; older wire versions cannot pair with it. ROM and
+version 4 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL and QUIET in one sequence. Both
+phones must use v0.5; older wire versions cannot pair with it. ROM and
 battery bytes are never sent to the other player. Protocol version, peer/session
 identity, game-code family and language code must match the compatibility checks.
 The game itself still determines inter-title trade eligibility.
@@ -157,7 +179,15 @@ battle checkpoint recovery. The FireRed transition trace additionally exercises
 room -> party list, three complete synthetic 200-byte party blocks, selection ->
 animation, save standby, return to menu/room, Single/Double battle handoffs, mode
 resets without close intent, reopen at the quiet deadline, unequal frame rates,
-same-session epochs and absence of intermediate save flushing. The UIKit test checks normal ending without a
+same-session epochs and absence of intermediate save flushing. The room-exit
+suite covers simultaneous/asymmetric/delayed exits, missing DATA ACKs versus
+final controls, negative intent checks, save/restart, and trade exit -> fresh
+Single/Double Colosseum handshake -> pairing -> battle turns/return -> exit.
+Fresh discovery uses the game's real B9A0 token, with no fabricated alternate
+battle token. Disabled IRQs and non-handshake writes cannot start discovery.
+The UIKit test checks one recovery presentation for repeated interruption
+callbacks, cancellation of queued stale alerts, fresh Colosseum discovery,
+fatal-error escalation, and normal ending without a
 reconnect/restore dialog, the active frontend save path, and separate pre/post
 backups. The simulator uses a small test frontend;
 it does not launch the full original Manic app or run Pokemon game logic.

@@ -16,24 +16,25 @@ def reopen(master, slave, delay=5, first_slave=False):
     # create a new pairing/checkpoint, flush SRAM, or consume serial while off.
     first, second = (slave, master) if first_slave else (master, slave)
     for peer in (first, second):
-        epoch = peer.epoch
+        epoch, flushes = peer.epoch, peer.flushes
         for value in (0x2000, 0x6003, 0x2000, 0x2000, 0x6003, 0x2000):
             peer.command(f'sio {value:x}')
         peer.command('idle 300000')
         peer.command(f'frames {delay}')
         peer.command('rcnt 0')
         peer.command('sio 6003')
-        assert peer.phase == 3 and peer.flushes == 0 and peer.epoch == epoch
+        assert peer.phase == 3 and peer.flushes == flushes and peer.epoch == epoch
     settle(master, slave)
     handshake(master, slave)
 
 
 def internal_close(master, slave, reason=0, delay=5, first_slave=False):
+    flushes = {peer:peer.flushes for peer in (master, slave)}
     command_pair(master, slave, 0x5fff, reason)
     for peer in (master, slave):
         peer.command('sio 2000')
         peer.command('frame')
-        assert peer.phase == 3 and peer.flushes == 0, (
+        assert peer.phase == 3 and peer.flushes == flushes[peer], (
             'FireRed party-list transition incorrectly ended the network '
             'session or flushed the save', peer.phase, peer.flushes)
     settle(master, slave)
@@ -74,7 +75,7 @@ def finish(master, slave):
         peer.command('stopped')
 
 
-def party_entry():
+def party_entry(ending=finish):
     master, slave = Peer(0), Peer(1)
     try:
         handshake(master, slave)
@@ -102,7 +103,7 @@ def party_entry():
         internal_close(master, slave, reason=12)
         command_pair(master, slave, 0x2222, 0x1111)
         assert master.phase == slave.phase == 3
-        finish(master, slave)
+        ending(master, slave)
         print('PASS: FireRed room -> party-list -> three 200-byte party blocks -> '
               'selection -> animation -> save standby -> menu -> room -> normal exit; '
               'synthetic trace, same paired session, no intermediate save flush')

@@ -42,8 +42,9 @@ void MT_serial_registers(uint16_t siocnt, uint16_t rcnt); // Transition diagnost
 size_t MT_diagnostics(char *buffer, size_t capacity, uint64_t *revision); // Bounded metadata, no game/save/peer data.
 int MT_complete(void); // Read-only. Completion is applied and announced by MT_frame.
 int MT_finishing(void);
+int MT_terminal_exit(void); // Acknowledged FireRed/LeafGreen room-exit keys + locally disabled hardware.
 int MT_local_closed(void);
-int MT_peer_disconnected(void); // Expected only after ordered close fences, never commits an interrupted link.
+int MT_peer_disconnected(void); // Ordered fences or acknowledged bilateral room exit; never waives serial DATA.
 uint64_t MT_epoch(void); // Guards queued frontend callbacks across games/sessions.
 enum MTMode MT_mode(void); // In-game LINKCMD_SEND_LINK_TYPE; no user mode switch.
 size_t MT_pending(void);

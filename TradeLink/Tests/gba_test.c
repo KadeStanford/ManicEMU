@@ -32,6 +32,9 @@ int main(void){
     retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample(sample);retro_set_audio_sample_batch(audio);retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
     struct retro_game_info game={path,NULL,0,NULL};assert(retro_load_game(&game));assert(MT_active());
     for(int i=0;i<10;i++)retro_run();assert(videos&&audios);
+    write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_rcnt(0);write_siocnt(0x2083);assert(MT_phase()==MT_IDLE); // Disabled IRQ cannot discover.
+    write_ioreg(REG_SIOMLT_SEND,0);write_siocnt(0x6083);assert(MT_phase()==MT_IDLE); // Non-handshake cannot discover.
+    write_siocnt(0x2000);assert(serial_get_irq_cycles()==0);
     // Trigger the exact Gen3 cable token through the running engine's IO API.
     write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_rcnt(0);write_siocnt(0x6083);
     assert(MT_phase()==MT_WAITING);unsigned irq=serial_get_irq_cycles();assert(irq>0);assert(!update_serial(irq));assert(serial_get_irq_cycles()==irq);

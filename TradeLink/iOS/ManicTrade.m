@@ -10,7 +10,7 @@
 #include "FrontendSave.h"
 #include <dlfcn.h>
 
-static NSString *const TradeProtocol = @"g3-fc4afeb-mtr3";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr4";
 static NSString *const Service = @"manic-trade";
 static void resumeFrontend(void) {
     Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
@@ -48,6 +48,7 @@ static NSString *gameTitle(NSString *code) {
 - (void)closed:(uint64_t)epoch;
 - (void)saveFailed:(NSString *)message;
 - (void)halt:(NSString *)reason;
+- (void)frontendPaused;
 @end
 @implementation ManicTrade {
     MCSession *_session;
@@ -70,6 +71,8 @@ static NSString *gameTitle(NSString *code) {
     NSString *_saveWarning;
     uint64_t _diagnosticRevision;
     CFTimeInterval _diagnosticAt;
+    UIAlertController *_recoveryDialog;
+    BOOL _recoveryFatal,_frontendPausedForLink;
 }
 + (instancetype)shared { static ManicTrade *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v; }
 - (instancetype)init {
@@ -93,6 +96,7 @@ static NSString *gameTitle(NSString *code) {
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;_coreEpoch=MT_epoch();
     _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;_saveWarning=nil;
+    _recoveryDialog=nil;_recoveryFatal=NO;_frontendPausedForLink=NO;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -129,10 +133,16 @@ static NSString *gameTitle(NSString *code) {
     _dialog=nil;[self publishDialog];
 }
 - (void)publishDialog {
-    if(_uiBusy||_dialog==_presentedDialog)return;
+    // Validate the latest desired recovery alert before BOTH presentation and
+    // animation-completion retries. A terminal transition invalidates queued UI.
+    if(_dialog==_recoveryDialog&&_recoveryDialog&&(MT_complete()||MT_finishing()||(!_recoveryFatal&&MT_terminal_exit())||_ending)){
+        _dialog=nil;_recoveryDialog=nil;
+    }
+    if(_uiBusy||(_dialog==_presentedDialog&&(!_dialog||_presentedDialog.presentingViewController)))return;
     if(_presentedDialog.presentingViewController){
         _uiBusy=YES;
-        [_presentedDialog dismissViewControllerAnimated:NO completion:^{self->_presentedDialog=nil;self->_uiBusy=NO;[self publishDialog];}];return;
+        UIAlertController *previous=_presentedDialog;
+        [previous dismissViewControllerAnimated:NO completion:^{if(self->_presentedDialog==previous)self->_presentedDialog=nil;self->_uiBusy=NO;[self publishDialog];}];return;
     }
     _presentedDialog=nil;UIAlertController *dialog=_dialog;if(!dialog)return;
     UIViewController *vc=presenter();
@@ -163,29 +173,34 @@ static NSString *gameTitle(NSString *code) {
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];[self show:a];
 }
 - (void)halt:(NSString *)reason {
-    if(_ending)return;
+    if(_ending||_coreEpoch!=MT_epoch())return;
     if(MT_complete()||MT_phase()==MT_IDLE){[self cleanup];return;}
     // A locally closed game keeps playing. It cannot rejoin or restore an
     // already ended session, even if the final peer/ACK callbacks arrive late.
-    if(MT_finishing())return;
+    if(MT_finishing()||(!_fatal&&MT_terminal_exit())){[self dismissDialog];_recoveryDialog=nil;return;}
     if(MT_phase()==MT_BROKEN)_fatal=YES;
-    MT_suspend();_ready=_peerReady=NO;
+    MT_suspend();_lastPhase=MT_phase();
+    // Timeout, core pause, peer PAUSE and repeated MC disconnected callbacks
+    // are notifications for one interruption, not separate alert requests.
+    if(_recoveryDialog&&(!_fatal||_recoveryFatal)){[self publishDialog];return;}
+    _ready=_peerReady=NO;
     [_advertiser startAdvertisingPeer];[_browser startBrowsingForPeers];
     [self dismissDialog];
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Link paused" message:reason preferredStyle:UIAlertControllerStyleAlert];
     NSString *epoch=_epoch;
     if(!_fatal)[a addAction:[UIAlertAction actionWithTitle:@"Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing())return;
+        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing()||MT_terminal_exit()||self->_fatal)return;
         resumeFrontend();
         self->_ready=YES;self->_cursor=0;
         if([self->_session.connectedPeers containsObject:self->_partner]){MT_resume();[self tick:nil];}
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore before link" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
-        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing())return;
+        if(![self->_epoch isEqual:epoch]||self->_coreEpoch!=MT_epoch()||MT_finishing()||MT_terminal_exit())return;
         MT_restore();resumeFrontend();[self cleanup];
-    }]];[self show:a];
+    }]];_recoveryDialog=a;_recoveryFatal=_fatal;[self show:a];
 }
+- (void)frontendPaused {_frontendPausedForLink=YES;}
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
 - (void)writeDiagnostics {
     char buffer[24576];uint64_t revision=0;size_t length=MT_diagnostics(buffer,sizeof(buffer),&revision);
@@ -197,13 +212,23 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)tick:(NSTimer *)timer {
     CFTimeInterval diagnosticNow=CACurrentMediaTime();if(diagnosticNow-_diagnosticAt>1){_diagnosticAt=diagnosticNow;[self writeDiagnostics];}
-    if(_ending||_coreEpoch!=MT_epoch()||!_partner||![_session.connectedPeers containsObject:_partner])return;
-    CFTimeInterval now=CACurrentMediaTime();
+    if(_ending||_coreEpoch!=MT_epoch())return;
+    if((!_fatal&&MT_terminal_exit())||MT_finishing()||MT_complete()){
+        if(_recoveryDialog){[self dismissDialog];_recoveryDialog=nil;}
+        if(_frontendPausedForLink){_frontendPausedForLink=NO;resumeFrontend();}
+        if(_partner&&![_session.connectedPeers containsObject:_partner])MT_peer_disconnected();
+    }
     enum MTPhase phase=MT_phase();
-    if(phase==MT_LINKED&&_lastPhase==MT_SUSPENDED){[self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];}
+    if(phase==MT_LINKED&&_lastPhase==MT_SUSPENDED){
+        [self dismissDialog];_recoveryDialog=nil;_recoveryFatal=NO;
+        if(_frontendPausedForLink){_frontendPausedForLink=NO;resumeFrontend();}
+        [_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
+    }
     _lastPhase=phase;
+    if(!_partner||![_session.connectedPeers containsObject:_partner])return;
+    CFTimeInterval now=CACurrentMediaTime();
     if(phase==MT_LINKED||phase==MT_SUSPENDED||phase==MT_CLOSING){
-        if(phase==MT_LINKED&&now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];}
+        if(phase==MT_LINKED&&!MT_terminal_exit()&&now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];}
         if(now-_lastResend>0.75){_cursor=0;_lastResend=now;}
         for(unsigned i=0;i<64;i++){
             uint8_t bytes[MT_PACKET_SIZE];if(!MT_next_packet(_cursor,bytes))break;
@@ -232,13 +257,14 @@ static NSString *gameTitle(NSString *code) {
 - (void)cleanup {
     _ending=YES;[_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     _session.delegate=nil;_advertiser.delegate=nil;_browser.delegate=nil;[_session disconnect];
-    _advertiser=nil;_browser=nil;_session=nil;_partner=nil;_partnerMeta=nil;_epoch=nil;[self dismissDialog];
+    _advertiser=nil;_browser=nil;_session=nil;_partner=nil;_partnerMeta=nil;_epoch=nil;_recoveryDialog=nil;[self dismissDialog];
 }
 - (void)session:(MCSession *)session peer:(MCPeerID *)peer didChangeState:(MCSessionState)state {
     dispatch_async(dispatch_get_main_queue(),^{
         if(self->_ending||self->_coreEpoch!=MT_epoch()||session!=self->_session||![peer isEqual:self->_partner])return;
         if(state==MCSessionStateConnected){self->_heard=CACurrentMediaTime();if(MT_phase()==MT_WAITING)self->_ready=YES;[self control:@"HELLO"];if(self->_ready&&MT_phase()==MT_SUSPENDED)MT_resume();}
         else if(state==MCSessionStateNotConnected){
+            if([session.connectedPeers containsObject:peer])return; // Stale queued disconnect after reconnection.
             if(MT_phase()==MT_WAITING){self->_partner=nil;self->_partnerMeta=nil;[self finder];}
             else if(MT_peer_disconnected()){resumeFrontend();}
             else [self halt:@"The player disconnected. Keep both apps alive and reconnect to resume, or restore the pre-link checkpoint."];
@@ -341,7 +367,11 @@ static void tradePause(id bridge,SEL selector) {
     BOOL linked=MT_phase()==MT_LINKED;
     if(linked)MT_suspend(); // Suspend before the frontend stops issuing frames.
     originalPause(bridge,selector);
-    uint64_t epoch=MT_epoch();if(linked)dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];});
+    BOOL pausedForLink=linked&&MT_phase()==MT_SUSPENDED;
+    uint64_t epoch=MT_epoch();if(linked)dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch()){
+        if(pausedForLink)[[ManicTrade shared] frontendPaused];
+        [[ManicTrade shared] halt:@"The game paused. Return to both games, then reconnect to continue."];
+    }});
 }
 __attribute__((constructor)) static void install_trade(void) {
     if(![NSBundle.mainBundle.infoDictionary[@"MGLInjectTrade"] boolValue])return;

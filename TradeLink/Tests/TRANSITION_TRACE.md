@@ -42,8 +42,36 @@ became quiet-ready, missing ACKs, suspension, repeated reset toggles and final
 save persistence. The window is a bounded heuristic: transitions that keep both
 games completely idle longer than this window are not established as safe.
 
-Remaining physical checks: actual FireRed party rendering, Pokemon selection,
-trade animation/evolution, post-trade menu and normal room exit; battery save
-reloaded after app restart; Single/Double battle entry, win/loss/forfeit; genuine
-Wi-Fi interruption and bilateral recovery. The simulator runs a stub frontend,
-not the original Manic executable. No signing or device installation is automated.
+v0.4 physical feedback: the user reported a successful FireRed trade and that
+the result persisted after saving. They reported two consecutive recovery prompts
+on FireRed's own room exit, and no discovery prompt on Colosseum reentry.
+The `firered_room_exit` fixture added in commit 95388f56f4530130704bb9d753025795c86eb468
+failed against unchanged v0.4 in [run 37101944936](https://github.com/KadeStanford/ManicEMU/actions/runs/37101944936):
+the prior four core tests passed, but both peers remained LINKED after direct
+room exit. The new native repeated-alert assertion also prevented smoke completion.
+
+`include/overworld.h` defines LINK_KEY_CODE_EXIT_ROOM as 17.
+`src/overworld.c:KeyInterCB_SendExitRoomKey` sends that key, and
+`KeyInterCB_WaitForPlayersToExit` waits until all players are EXITING_ROOM before
+running CableClub_EventScript_DoLinkRoomExit. `src/link.c` wraps the key in CAFE
+(SEND_HELD_KEYS). The cable-club exit script directly calls CloseLink; it does
+not send 5FFF. This differs from party/menu/animation transitions. v0.5 recognizes
+acknowledged bilateral CAFE/17 in a room link type plus hardware closure, without
+waiting for a quiet timeout. It retains DATA acknowledgement and inbox guards.
+The fixture rejects one-sided keys, EXIT_SEAT, non-room types and stale-session
+packets. Reopening cancels terminal intent. Delayed/asymmetric hardware closure,
+missing final control versus missing DATA ACK, and repeated disconnects are covered.
+
+`src/cable_club.c:TryBattleLinkup` uses the same OpenLink/DoHandshake path as trade.
+Single and Double rooms advertise 2233/2244; battle initialization uses 2211.
+The handshake remains B9A0/8FFF. Tests start new discovery requests through real
+gpSP IO after completed trade, pair again with fresh session IDs, exchange synthetic
+turn blocks, return to the room and close explicitly. They also verify the same
+handshake detection on a fresh boot. This fixes a demonstrated stale-session
+blocker; it does not prove the whole actual Colosseum flow works on physical phones.
+
+Remaining physical checks for v0.5: completed trade -> room exit with zero recovery
+prompts -> reenter trade/Colosseum; Single/Double battle entry, win/loss/forfeit;
+save reloaded after cold app restart; genuine Wi-Fi interruption and bilateral
+recovery. The simulator runs a stub frontend, not the original Manic executable.
+No signing or device installation is automated.

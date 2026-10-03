@@ -41,6 +41,7 @@ class Peer:
                 self.sram = int(words[14])
                 self.flushes = int(words[16])
                 self.epoch = int(words[18])
+                self.terminal = int(words[20])
             elif line.startswith('EXPECTED '):
                 self.expected = int(line.split()[1])
 

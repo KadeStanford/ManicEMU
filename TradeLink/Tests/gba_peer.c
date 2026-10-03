@@ -19,7 +19,7 @@ static size_t audio(const int16_t *p,size_t n){(void)p;return n;}
 static void poll(void){}
 static int16_t input(unsigned a,unsigned b,unsigned c,unsigned d){(void)a;(void)b;(void)c;(void)d;return 0;}
 static void packet(const char *name,const uint8_t *p){printf("%s ",name);for(unsigned i=0;i<56;i++)printf("%02x",p[i]);puts("");}
-static uint64_t cursor;
+static uint64_t cursor;static uint8_t session_cycle;
 static const char *save_path;static unsigned flushes;
 static int persist(const uint8_t *b,const uint8_t *s,size_t n){
     assert(b&&s&&n>131072);flushes++;if(!save_path)return 1;
@@ -27,7 +27,7 @@ static int persist(const uint8_t *b,const uint8_t *s,size_t n){
 }
 static void report(void){
     uint8_t p[56];while(MT_next_packet(cursor,p)){cursor=0;for(unsigned i=24;i<32;i++)cursor=(cursor<<8)|p[i];packet("PACKET",p);}
-    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch());puts("END");fflush(stdout);
+    printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu TERMINAL %d\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch(),MT_terminal_exit());puts("END");fflush(stdout);
 }
 int main(int argc,char **argv){
     assert(argc==2||argc==3);unsigned role=(unsigned)atoi(argv[1]);assert(role<2);if(argc==3)save_path=argv[2];MT_set_persist(persist);
@@ -40,10 +40,24 @@ int main(int argc,char **argv){
     uint8_t session[16]={0x5a};MT_connect(role,session);retro_run();assert(MT_phase()==MT_LINKED);report();
     char line[256];while(fgets(line,sizeof(line),stdin)){
         unsigned word,cycles;
-        if(!strncmp(line,"packet ",7)){
+        if(!strncmp(line,"packet ",7)||!strncmp(line,"reject ",7)){
             uint8_t p[56],ack[56];assert(strlen(line+7)>=112);
             for(unsigned i=0;i<56;i++){unsigned byte;assert(sscanf(line+7+2*i,"%2x",&byte)==1);p[i]=(uint8_t)byte;}
-            int accepted=MT_receive_packet(p,56,ack);assert(accepted>=0);if(accepted<2)packet("ACK",ack);MT_poll_receive();
+            int accepted=MT_receive_packet(p,56,ack);
+            if(!strncmp(line,"reject ",7)){assert(accepted==-1);}
+            else {assert(accepted>=0);if(accepted<2)packet("ACK",ack);MT_poll_receive();}
+        }else if(!strncmp(line,"begin",5)){
+            assert(MT_phase()==MT_IDLE);cursor=0;session_cycle++;
+            // OpenLink/ResetSerial/InitLink and LinkMain1's disable/enable.
+            // Both battle linkups use B9A0 too; no alternate invented token.
+            for(unsigned i=0;i<2;i++){write_siocnt(0x2000);write_rcnt(0);write_siocnt(0x6003);}
+            write_siocnt(0x2000);for(unsigned i=0;i<5;i++)retro_run();write_rcnt(0);write_siocnt(0x6003);
+            write_ioreg(REG_SIOMLT_SEND,0);write_siocnt(0x6083);assert(MT_phase()==MT_IDLE);
+            write_ioreg(REG_SIOMLT_SEND,0xb9a0);write_siocnt(0x2083);assert(MT_phase()==MT_IDLE); // IRQ disabled.
+            write_siocnt(0x6083);assert(MT_phase()==MT_WAITING);retro_run();
+        }else if(!strncmp(line,"connect",7)){
+            assert(MT_phase()==MT_WAITING);uint8_t next_session[16]={0x5a};next_session[1]=session_cycle;
+            MT_connect(role,next_session);retro_run();assert(MT_phase()==MT_LINKED);
         }else if(sscanf(line,"sio %x",&word)==1){write_siocnt(word);}
         else if(sscanf(line,"rcnt %x",&word)==1){write_rcnt(word);}
         else if(sscanf(line,"frames %u",&cycles)==1){for(unsigned i=0;i<cycles;i++)retro_run();}

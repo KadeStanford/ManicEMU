@@ -185,8 +185,8 @@ cpu_alert_type write_siocnt(u16 value) {
     // Update SI/SD/ID/Error fields
     newval = (newval & 0xFF83) | serial_mul_siocnt();
 
-    if ((newval & 0x0080) && (!netplay_client_id) && !serial_irq_cycles) {
-      if (serial_mode == SERIAL_MODE_SERIAL_POKE && read_ioreg(REG_SIOMLT_SEND) == 0xB9A0)
+    if ((newval & 0x0080) && (!netplay_client_id) && !serial_irq_cycles && (!MT_active() || (newval & 0x4000))) {
+      if (serial_mode == SERIAL_MODE_SERIAL_POKE && (newval & 0x4000) && read_ioreg(REG_SIOMLT_SEND) == 0xB9A0)
         MT_request();
       // Start a transaction, as a master device (no ongoing transactions).
       const uint16_t tim[] = {
