@@ -20,6 +20,11 @@ static id (*originalDrawable)(id,SEL);
 static id (*originalLayerDrawable)(id,SEL);
 static bool (*driverViewport)(MASViewport *);
 static const void *encodedKey=&encodedKey;
+static const void *sourceKey=&sourceKey,*framesKey=&framesKey;
+static __thread void *scheduledBuffer;
+static void (*originalScheduled)(id,SEL,MTLCommandBufferHandler);
+static void (*originalPresent)(id,SEL);
+static void (*originalPresentAtTime)(id,SEL,CFTimeInterval);
 static Ivar layerIvar,drawableIvar,bufferIvar,encoderIvar;
 #ifdef MAS_TESTING
 static unsigned masEncodedFrames;
@@ -256,15 +261,9 @@ static id masDrawable(id self,SEL cmd) {
     return originalDrawable(self,cmd);
 }
 // Vulkan uses MetalLayerView/MoltenVK and never calls the Metal Context end hook.
-// Observe the actual swapchain drawable and wait for its presentation before
-// reading it. The same path also covers a Metal renderer with a different layer.
-static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
-    MASPlan *p=MASManager.shared.plan;
-    if(p.source==layer)layer.framebufferOnly=NO;
-    id<CAMetalDrawable> drawable=originalLayerDrawable(layer,cmd);
-    if(p.source==layer&&drawable) {
-        [drawable addPresentedHandler:^(id<MTLDrawable> presented) {
-            if([objc_getAssociatedObject(presented,encodedKey) boolValue])return;
+// Observe its actual swapchain drawable and copy after the producing command
+// buffer completes, independently of whether the source layer is occluded.
+static void copyPresentedFrame(id<CAMetalDrawable> presented,CAMetalLayer *layer) {
             MASManager *m=MASManager.shared;MASPlan *live=m.plan;
             if(live.source!=layer)return;
             id<MTLTexture> texture=((id<CAMetalDrawable>)presented).texture;
@@ -311,7 +310,59 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
                 });
             }];
             [buffer commit];
+}
+static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
+    CAMetalLayer *layer=objc_getAssociatedObject(drawable,sourceKey);
+    id<MTLCommandBuffer> buffer=(__bridge id)scheduledBuffer;
+    NSMutableArray *frames=buffer?objc_getAssociatedObject(buffer,framesKey):nil;
+    if(!frames||layer!=MASManager.shared.plan.source||[objc_getAssociatedObject(drawable,encodedKey) boolValue])return;
+    objc_setAssociatedObject(drawable,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    @synchronized(frames){[frames addObject:@{@"drawable":drawable,@"source":layer}];}
+}
+static void masPresent(id self,SEL cmd) {recordScheduledPresentation(self);originalPresent(self,cmd);}
+static void masPresentAtTime(id self,SEL cmd,CFTimeInterval t) {recordScheduledPresentation(self);originalPresentAtTime(self,cmd,t);}
+static void masScheduled(id self,SEL cmd,MTLCommandBufferHandler action) {
+    if(!objc_getAssociatedObject(self,framesKey)&&MASManager.shared.plan) {
+        NSMutableArray *frames=[NSMutableArray new];objc_setAssociatedObject(self,framesKey,frames,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [(id<MTLCommandBuffer>)self addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+            NSArray *pending=objc_getAssociatedObject(finished,framesKey);
+            if(finished.status==MTLCommandBufferStatusCompleted)for(NSDictionary *frame in pending)copyPresentedFrame(frame[@"drawable"],frame[@"source"]);
+            objc_setAssociatedObject(finished,framesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }];
+    }
+    originalScheduled(self,cmd,^(id<MTLCommandBuffer> buffer) {
+        void *previous=scheduledBuffer;scheduledBuffer=(__bridge void *)buffer;
+        action(buffer);scheduledBuffer=previous;
+    });
+}
+static void hookPresentation(id<CAMetalDrawable> drawable) {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        Class cls=object_getClass(drawable);Method method=class_getInstanceMethod(cls,@selector(present));
+        originalPresent=(void *)method_getImplementation(method);class_replaceMethod(cls,@selector(present),(IMP)masPresent,method_getTypeEncoding(method));
+        method=class_getInstanceMethod(cls,@selector(presentAtTime:));
+        if(method){originalPresentAtTime=(void *)method_getImplementation(method);class_replaceMethod(cls,@selector(presentAtTime:),(IMP)masPresentAtTime,method_getTypeEncoding(method));}
+        id<MTLCommandBuffer> probe=[[drawable.texture.device newCommandQueue] commandBuffer];
+        Class cb=object_getClass(probe);method=class_getInstanceMethod(cb,@selector(addScheduledHandler:));
+        if(method){originalScheduled=(void *)method_getImplementation(method);class_replaceMethod(cb,@selector(addScheduledHandler:),(IMP)masScheduled,method_getTypeEncoding(method));}
+    });
+}
+static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
+    MASPlan *p=MASManager.shared.plan;
+    if(p.source==layer)layer.framebufferOnly=NO;
+    id<CAMetalDrawable> drawable=originalLayerDrawable(layer,cmd);
+    if(p.source==layer&&drawable) {
+        objc_setAssociatedObject(drawable,encodedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(drawable,sourceKey,layer,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        hookPresentation(drawable);
+        // Native presented callbacks cover renderers that present without a
+        // scheduled command-buffer callback. This API is absent in Simulator.
+        SEL selector=NSSelectorFromString(@"addPresentedHandler:");
+        if([drawable respondsToSelector:selector])((void(*)(id,SEL,void(^)(id<MTLDrawable>)))objc_msgSend)(drawable,selector,^(id<MTLDrawable> value) {
+            if([objc_getAssociatedObject(value,encodedKey) boolValue])return;
+            objc_setAssociatedObject(value,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            copyPresentedFrame((id)value,layer);
+        });
     }
     return drawable;
 }
