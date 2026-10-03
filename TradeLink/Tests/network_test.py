@@ -130,7 +130,8 @@ def exchange(master, slave, a, b):
 
 
 def close(peer):
-    peer.command('quit')
+    peer.proc.stdin.write('quit\n')
+    peer.proc.stdin.flush()
     assert peer.proc.wait(timeout=10)==0
 
 

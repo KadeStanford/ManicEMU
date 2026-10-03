@@ -20,6 +20,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
       - run: cmake --build build-trade --parallel 2
       - run: ctest --test-dir build-trade --output-on-failure
+        env: {UBSAN_OPTIONS: 'halt_on_error=1:print_stacktrace=1'}
       - run: python3 -m unittest discover -s GBLink/Tests -p 'test_*.py' -v
       - name: Read official mGBA source for cross-core battery check
         uses: actions/checkout@v4

@@ -43,6 +43,13 @@ int main(void){
     uint64_t old_epoch=MT_epoch();battery[0]=0x45;state[0]=0x67;
     MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
     assert(MT_epoch()>old_epoch);
+    // Both CLOSE fences with a missing final ACK: waive only CLOSE, never DATA.
+    MT_send(0xffff,data,24);assert(MT_next_packet(0,packet));assert(MT_receive_packet(packet,56,ack)==1);
+    MT_leave();uint64_t final_data=MT_sent()-1;assert(MT_next_packet(final_data,packet));
+    uint8_t close_ack[56];assert(MT_receive_packet(packet,56,close_ack)==1);assert(!MT_peer_disconnected());
+    assert(MT_receive_packet(ack,56,packet)==2);assert(MT_peer_disconnected());
+    battery[0]=0x99;state[0]=0xaa;assert(MT_frame(&gba)&&MT_complete()&&completed==2&&flushes==2);
+    battery[0]=0x45;state[0]=0x67;MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
     battery[0]=0x99;state[0]=0xaa;MT_suspend();MT_restore();assert(MT_frame(&gba));assert(battery[0]==0x45&&state[0]==0x67);
     MT_leave();assert(MT_phase()==MT_IDLE);
     MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));

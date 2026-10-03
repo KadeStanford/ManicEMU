@@ -190,6 +190,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)ended:(NSString *)reason {
     if([reason isEqual:@"Pre-trade checkpoint restored"]){[self notice:reason message:@"Back out of the cable club. Your automatic battery backup is also kept in ManicTradeBackups."];return;}
+    if(_ending&&MT_phase()!=MT_OFF)return;
     if(MT_phase()==MT_OFF||[reason isEqual:@"Link cancelled"]){[self cleanup];return;}
     if([reason isEqual:@"Link completed"]){
         [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
@@ -273,7 +274,7 @@ static void snapshot(const uint8_t *battery,const uint8_t *state,size_t size) {
 static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{if(epoch==MT_epoch())[[ManicTrade shared] ended:s];});}
 static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
     if(epoch!=MT_epoch())return;
-    if(MT_local_closed()){[[ManicTrade shared] notice:@"Save needs attention" message:s];return;}
+    if(MT_local_closed()){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Save needs attention" message:s];return;}
     if(MT_phase()==MT_CANCELLED){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Trading stopped" message:s];}
     else [[ManicTrade shared] halt:s];
 });}

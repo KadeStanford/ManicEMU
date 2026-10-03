@@ -822,10 +822,10 @@ void retro_deinit(void)
    audio_samples_accumulator = 0.0f;
 }
 
-static retro_time_t retro_perf_dummy_get_time_usec() { return 0; }
-static retro_perf_tick_t retro_perf_dummy_get_counter() { return 0; }
-static uint64_t retro_perf_dummy_get_cpu_features() { return 0; }
-static void retro_perf_dummy_log() {}
+static retro_time_t retro_perf_dummy_get_time_usec(void) { return 0; }
+static retro_perf_tick_t retro_perf_dummy_get_counter(void) { return 0; }
+static uint64_t retro_perf_dummy_get_cpu_features(void) { return 0; }
+static void retro_perf_dummy_log(void) {}
 static void retro_perf_dummy_counter(struct retro_perf_counter *counter) {};
 
 void retro_set_environment(retro_environment_t cb)

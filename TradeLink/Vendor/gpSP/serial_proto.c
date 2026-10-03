@@ -43,7 +43,7 @@ void netpacket_send(uint16_t client_id, const void *buf, size_t len);
 static void pack16(u32 *buf, const u16 *data, size_t wcnt) {
   u32 i;
   for (i = 0; i < (wcnt+1)/2; i++)
-    buf[i] = netorder32((data[i*2] << 16) | (data[i*2+1]));
+    buf[i] = netorder32(((u32)data[i*2] << 16) | (data[i*2+1]));
 }
 static void unpack16(u16 *buf, const u32 *data, size_t wcnt) {
   u32 i;
