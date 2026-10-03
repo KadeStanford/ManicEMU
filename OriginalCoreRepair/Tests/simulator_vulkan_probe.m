@@ -6,6 +6,7 @@
 #import <fcntl.h>
 #import <unistd.h>
 #include <vulkan/vulkan.h>
+#include "simulator_metal_arrays.h"
 
 static NSMutableDictionary *state;
 static NSString *destination;
@@ -42,6 +43,8 @@ static void uncaughtException(NSException *exception) {
         struct sigaction action={0};action.sa_sigaction=fatalSignal;action.sa_flags=SA_SIGINFO;
         for(int s=1;s<NSIG;s++)if(s==SIGSEGV||s==SIGBUS||s==SIGABRT||s==SIGILL||s==SIGTRAP)sigaction(s,&action,NULL);
         NSSetUncaughtExceptionHandler(uncaughtException);
+        checkpoint(@"metal_array_capability_test");
+        state[@"metal_array_capabilities"]=metalArrayDiagnostic();
         checkpoint(@"dlopen");
         void *library=dlopen([[NSBundle.mainBundle pathForResource:@"moltenvk-probe" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
         if(!library){state[@"error"]=@(dlerror()?:"dlopen failed");checkpoint(@"failed");return;}

@@ -1,0 +1,36 @@
+name: Simulator Metal array capability diagnostic
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['.github/workflows/metal-simulator-arrays.yml', 'OriginalCoreRepair/Tests/simulator_metal_arrays.h']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  arrays:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - uses: actions/download-artifact@v4
+        with:
+          name: moltenvk-real-simulator-diagnostic
+          path: OriginalCoreRepair/Tests/build-probe/driver-sdk
+          github-token: ${{ github.token }}
+          run-id: 37161252704
+      - name: Execute actual Metal texture and sampler arrays before Vulkan preflight
+        run: |
+          driver="$(find OriginalCoreRepair/Tests/build-probe/driver-sdk -path '*simulator*/MoltenVK.framework/MoltenVK' -type f | head -1)"
+          header="$(find OriginalCoreRepair/Tests/build-probe/driver-sdk -path '*/include/vulkan/vulkan.h' -type f | head -1)"
+          test -n "$driver" && test -n "$header"
+          include="$(dirname "$(dirname "$header")")"
+          MANIC_MOLTENVK_SDK="$PWD/OriginalCoreRepair/Tests/build-probe/driver-sdk" MANIC_MOLTENVK_BINARY="$PWD/$driver" MANIC_MOLTENVK_INCLUDE="$PWD/$include" bash OriginalCoreRepair/Tests/simulator-vulkan-probe.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metal-array-capability-result
+          path: |
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-fatal.bin
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight-system.log

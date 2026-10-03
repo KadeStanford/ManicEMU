@@ -18,7 +18,7 @@ mkdir -p "$app"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
   -fobjc-arc -Wall -Werror -I "${MANIC_MOLTENVK_INCLUDE:-$sdkroot/MoltenVK/MoltenVK/include}" simulator_vulkan_probe.m \
-  -framework UIKit -framework Foundation -o "$app/VulkanProbe"
+  -framework UIKit -framework Foundation -framework Metal -o "$app/VulkanProbe"
 driver="${MANIC_MOLTENVK_BINARY:-$sdkroot/MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64/MoltenVK.framework/MoltenVK}"
 if [[ "$(xcrun lipo -archs "$driver")" == arm64 ]]; then
   cp "$driver" "$build/moltenvk-arm64.dylib"
