@@ -1,0 +1,23 @@
+name: Native Vulkan fault diagnostic component
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/Diagnostics/**', '.github/workflows/native-fault-diagnostic.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-fault-recorder:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - run: bash OriginalCoreRepair/Diagnostics/build-native-recorder.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-fault-recorder-device-component
+          path: |
+            OriginalCoreRepair/Diagnostics/build/ManicNativeFaultRecorder.framework
+            OriginalCoreRepair/Diagnostics/build/recorder-self-test/self-test.json
