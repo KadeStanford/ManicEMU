@@ -207,7 +207,9 @@ def lifecycle():
             peer.command('mutate');peer.command('disconnected');assert peer.expected==0
             peer.command('pause');assert peer.phase==4 and peer.flushes==0
         settle(m,s)
-        for peer in (m,s):peer.command('restore');assert peer.sram==0x45 and peer.phase==6
+        for peer in (m,s):
+            peer.command('restore');assert peer.sram==0x45 and peer.phase==6
+            peer.command('sio 2000');assert peer.phase==1, 'backing out after explicit recovery did not clear cancelled session'
     finally:close(m);close(s)
     print('PASS: real-core trade/single/double command + 24 block/turn frames, '
           '140-frame reconnect burst with engine backpressure, three bilateral reconnect rounds, bilateral quiet parent/child/simultaneous exits, '

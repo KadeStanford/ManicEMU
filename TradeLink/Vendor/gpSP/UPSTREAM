@@ -6,5 +6,9 @@ Modifications: libretro/libretro.c and serial.c integrate Manic's in-game
 trade callbacks, serialize pre-trade checkpoints, and pause while pairing.
 serial_proto.c bounds peer IDs and uses unsigned shifts for Gen3 frame words.
 libretro.c fixes dummy performance callback prototypes exposed by UBSan.
-serial.c detects Gen3 DisableSerial's IRQ clear while still in multiplayer mode.
+serial.c reports ordered game hardware OFF/ON, stops fake IRQs while disabled,
+and resets the game-side handshake on reopening without ending the network
+session. TradeCore requires bilateral close intent and cancellable quiet
+readiness before final CLOSE/save persistence. Diagnostics record bounded
+register/command metadata without ROM, party or save payloads.
 No original game or Nintendo BIOS is supplied.

@@ -51,6 +51,9 @@ size_t MT_diagnostics(char *buffer,size_t capacity,uint64_t *revision) {
         }buffer[used]=0;
     }pthread_mutex_unlock(&lock);return used;
 }
+void MT_serial_registers(uint16_t siocnt,uint16_t rcnt) {
+    pthread_mutex_lock(&lock);diagnostic("registers-sio-rcnt",(unsigned)siocnt<<16|rcnt);pthread_mutex_unlock(&lock);
+}
 static uint64_t read64(const uint8_t *p) { uint64_t v=0; for(unsigned i=0;i<8;i++)v=(v<<8)|p[i];return v; }
 static void write64(uint8_t *p,uint64_t v) { for(int i=7;i>=0;i--){p[i]=v;v>>=8;} }
 static void envelope(uint8_t *out,unsigned type,uint64_t seq) {

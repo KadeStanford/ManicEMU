@@ -5,11 +5,14 @@ session. It targets FireRed, LeafGreen, Ruby, Sapphire and Emerald (game-code
 prefixes BPR, BPG, AXV, AXP and BPE). Original Game Boy Red/Blue are a different
 protocol; the earlier GB experiment is archived under `GBLink`.
 
-The user reported that the previous build paired two physical phones and reached
-the end of a trade, then displayed recovery prompts and failed to keep the result.
-This revision fixes the ending path. Automated checks use legal synthetic
-programs and protocol fixtures. **The revised IPA still needs a physical two-phone
-trade, battle, and app-restart save check.** Treat it as an experimental test build.
+The user reported that v0.3 paired two physical phones and entered FireRed's trade
+room, then showed the game's communication error when opening the party list.
+A new synthetic trace reproduces a concrete v0.3 defect: the game's temporary
+`DisableSerial` closes the network session and flushes the save prematurely.
+This revision preserves pairing through the game's close/reopen transitions.
+**The revised IPA still needs a physical two-phone trade, battle, and app-restart
+save check.** The regression proves the defect in that code path; it does not
+prove that every possible cause of the user's game error has been eliminated.
 
 ## Use with existing progress
 
@@ -33,6 +36,8 @@ trade, battle, and app-restart save check.** Treat it as an experimental test bu
    the current result. Keep both apps alive during the link. Use normal speed; avoid
    slow motion. The core inhibits fast-forward when the frontend supports the
    libretro override and rejects one-sided rewind/state loading during a link.
+   Keep both games open for at least three seconds after leaving the cable club
+   so both idle barriers and current-save writes can complete.
 
 All GBA cores in upstream Manic use the same `sdmc/saves/gba/<game-name>.sav`
 location and `.sav` extension. Pokemon's 128KiB raw Flash battery data needs no
@@ -46,7 +51,7 @@ Before discovery or serial data exchange, the plugin atomically writes the
 current game's battery and full gpSP checkpoint to a unique
 `Documents/ManicTradeBackups/<UUID>/` folder. If either write fails, pairing stops.
 The plugin does not import, transfer or overwrite another game's save. On the
-game's local hardware close, the core thread stops the serial scheduler, records
+game's final bilateral idle close, the core thread stops the serial scheduler, records
 current SRAM and a post-link state in a separate `completed-<UUID>` backup folder,
 and atomically writes and verifies current SRAM at the frontend's **actual active
 save path**, obtained from the pinned `savefile_ptr_get` export. It does not guess
@@ -64,19 +69,42 @@ acknowledged without being executed twice. A lost/overflowed core packet require
 the core thread. Both phones must choose recovery consistently after an
 interrupted trade. The disk backups remain. There is no distributed atomic save
 commit, and a completed trade still needs the physical-device check. Restoration
-is never automatic and is rejected after local hardware shutdown. Reconnect uses
+is never automatic and is rejected after final session shutdown. Temporary
+hardware shutdown retains both the current game and its pre-link checkpoint. Reconnect uses
 ordered PAUSE/READY rounds and requires both players' readiness; stale rounds,
 duplicates, or a late HELLO cannot restart an ended session.
 
 Normal Gen3 `DisableSerial` writes `SIOCNT=0x2000`, retaining multiplayer mode
-while clearing the IRQ bit. The old detector checked only the mode change and
-missed this. The old UI also disconnected before the next core frame applied
-cleanup. This revision detects IRQ shutdown, sends ordered CLOSE fences after
-all queued serial packets, drains/acknowledges both fences, and announces
-completion only on the core thread. A final close ACK lost to an expected peer
+while clearing the IRQ bit. FireRed uses it for room -> party list, party list ->
+trade animation, animation -> party list, and battle entry/return. These paths
+also send `LINKCMD_READY_CLOSE_LINK` (`5FFF`), so neither an IRQ toggle nor that
+command alone identifies a final exit. v0.3 incorrectly treated the first toggle
+as final. The source-derived reproduction failed at `CLOSING` with one premature
+save flush while its prior transport tests all passed.
+
+v0.4 sends ordered hardware OFF/ON notifications while preserving the session,
+roles and automatic pre-link checkpoint. It stops fake serial IRQs while hardware
+is disabled and resets the game-side handshake engine when it reopens. A final
+exit requires both games' `5FFF` commands, both hardware OFF notifications, all
+prior packet acknowledgments, 180 quiet core frames on **each** phone, and both
+ordered QUIET readiness barriers. Reopening, new serial traffic or suspension
+cancels readiness. A faster phone cannot end the slower game's transition.
+Only then does the core send CLOSE fences, persist the current save and announce
+completion. The quiet window is an explicitly bounded protocol heuristic, not
+cycle-exact detection of game intent. A ROM hack that delays reopening beyond
+both quiet deadlines remains outside the verified trace.
+
+A final close ACK lost to an expected peer
 disconnect may be waived; unacknowledged serial DATA may not. Late duplicates are
 ACKed against the ended session's tombstone, and queued frontend callbacks carry
 a core epoch. Neither an expected disconnect nor normal close opens recovery UI.
+
+Diagnostics keep only the last 128 metadata events (hardware states, link types,
+close reason numbers, frame counters, phases and sequence counts). The plugin
+atomically writes `Documents/ManicTradeDiagnostics/latest.txt` and rotates the
+previous session to `previous.txt`; each file is bounded below 24KiB. These files
+contain no party/block payload, ROM bytes, save bytes, player names or addresses.
+They allow a physical failure to be compared with the tested register trace.
 
 Single and Double Battles use the same Gen3 frame/block transport and closing
 lifecycle as trades. The game's `LINKCMD_SEND_LINK_TYPE` identifies the activity;
@@ -102,8 +130,8 @@ master schedule (5242 emulated cycles), busy-bit/IRQ behavior and both direction
 of actual serial words across isolated engines. Network packets carry those
 24-byte serial frames inside a sequenced 56-byte envelope. Encrypted
 MultipeerConnectivity handles discovery and reliable local transport. MTR1 wire
-version 2 carries DATA, ACK, CLOSE, PAUSE and READY in one serial sequence. Both
-phones must use this revision; the old MTR1 version 1 build cannot pair with it. ROM and
+version 3 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL and QUIET in one sequence. Both
+phones must use v0.4; older wire versions cannot pair with it. ROM and
 battery bytes are never sent to the other player. Protocol version, peer/session
 identity, game-code family and language code must match the compatibility checks.
 The game itself still determines inter-title trade eligibility.
@@ -122,13 +150,18 @@ reconnect/replay tests, checkpoint rollback and buffer-loss guards, cross-core
 battery migration, IPA preservation tests, physical-arm64 iOS compilation, and a
 native UIKit simulator smoke test. The expanded fixtures test Trade/Single/Double
 commands, 24 bidirectional block/turn frames, three bilateral reconnect rounds,
-parent/child/simultaneous IRQ-disable exits, missing final close ACK versus DATA,
+parent/child/simultaneous bilateral idle exits, missing final close ACK versus DATA,
 SRAM persistence across new processes, a 140-frame reconnect burst with engine
 backpressure, failed save handling, and interrupted
-battle checkpoint recovery. The UIKit test checks normal ending without a
+battle checkpoint recovery. The FireRed transition trace additionally exercises
+room -> party list, three complete synthetic 200-byte party blocks, selection ->
+animation, save standby, return to menu/room, Single/Double battle handoffs, mode
+resets without close intent, reopen at the quiet deadline, unequal frame rates,
+same-session epochs and absence of intermediate save flushing. The UIKit test checks normal ending without a
 reconnect/restore dialog, the active frontend save path, and separate pre/post
 backups. The simulator uses a small test frontend;
 it does not launch the full original Manic app or run Pokemon game logic.
+See [the trace provenance and limits](Tests/TRANSITION_TRACE.md).
 
 Download `ManicGBA-Trade-unsigned` from a successful workflow run. Keep both
 framework directory names and contents. On Windows/macOS/Linux with Python 3:

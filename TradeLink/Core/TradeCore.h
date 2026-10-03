@@ -38,6 +38,7 @@ enum MTPhase MT_phase(void);
 void MT_request(void); // Called at the first Gen3 cable handshake, on core thread.
 void MT_leave(void);
 void MT_serial_state(int enabled); // Game hardware toggle, NOT an immediate session end.
+void MT_serial_registers(uint16_t siocnt, uint16_t rcnt); // Transition diagnostics only, no serial payloads.
 size_t MT_diagnostics(char *buffer, size_t capacity, uint64_t *revision); // Bounded metadata, no game/save/peer data.
 int MT_complete(void); // Read-only. Completion is applied and announced by MT_frame.
 int MT_finishing(void);

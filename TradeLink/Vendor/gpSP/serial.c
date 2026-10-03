@@ -81,6 +81,7 @@ cpu_alert_type write_rcnt(u16 value) {
 
   write_ioreg(REG_RCNT, value);
   if (MT_active()) {
+    if (pvmode != nwmode) MT_serial_registers(read_ioreg(REG_SIOCNT), value);
     MT_serial_state(nwmode == SERIAL_MODE_MULTI && (read_ioreg(REG_SIOCNT) & 0x4000));
     if (nwmode != SERIAL_MODE_MULTI || !(read_ioreg(REG_SIOCNT) & 0x4000))
       serial_irq_cycles = 0;
@@ -118,6 +119,8 @@ cpu_alert_type write_siocnt(u16 value) {
   // DisableSerial is also used between room/menu/animation/battle phases.
   // Report ordered hardware state without tearing down the paired transport.
   if (MT_active()) {
+    if (pvmode != nwmode || ((oldval ^ newval) & 0x4000))
+      MT_serial_registers(newval, read_ioreg(REG_RCNT));
     MT_serial_state(nwmode == SERIAL_MODE_MULTI && (newval & 0x4000));
     if (!(newval & 0x4000) || nwmode != SERIAL_MODE_MULTI)
       serial_irq_cycles = 0;
