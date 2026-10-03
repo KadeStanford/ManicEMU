@@ -64,12 +64,14 @@ class IPATests(unittest.TestCase):
                 z.writestr('Payload/Manic.app/Info.plist', plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
                 z.writestr('Payload/Manic.app/Manic', macho())
                 z.writestr('Payload/Manic.app/unrelated.txt', b'preserve me')
+                z.writestr('Payload/Manic.app/System.core', b'synthetic original resource archive')
                 z.writestr('Payload/Manic.app/_CodeSignature/CodeResources', b'invalidated signature')
             checksum = hashlib.sha256(source.read_bytes()).hexdigest()
             ipa.repackage(source, framework, out)
             self.assertEqual(checksum, hashlib.sha256(source.read_bytes()).hexdigest())
             with zipfile.ZipFile(out) as z:
                 self.assertEqual(z.read('Payload/Manic.app/unrelated.txt'), b'preserve me')
+                self.assertEqual(z.read('Payload/Manic.app/System.core'), b'synthetic original resource archive')
                 changed = plistlib.loads(z.read('Payload/Manic.app/Info.plist'))
                 self.assertEqual(changed['TestUnrelatedSetting'], 'keep')
                 self.assertEqual(changed['CFBundleIdentifier'], 'test.manic')
@@ -89,7 +91,9 @@ class IPATests(unittest.TestCase):
                 path = pathlib.Path(tmp) / 'bad.zip'
                 with zipfile.ZipFile(path, 'w') as z:
                     for name in names:
-                        z.writestr(name, b'x')
+                        item = zipfile.ZipInfo('placeholder')
+                        item.filename = name  # Avoid constructor normalization on Windows.
+                        z.writestr(item, b'x')
                 with zipfile.ZipFile(path) as z, self.assertRaises(ValueError):
                     ipa.checked_entries(z)
 

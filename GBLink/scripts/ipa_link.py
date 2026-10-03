@@ -115,8 +115,11 @@ def checked_entries(archive):
     names = set()
     for item in entries:
         name = item.filename
-        parts = pathlib.PurePosixPath(name).parts
-        if not parts or name.startswith("/") or "\\" in name or ".." in parts or ":" in name or name in names:
+        # ZipInfo normalizes backslashes on Windows. Inspect the original
+        # central-directory name too, so malformed input is rejected everywhere.
+        raw_name = item.orig_filename
+        parts = pathlib.PurePosixPath(raw_name).parts
+        if not parts or raw_name.startswith("/") or "\\" in raw_name or ".." in parts or ":" in raw_name or name in names:
             raise ValueError("Unsafe or duplicate IPA entry")
         if item.flag_bits & 1 or ((item.external_attr >> 16) & 0o170000) == 0o120000:
             raise ValueError("Encrypted ZIP entries and symbolic links are unsupported")

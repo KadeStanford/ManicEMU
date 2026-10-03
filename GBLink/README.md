@@ -91,8 +91,10 @@ only distributes its added source and library, not someone else's packaged IPA.
 Use an official unencrypted sideload IPA or your own source build. Encrypted
 App Store binaries, arm64e, multi-architecture binaries and insufficient header
 padding are explicit blockers. The tool does not decrypt, move code sections,
-bypass DRM or install onto a device. An actual input IPA has not been supplied
-or inspected yet, so compatibility with your installed build is unverified.
+bypass DRM or install onto a device. Original bundled resources, including
+`System.core`, are copied byte for byte into the user's private output. Each
+IPA must be inspected independently; repackaging alone does not establish that
+it boots on a signed device.
 
 A jailbreak is unnecessary for this embedding design. Friends' phones need
 ordinary valid signing because the framework uses public APIs; they need no
@@ -128,6 +130,7 @@ plus 20,000 malformed-packet fuzz cases. A real loopback TCP harness injects
 pair and rejects duplicate execution. The Python tests use synthetic Mach-O/IPA
 fixtures to verify embedding, encryption/architecture/padding blockers, input
 preservation, unrelated settings, ZIP traversal and duplicate protection.
+They check raw ZIP backslashes on Windows and unchanged bundled resources too.
 
 The macOS job also compiles/links the iOS library with warnings as errors,
 type-checks the actual added Swift bridge against small dependency stubs, parses
