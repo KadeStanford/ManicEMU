@@ -150,7 +150,7 @@ static NSString *gameTitle(NSString *code) {
         else {NSData *ctx=[NSJSONSerialization dataWithJSONObject:self->_meta options:0 error:nil];[self->_browser invitePeer:self->_partner toSession:self->_session withContext:ctx timeout:20];}
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore before trade" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action){
-        MT_restore();[self cleanup];
+        MT_restore();resumeFrontend();[self cleanup];
     }]];[self show:a];
 }
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
