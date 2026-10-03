@@ -15,6 +15,7 @@ static void (*originalStop)(id,SEL);
 static void (*originalNDS)(id,SEL,id);
 static void (*original3DS)(id,SEL,id);
 static void (*originalTouch)(id,SEL,CGFloat,CGFloat);
+static void (*originalConfigs)(id,SEL,id,BOOL);
 static void (*originalEnd)(id,SEL);
 static id (*originalDrawable)(id,SEL);
 static id (*originalLayerDrawable)(id,SEL);
@@ -54,6 +55,8 @@ static unsigned masSinkAcquisitionsOnMain,masSnapshotsSkipped;
 @property(strong) UIButton *swapButton;
 @property(strong) id core;
 @property(copy) NSString *phoneLayout,*requestedLayout;
+@property(copy) NSString *appliedLayout;
+@property NSUInteger resolutionFactor;
 @property CGRect phoneRegion;
 @property CGSize phoneBounds;
 @property BOOL dual,threeDS,swapped,disabled;
@@ -102,8 +105,26 @@ static BOOL externalWindow(UIWindow *w) {
     if(@available(iOS 16.0,*))return [w.windowScene.session.role isEqualToString:UIWindowSceneSessionRoleExternalDisplayNonInteractive];
     return NO;
 }
-static NSString *canonical(BOOL threeDS) {
-    return threeDS?@"0,0,400,240,40,240,320,240,400,480":@"0,0,256,192,0,192,256,192,256,384";
+static NSString *canonicalScaled(BOOL threeDS,NSUInteger factor) {
+    factor=MAX(1,MIN(10,factor));
+    NSUInteger w=threeDS?400:256,h=threeDS?240:192,b=threeDS?320:256,x=threeDS?40:0;
+    return [NSString stringWithFormat:@"0,0,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu",
+            w*factor,h*factor,x*factor,h*factor,b*factor,h*factor,w*factor,h*2*factor];
+}
+#ifdef MAS_TESTING
+static NSString *canonical(BOOL threeDS) {return canonicalScaled(threeDS,1);}
+#endif
+static NSString *effectiveLayout(MASManager *m) {
+    NSArray *parts=[m.requestedLayout componentsSeparatedByString:@","];
+    double scale=MAX(1,m.resolutionFactor);
+    if(parts.count==10) {
+        // Preserve the host's requested native output dimensions as well as the
+        // core's internal factor. Single-screen TV layouts have no bottom rect.
+        double w=m.threeDS?400:256,h=m.threeDS?240:192,b=m.threeDS?320:256;
+        scale=MAX(scale,MAX([parts[2] doubleValue]/w,[parts[3] doubleValue]/h));
+        scale=MAX(scale,MAX([parts[6] doubleValue]/b,[parts[7] doubleValue]/h));
+    }
+    return canonicalScaled(m.threeDS,(NSUInteger)ceil(MIN(10,scale)));
 }
 
 @implementation MASSurface
@@ -145,7 +166,7 @@ static NSString *canonical(BOOL threeDS) {
 - (void)reset {
     [self removeSurfaces]; self.dual=NO;self.disabled=NO;self.swapped=NO;
     self.phoneParent=nil;self.phoneLayout=nil;self.requestedLayout=nil;self.coreView=nil;
-    self.inputRegion=CGRectZero;self.liveViewport=CGRectZero;
+    self.inputRegion=CGRectZero;self.liveViewport=CGRectZero;self.appliedLayout=nil;self.resolutionFactor=1;
 }
 - (void)layout:(NSString *)layout threeDS:(BOOL)threeDS {
     NSAssert(NSThread.isMainThread,@"Layout must run on the UI thread");
@@ -211,7 +232,11 @@ static NSString *canonical(BOOL threeDS) {
         self.swapButton.titleLabel.font=[UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         [self.swapButton addTarget:self action:@selector(swap) forControlEvents:UIControlEventTouchUpInside];
         [self.phoneParent addSubview:self.swapButton];
-        (self.threeDS?original3DS:originalNDS)(self.core,NSSelectorFromString(self.threeDS?@"set3DSCustomLayout:":@"setNDSCustomLayout:"),canonical(self.threeDS));
+    }
+    NSString *effective=effectiveLayout(self);
+    if(![effective isEqual:self.appliedLayout]) {
+        self.appliedLayout=effective;
+        (self.threeDS?original3DS:originalNDS)(self.core,NSSelectorFromString(self.threeDS?@"set3DSCustomLayout:":@"setNDSCustomLayout:"),effective);
     }
     CGSize bounds=self.phoneParent.bounds.size;
     CGFloat sx=self.phoneBounds.width>0?bounds.width/self.phoneBounds.width:1;
@@ -266,8 +291,13 @@ static void masStop(id self,SEL cmd) {onMain(^{[MASManager.shared reset];});orig
 static void masLayout(id self,SEL cmd,id layout) {
     BOOL threeDS=[NSStringFromSelector(cmd) isEqualToString:@"set3DSCustomLayout:"];
     __block NSString *effective=layout;
-    onMain(^{MASManager *m=MASManager.shared;m.core=self;[m layout:layout threeDS:threeDS];if(m.plan)effective=canonical(threeDS);});
+    onMain(^{MASManager *m=MASManager.shared;m.core=self;[m layout:layout threeDS:threeDS];if(m.plan)effective=effectiveLayout(m);});
     (threeDS?original3DS:originalNDS)(self,cmd,effective);
+}
+static void masConfigs(id self,SEL cmd,NSDictionary *configs,BOOL flush) {
+    originalConfigs(self,cmd,configs,flush);
+    NSString *value=configs[@"citra_resolution_factor"];
+    if(value)onMain(^{MASManager *m=MASManager.shared;m.resolutionFactor=MAX(1,MIN(10,value.integerValue));[m refresh];});
 }
 static void masTouch(id self,SEL cmd,CGFloat x,CGFloat y) {
     MASManager *m=MASManager.shared;
@@ -476,6 +506,7 @@ static void install(void) {
     originalNDS=(void *)replace(core,@"setNDSCustomLayout:",(IMP)masLayout,3);
     original3DS=(void *)replace(core,@"set3DSCustomLayout:",(IMP)masLayout,3);
     originalTouch=(void *)replace(core,@"sendTouchEventX:y:",(IMP)masTouch,4);
+    originalConfigs=(void *)replace(core,@"updateRunningCoreConfigs:flush:",(IMP)masConfigs,4);
     originalDrawable=(void *)replace(context,@"nextDrawable",(IMP)masDrawable,2);
     originalEnd=(void *)replace(context,@"end",(IMP)masEnd,2);
     originalLayerDrawable=(void *)replace(CAMetalLayer.class,@"nextDrawable",(IMP)masLayerDrawable,2);

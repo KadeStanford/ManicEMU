@@ -20,6 +20,7 @@ static void check(NSString *key,BOOL passed);
 - (void)set3DSCustomLayout:(NSString *)layout;
 - (void)sendTouchEventX:(CGFloat)x y:(CGFloat)y;
 - (void)releaseTouchEvent;
+- (void)updateRunningCoreConfigs:(NSDictionary *)configs flush:(BOOL)flush;
 @end
 @implementation LibretroCore
 + (instancetype)sharedInstance {static id v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
@@ -30,6 +31,7 @@ static void check(NSString *key,BOOL passed);
 - (void)set3DSCustomLayout:(NSString *)layout {lastLayout=[layout copy];}
 - (void)sendTouchEventX:(CGFloat)x y:(CGFloat)y {touches++;touchPoint=CGPointMake(x,y);}
 - (void)releaseTouchEvent {releases++;}
+- (void)updateRunningCoreConfigs:(NSDictionary *)configs flush:(BOOL)flush {}
 @end
 @interface TestSourceDrawable : NSObject
 @property(strong) id<MTLTexture> texture;
@@ -129,6 +131,27 @@ static void gpu(void) {
     cb=[[device newCommandQueue] commandBuffer];MASDrawCrop(cb,source,swapped,CGRectMake(0.1,0.5,0.8,0.25),CGSizeMake(320,240));[cb commit];[cb waitUntilCompleted];
     [swapped getBytes:a bytesPerRow:4 fromRegion:MTLRegionMake2D(0,120,1,1) mipmapLevel:0];
     check(@"intermediate_viewport_cannot_distort_screen_aspect",a[0]==0&&a[1]==0);
+    for(NSUInteger factor=1;factor<=4;factor*=2) {
+        unsigned width=400*factor,height=480*factor;
+        desc.width=width;desc.height=height;desc.usage=MTLTextureUsageShaderRead;
+        id<MTLTexture> detailed=[device newTextureWithDescriptor:desc];
+        NSMutableData *pattern=[NSMutableData dataWithLength:width*height*4];uint8_t *bytes=pattern.mutableBytes;
+        for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++) {
+            unsigned i=(y*width+x)*4;bytes[i]=(x&1)?255:0;bytes[i+1]=(y&1)?255:0;bytes[i+3]=255;
+        }
+        [detailed replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:bytes bytesPerRow:width*4];
+        desc.height=240*factor;desc.usage=MTLTextureUsageRenderTarget;
+        id<MTLTexture> output=[device newTextureWithDescriptor:desc];
+        cb=[[device newCommandQueue] commandBuffer];
+        BOOL encoded=MASDrawCrop(cb,detailed,output,CGRectMake(0,0,1,0.5),CGSizeMake(400,240));
+        [cb commit];[cb waitUntilCompleted];
+        NSMutableData *row=[NSMutableData dataWithLength:width*4];
+        [output getBytes:row.mutableBytes bytesPerRow:width*4 fromRegion:MTLRegionMake2D(0,100*factor,width,1) mipmapLevel:0];
+        BOOL exact=encoded&&cb.status==MTLCommandBufferStatusCompleted;
+        uint8_t *actual=row.mutableBytes;
+        for(unsigned x=0;x<width;x++)exact&=actual[x*4]==((x&1)?255:0)&&actual[x*4+3]==255;
+        check([NSString stringWithFormat:@"%lux_source_detail_preserved_without_1x_downsample",factor],exact);
+    }
 }
 @interface TestApp : UIResponder <UIApplicationDelegate>
 @property(strong,nonatomic) UIWindow *window,*external;
@@ -149,7 +172,14 @@ static void gpu(void) {
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
-        check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonical(NO)]);
+        check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
+        for(NSUInteger factor=1;factor<=4;factor*=2) {
+            [core set3DSCustomLayout:@"0,0,400,240,0,0,0,0,400,240"];
+            [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@(factor).stringValue} flush:NO];
+            check([NSString stringWithFormat:@"%lux_option_reaches_composite_dimensions",factor],[lastLayout isEqual:canonicalScaled(YES,factor)]);
+        }
+        [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@"1"} flush:NO];
+        [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
         UIView *touchArea=[[TestTouchInputView alloc] initWithFrame:CGRectMake(30,350,300,180)];
         [root.view addSubview:touchArea];[m refresh];
         touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
