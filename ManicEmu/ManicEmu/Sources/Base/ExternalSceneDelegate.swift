@@ -3,12 +3,12 @@
 //  ManicEmu
 //
 //  Created by Daiuno on 2025/3/9.
-//  Copyright © 2025 Manic EMU. All rights reserved.
+//  Copyright c 2025 Manic EMU. All rights reserved.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import RealmSwift
 
-/// 连接屏幕镜像的时候使用这个场景
+/// ???????????????
 class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
     static var isAirPlaying = false
     var window: UIWindow?
@@ -30,27 +30,27 @@ class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
             ExternalSceneDelegate.airPlayViewController = airPlayViewController
             window?.makeKeyAndVisible()
             updateScene()
-            //监听设置airPlay开关
+            //????airPlay??
             settingsUpdateToken = Settings.defalut.observe(keyPaths: [\Settings.airPlay]) { [weak self] change in
                 guard let self = self else { return }
                 switch change {
                 case .change(_, _):
-                    Log.debug("airPlay开关变化，更新Scene")
+                    Log.debug("airPlay????,??Scene")
                     self.updateScene()
                 default:
                     break
                 }
             }
             
-            //监听会员资格变化
+            //????????
             membershipNotification = NotificationCenter.default.addObserver(forName: R.NotificationName.MembershipChange, object: nil, queue: .main) { [weak self] notification in
                 self?.updateScene()
             }
-            //监听开始游戏
+            //??????
             startPlayGameNotification = NotificationCenter.default.addObserver(forName: R.NotificationName.StartPlayGame, object: nil, queue: .main) { [weak self] notification in
                 self?.updateScene()
             }
-            //监听结束游戏
+            //??????
             stopPlayGameNotification = NotificationCenter.default.addObserver(forName: R.NotificationName.StopPlayGame, object: nil, queue: .main) { [weak self] notification in
                 self?.updateScene()
             }
@@ -77,6 +77,13 @@ class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         ExternalSceneDelegate.externalWindow = nil
         PlayViewController.updateAirPlay()
     }
+
+    func windowScene(_ windowScene: UIWindowScene, didUpdate previousCoordinateSpace: UICoordinateSpace,
+                     interfaceOrientation previousInterfaceOrientation: UIInterfaceOrientation,
+                     traitCollection previousTraitCollection: UITraitCollection) {
+        // Recalculate the external view's aspect fit after display rotation or a size change.
+        PlayViewController.updateAirPlay()
+    }
     
     private func updateScene() {
         if PurchaseManager.isMember, Settings.defalut.airPlay, PlayViewController.isGaming, PlayViewController.enableAirplay {
@@ -90,3 +97,4 @@ class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         PlayViewController.updateAirPlay()
     }
 }
+
