@@ -24,6 +24,7 @@ static Ivar layerIvar,drawableIvar,bufferIvar,encoderIvar;
 #ifdef MAS_TESTING
 static unsigned masEncodedFrames;
 static unsigned masPresentedFrames;
+static uint32_t masPresentedPhonePixel,masPresentedTVPixel;
 #endif
 
 @interface MASPlan : NSObject
@@ -282,6 +283,18 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
             CGSize bottomSize=live.threeDS?CGSizeMake(320,240):CGSizeMake(256,192);
             if(!phone||!tv||!MASDrawCrop(buffer,texture,phone.texture,live.swapped?top:bottom,live.swapped?topSize:bottomSize)||
                !MASDrawCrop(buffer,texture,tv.texture,live.swapped?bottom:top,live.swapped?bottomSize:topSize))return;
+#ifdef MAS_TESTING
+            id<MTLBuffer> phoneReadback=[texture.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
+            id<MTLBuffer> tvReadback=[texture.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
+            id<MTLBlitCommandEncoder> readback=[buffer blitCommandEncoder];
+            [readback copyFromTexture:phone.texture sourceSlice:0 sourceLevel:0
+                         sourceOrigin:MTLOriginMake(phone.texture.width/2,phone.texture.height/2,0)
+                           sourceSize:MTLSizeMake(1,1,1) toBuffer:phoneReadback destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
+            [readback copyFromTexture:tv.texture sourceSlice:0 sourceLevel:0
+                         sourceOrigin:MTLOriginMake(tv.texture.width/2,tv.texture.height/2,0)
+                           sourceSize:MTLSizeMake(1,1,1) toBuffer:tvReadback destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
+            [readback endEncoding];
+#endif
             [buffer presentDrawable:phone];[buffer presentDrawable:tv];
             [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
                 // Keep the source drawable alive until both copies have finished.
@@ -292,6 +305,8 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
                     m.phoneSurface.hidden=NO;m.externalSurface.hidden=NO;
 #ifdef MAS_TESTING
                     masPresentedFrames++;
+                    masPresentedPhonePixel=*(uint32_t *)phoneReadback.contents;
+                    masPresentedTVPixel=*(uint32_t *)tvReadback.contents;
 #endif
                 });
             }];

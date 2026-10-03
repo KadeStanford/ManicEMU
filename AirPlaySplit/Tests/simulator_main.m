@@ -78,13 +78,15 @@ static void presentWithoutContext(CAMetalLayer *layer) {
     id<CAMetalDrawable> drawable=[layer nextDrawable];
     check(@"swapchain_drawable_available",drawable!=nil);
     id<MTLCommandBuffer> buffer=[[layer.device newCommandQueue] commandBuffer];
-    MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture=drawable.texture;
-    pass.colorAttachments[0].loadAction=MTLLoadActionClear;
-    pass.colorAttachments[0].storeAction=MTLStoreActionStore;
-    pass.colorAttachments[0].clearColor=MTLClearColorMake(0,1,0,1);
-    id<MTLRenderCommandEncoder> encoder=[buffer renderCommandEncoderWithDescriptor:pass];
-    [encoder endEncoding];
+    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:256 height:384 mipmapped:NO];
+    desc.usage=MTLTextureUsageShaderRead;desc.storageMode=MTLStorageModeShared;
+    id<MTLTexture> pattern=[layer.device newTextureWithDescriptor:desc];
+    NSMutableData *pixels=[NSMutableData dataWithLength:256*384*4];uint8_t *b=pixels.mutableBytes;
+    for(unsigned y=0;y<384;y++)for(unsigned x=0;x<256;x++) {
+        unsigned i=(y*256+x)*4;b[i]=y<192?255:0;b[i+1]=y<192?0:255;b[i+3]=255;
+    }
+    [pattern replaceRegion:MTLRegionMake2D(0,0,256,384) mipmapLevel:0 withBytes:b bytesPerRow:1024];
+    check(@"swapchain_test_pattern_encoded",MASDrawCrop(buffer,pattern,drawable.texture,CGRectMake(0,0,1,1),CGSizeMake(256,384)));
     [buffer addScheduledHandler:^(id<MTLCommandBuffer> _) {[drawable present];}];
     [buffer commit];
 }
@@ -167,10 +169,12 @@ static void gpu(void) {
         presentWithoutContext(m.plan.source);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         check(@"vulkan_style_presentation_reaches_both_outputs_without_context",masPresentedFrames>0&&ends==1&&!m.phoneSurface.hidden&&!m.externalSurface.hidden);
+        check(@"vulkan_style_outputs_have_separate_screen_pixels",masPresentedPhonePixel==0xFF00FF00&&masPresentedTVPixel==0xFFFF0000);
         unsigned firstPresent=masPresentedFrames;
         [m swap];presentWithoutContext(m.plan.source);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         check(@"vulkan_style_swap_keeps_presenting_without_context",masPresentedFrames>firstPresent&&ends==1&&loads==1&&stops==0);
+        check(@"vulkan_style_swap_reverses_actual_output_pixels",masPresentedPhonePixel==0xFFFF0000&&masPresentedTVPixel==0xFF00FF00);
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
