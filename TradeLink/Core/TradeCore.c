@@ -32,9 +32,10 @@ static int valid_data(const uint8_t *data) {
     return !(flags & 0x7fff0000) && (flags & 0xffff)<=2;
 }
 static void fault(const char *message) {
-    MTNotice fn; pthread_mutex_lock(&lock);g.phase=g.captured?MT_SUSPENDED:MT_CANCELLED;fn=g.error;pthread_mutex_unlock(&lock);
+    MTNotice fn; pthread_mutex_lock(&lock);g.phase=g.captured?MT_BROKEN:MT_CANCELLED;fn=g.error;pthread_mutex_unlock(&lock);
     if(fn)fn(message);
 }
+void MT_failure(const char *message) { fault(message); }
 void MT_install(MTSnapshot snapshot,MTNotice stopped,MTNotice error) { pthread_mutex_lock(&lock);g.snapshot=snapshot;g.stopped=stopped;g.error=error;pthread_mutex_unlock(&lock); }
 void MT_enable(int enabled) { pthread_mutex_lock(&lock);g.enabled=!!enabled;pthread_mutex_unlock(&lock); }
 int MT_game_code(const uint8_t code[4]) {
@@ -79,7 +80,7 @@ void MT_connect(unsigned role,const uint8_t session[16]) {
 void MT_suspend(void) { pthread_mutex_lock(&lock);if(g.phase==MT_LINKED)g.phase=MT_SUSPENDED;pthread_mutex_unlock(&lock); }
 void MT_resume(void) { pthread_mutex_lock(&lock);if(g.phase==MT_SUSPENDED&&g.started)g.phase=MT_LINKED;pthread_mutex_unlock(&lock); }
 void MT_cancel(void) { pthread_mutex_lock(&lock);if(g.phase==MT_WAITING)g.phase=MT_CANCELLED;pthread_mutex_unlock(&lock); }
-void MT_restore(void) { pthread_mutex_lock(&lock);if(g.captured&&(g.phase==MT_SUSPENDED||g.phase==MT_LINKED))g.phase=MT_RESTORE;pthread_mutex_unlock(&lock); }
+void MT_restore(void) { pthread_mutex_lock(&lock);if(g.captured&&(g.phase==MT_SUSPENDED||g.phase==MT_LINKED||g.phase==MT_BROKEN))g.phase=MT_RESTORE;pthread_mutex_unlock(&lock); }
 void MT_poll_receive(void) {
     for(unsigned n=0;n<MT_QUEUE_SIZE;n++){
         Message m;MTGBA gba;unsigned peer;
@@ -112,7 +113,8 @@ int MT_frame(const MTGBA *gba) {
     }
     if(start&&gba->start)gba->start(role);
     MT_poll_receive();
-    return phase!=MT_WAITING&&phase!=MT_SUSPENDED&&phase!=MT_RESTORE;
+    phase=MT_phase();
+    return phase!=MT_WAITING&&phase!=MT_SUSPENDED&&phase!=MT_RESTORE&&phase!=MT_BROKEN;
 }
 void MT_send(uint16_t recipient,const void *data,size_t size) {
     (void)recipient;

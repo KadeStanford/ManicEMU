@@ -129,6 +129,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)halt:(NSString *)reason {
     if(_ending)return;
+    if(MT_phase()==MT_BROKEN)_fatal=YES;
     BOOL notify=_ready;MT_suspend();_ready=_peerReady=NO;if(notify)[self control:@"PAUSE"];
     [_advertiser startAdvertisingPeer];[_browser startBrowsingForPeers];
     [self dismissDialog];
@@ -147,7 +148,7 @@ static NSString *gameTitle(NSString *code) {
     if(_ending||!_partner||![_session.connectedPeers containsObject:_partner])return;
     CFTimeInterval now=CACurrentMediaTime();
     if(MT_phase()==MT_LINKED){
-        if(now-_heard>5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];return;}
+        if(now-_heard>1.5){[self halt:@"The connection timed out. Both games are paused; backups are retained."];return;}
         if(now-_lastResend>0.75){_cursor=0;_lastResend=now;}
         for(unsigned i=0;i<64;i++){
             uint8_t bytes[MT_PACKET_SIZE];if(!MT_next_packet(_cursor,bytes))break;
@@ -208,7 +209,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didReceiveInvitationFromPeer:(MCPeerID *)peer withContext:(NSData *)context invitationHandler:(void (^)(BOOL,MCSession *))handler {
     dispatch_async(dispatch_get_main_queue(),^{
-        NSDictionary *meta=context.length<=1024?[NSJSONSerialization JSONObjectWithData:context options:0 error:nil]:nil;
+        NSDictionary *meta=context.length&&context.length<=1024?[NSJSONSerialization JSONObjectWithData:context options:0 error:nil]:nil;
         if(self->_ending||self->_fatal||![self valid:meta]||(self->_partner&&![peer isEqual:self->_partner])){handler(NO,nil);return;}
         if(self->_partner){handler(YES,self->_session);return;} // Same approved peer only.
         self->_partner=peer;self->_partnerMeta=meta;
@@ -223,8 +224,8 @@ static NSString *gameTitle(NSString *code) {
 - (void)browser:(MCNearbyServiceBrowser *)browser lostPeer:(MCPeerID *)peer {
     dispatch_async(dispatch_get_main_queue(),^{[self->_peers removeObjectForKey:peer];[self finder];});
 }
-- (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didNotStartAdvertisingPeer:(NSError *)error {dispatch_async(dispatch_get_main_queue(),^{MT_cancel();[self cleanup];[self notice:@"Nearby trading unavailable" message:@"Allow Local Network access for Manic in iOS Settings, then enter the cable club again."];});}
-- (void)browser:(MCNearbyServiceBrowser *)browser didNotStartBrowsingForPeers:(NSError *)error { [self advertiser:_advertiser didNotStartAdvertisingPeer:error]; }
+- (void)advertiser:(MCNearbyServiceAdvertiser *)advertiser didNotStartAdvertisingPeer:(NSError *)error {dispatch_async(dispatch_get_main_queue(),^{if(advertiser!=self->_advertiser)return;MT_cancel();[self cleanup];[self notice:@"Nearby trading unavailable" message:@"Allow Local Network access for Manic in iOS Settings, then enter the cable club again."];});}
+- (void)browser:(MCNearbyServiceBrowser *)browser didNotStartBrowsingForPeers:(NSError *)error { dispatch_async(dispatch_get_main_queue(),^{if(browser!=self->_browser)return;[self advertiser:self->_advertiser didNotStartAdvertisingPeer:error];}); }
 - (void)session:(MCSession *)session didReceiveStream:(NSInputStream *)stream withName:(NSString *)name fromPeer:(MCPeerID *)peer {[stream close];}
 - (void)session:(MCSession *)session didStartReceivingResourceWithName:(NSString *)name fromPeer:(MCPeerID *)peer withProgress:(NSProgress *)progress {[progress cancel];}
 - (void)session:(MCSession *)session didFinishReceivingResourceWithName:(NSString *)name fromPeer:(MCPeerID *)peer atURL:(NSURL *)url withError:(NSError *)error {}

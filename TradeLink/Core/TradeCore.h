@@ -8,7 +8,7 @@
 #define MT_DATA_SIZE 24
 #define MT_PACKET_SIZE 56
 #define MT_QUEUE_SIZE 512
-enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED };
+enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN };
 typedef struct {
     void (*start)(unsigned role);
     void (*receive)(const void *, size_t, unsigned peer);
@@ -41,6 +41,7 @@ void MT_resume(void);
 void MT_cancel(void);
 void MT_restore(void);
 void MT_send(uint16_t recipient, const void *data, size_t size);
+void MT_failure(const char *message); // A lost/invalid core packet requires rollback.
 void MT_poll_receive(void);
 int MT_next_packet(uint64_t after, uint8_t packet[MT_PACKET_SIZE]);
 // DATA is acknowledged once retained for delivery on the core thread. Duplicate

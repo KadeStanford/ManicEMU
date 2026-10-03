@@ -24,6 +24,7 @@
 
 #include <assert.h>
 #include "common.h"
+#include "TradeCore.h"
 
 // Debug print logic:
 //#define SERIALPROTO_DEBUG 1
@@ -388,6 +389,7 @@ void serialpoke_net_receive(const void* buf, size_t len, uint16_t client_id) {
       serstate.poke.peer[client_id].count++;
     }
     else if ((flags & 0x80000000)) {
+      if (MT_active()) MT_failure("GBA serial buffer filled. Restore the pre-trade checkpoint.");
       SRPT_DEBUG_LOG("Packet dropped!\n");
     }
   }
@@ -721,4 +723,3 @@ void serialaw_net_receive(const void* buf, size_t len, uint16_t client_id) {
     }
   }
 }
-

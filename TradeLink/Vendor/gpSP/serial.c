@@ -205,7 +205,7 @@ u32 serial_next_event() {
 
 // Account for consumed cycles and return if a serial IRQ should be raised.
 bool update_serial(unsigned cycles) {
-  if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED))
+  if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED || MT_phase() == MT_BROKEN))
     return false; // No handshake IRQ can complete before pairing/backup.
   // Might wanna check if the connected device has some update (IRQ).
   switch (serial_mode) {

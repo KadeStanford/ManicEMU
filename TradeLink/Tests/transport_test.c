@@ -32,6 +32,10 @@ int main(void){
     assert(MT_frame(&gba)&&delivered==3);assert(MT_complete());assert(MT_frame(&gba)&&MT_phase()==MT_IDLE);
     MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
     battery[0]=0x99;state[0]=0xaa;MT_suspend();MT_restore();assert(MT_frame(&gba));assert(battery[0]==0x45&&state[0]==0x67);
-    MT_leave();assert(MT_phase()==MT_IDLE);MT_unloaded();
+    MT_leave();assert(MT_phase()==MT_IDLE);
+    MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
+    for(unsigned i=0;i<MT_QUEUE_SIZE;i++)MT_send(0xffff,data,24);
+    MT_send(0xffff,data,24);assert(MT_phase()==MT_BROKEN&&!MT_frame(&gba));MT_resume();assert(MT_phase()==MT_BROKEN);
+    MT_restore();assert(MT_frame(&gba)&&MT_phase()==MT_CANCELLED);MT_unloaded();
     puts("PASS: Gen3 compatibility, automatic checkpoint, duplicate/replay/session guards, pause/resume, battery + full-state rollback");
 }
