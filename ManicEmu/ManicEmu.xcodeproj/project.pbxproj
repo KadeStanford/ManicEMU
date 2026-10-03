@@ -13467,6 +13467,9 @@
 				57E8A110304A4A1100000009 /* PBXTargetDependency */,
 			);
 			name = ManicEmuSideload;
+			packageProductDependencies = (
+				576060282D24E8BD00A98B0C /* RswiftLibrary */,
+			);
 			productName = ManicEMU;
 			productReference = 5790958B303C7D9100A53656 /* ManicEmuSideload.app */;
 			productType = "com.apple.product-type.application";
@@ -15846,7 +15849,7 @@
 					"$(DEPS_DIR)/glslang/glslang/SPIRV",
 					"$(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix",
 				);
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Aoshuang. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright c 2026 Aoshuang. All rights reserved.";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -15905,7 +15908,7 @@
 					"$(DEPS_DIR)/glslang/glslang/SPIRV",
 					"$(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix",
 				);
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Aoshuang. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright c 2026 Aoshuang. All rights reserved.";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -15965,7 +15968,7 @@
 					"$(DEPS_DIR)/glslang/glslang/SPIRV",
 					"$(DEPS_DIR)/glslang/glslang/glslang/OSDependent/Unix",
 				);
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Aoshuang. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright c 2026 Aoshuang. All rights reserved.";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
