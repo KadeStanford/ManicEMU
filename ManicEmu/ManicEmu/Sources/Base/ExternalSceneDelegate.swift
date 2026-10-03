@@ -73,6 +73,9 @@ class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         membershipNotification = nil
         ExternalSceneDelegate.isAirPlaying = false
+        ExternalSceneDelegate.airPlayViewController = nil
+        ExternalSceneDelegate.externalWindow = nil
+        PlayViewController.updateAirPlay()
     }
     
     private func updateScene() {
@@ -82,5 +85,8 @@ class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
             // Mirror the phone instead
             window?.isHidden = true
         }
+        // Re-route after the external controller exists and whenever AirPlay or
+        // membership changes; a scene notification may arrive before this point.
+        PlayViewController.updateAirPlay()
     }
 }
