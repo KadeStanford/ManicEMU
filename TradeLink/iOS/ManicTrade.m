@@ -46,6 +46,7 @@ static NSString *gameTitle(NSString *code) {
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code;
 - (void)ended:(NSString *)reason;
 - (void)closed:(uint64_t)epoch;
+- (void)saveFailed:(NSString *)message;
 - (void)halt:(NSString *)reason;
 @end
 @implementation ManicTrade {
@@ -66,6 +67,7 @@ static NSString *gameTitle(NSString *code) {
     enum MTPhase _lastPhase;
     NSString *_epoch;
     uint64_t _coreEpoch;
+    NSString *_saveWarning;
 }
 + (instancetype)shared { static ManicTrade *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v; }
 - (instancetype)init {
@@ -88,7 +90,7 @@ static NSString *gameTitle(NSString *code) {
 }
 - (void)checkpoint:(NSData *)battery state:(NSData *)state path:(NSString *)path code:(NSString *)code {
     [self cleanup];_epoch=NSUUID.UUID.UUIDString;NSString *epoch=_epoch;_coreEpoch=MT_epoch();
-    _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;
+    _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;_saveWarning=nil;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
     _identity=[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"%@ · %@",UIDevice.currentDevice.model,[_epoch substringToIndex:4]]];
@@ -202,10 +204,14 @@ static NSString *gameTitle(NSString *code) {
     if([reason isEqual:@"Link completed"]){
         [self dismissDialog];[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
         // Allow the final reliable ACK to leave MCSession before disconnecting.
-        NSString *epoch=_epoch;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{if([self->_epoch isEqual:epoch])[self cleanup];});
+        NSString *epoch=_epoch;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            if(![self->_epoch isEqual:epoch])return;NSString *warning=self->_saveWarning;[self cleanup];
+            if(warning)[self notice:@"Save needs attention" message:warning];
+        });
     }
 }
 - (void)closed:(uint64_t)epoch {if(_coreEpoch<epoch)[self cleanup];}
+- (void)saveFailed:(NSString *)message {_saveWarning=message;[self notice:@"Save needs attention" message:message];}
 - (void)cleanup {
     _ending=YES;[_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     _session.delegate=nil;_advertiser.delegate=nil;_browser.delegate=nil;[_session disconnect];
@@ -286,7 +292,7 @@ static void stopped(const char *reason) {NSString *s=[NSString stringWithUTF8Str
 });}
 static void failure(const char *reason) {NSString *s=[NSString stringWithUTF8String:reason];uint64_t epoch=MT_epoch();dispatch_async(dispatch_get_main_queue(),^{
     if(epoch!=MT_epoch())return;
-    if(MT_local_closed()){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Save needs attention" message:s];return;}
+    if(MT_local_closed()){[[ManicTrade shared] saveFailed:s];return;}
     if(MT_phase()==MT_CANCELLED){[[ManicTrade shared] cleanup];[[ManicTrade shared] notice:@"Trading stopped" message:s];}
     else [[ManicTrade shared] halt:s];
 });}
