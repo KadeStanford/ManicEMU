@@ -50,7 +50,7 @@ trap 'python3 run_bounded.py 20 xcrun simctl uninstall "$device" org.manicemu.ga
 python3 run_bounded.py 120 xcrun simctl boot "$device"
 python3 run_bounded.py 180 xcrun simctl bootstatus "$device" -b
 python3 run_bounded.py 120 xcrun simctl install "$device" "$app"
-container="$(xcrun simctl get_app_container "$device" org.manicemu.game-probe data)"
+container="$(python3 run_bounded.py 60 xcrun simctl get_app_container "$device" org.manicemu.game-probe data)"
 mkdir -p "$container/Documents"
 if [[ "${1:-}" == '--self-test' ]]; then
   SIMCTL_CHILD_MANIC_PROBE_SIGNAL_TEST=1 xcrun simctl launch "$device" org.manicemu.game-probe

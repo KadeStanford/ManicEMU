@@ -2,7 +2,7 @@
 import datetime,subprocess,sys
 seconds=int(sys.argv[1]);command=sys.argv[2:]
 assert seconds>0 and command
-print(datetime.datetime.now(datetime.timezone.utc).isoformat(), 'Diagnostic command:',command[0],flush=True)
+print(datetime.datetime.now(datetime.timezone.utc).isoformat(), 'Diagnostic command:',command[0],file=sys.stderr,flush=True)
 try:
     result=subprocess.run(command,timeout=seconds)
 except subprocess.TimeoutExpired:

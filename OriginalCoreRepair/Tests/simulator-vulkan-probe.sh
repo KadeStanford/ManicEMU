@@ -56,7 +56,7 @@ trap 'python3 run_bounded.py 20 xcrun simctl uninstall "$device" org.manicemu.vu
 python3 run_bounded.py 120 xcrun simctl boot "$device"
 python3 run_bounded.py 180 xcrun simctl bootstatus "$device" -b
 python3 run_bounded.py 120 xcrun simctl install "$device" "$app"
-container="$(xcrun simctl get_app_container "$device" org.manicemu.vulkan-probe data)"
+container="$(python3 run_bounded.py 60 xcrun simctl get_app_container "$device" org.manicemu.vulkan-probe data)"
 python3 run_bounded.py 180 xcrun simctl launch "$device" org.manicemu.vulkan-probe
 for attempt in {1..30}; do
   [[ -s "$container/Documents/vulkan-fatal.bin" ]] && break
