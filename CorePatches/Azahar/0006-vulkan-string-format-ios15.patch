@@ -1,0 +1,19 @@
+diff --git a/externals/vulkan-headers/include/vulkan/vulkan_to_string.hpp b/externals/vulkan-headers/include/vulkan/vulkan_to_string.hpp
+--- a/externals/vulkan-headers/include/vulkan/vulkan_to_string.hpp
++++ b/externals/vulkan-headers/include/vulkan/vulkan_to_string.hpp
+@@ -23,7 +23,7 @@
+ import VULKAN_HPP_STD_MODULE;
+ #else
+-#  if __cpp_lib_format
++#  if __cpp_lib_format && !defined( __APPLE__ )
+ #    include <format>  // std::format
+ #  else
+ #    include <sstream>  // std::stringstream
+@@ -3984,7 +3984,7 @@
+   VULKAN_HPP_INLINE std::string toHexString( uint32_t value )
+   {
+-#if __cpp_lib_format
++#if __cpp_lib_format && !defined( __APPLE__ )
+     return std::format( "{:x}", value );
+ #else
+     std::stringstream stream;
