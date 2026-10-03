@@ -92,10 +92,14 @@ void MT_failure(const char *message) { fault(message); }
 void MT_install(MTSnapshot snapshot,MTNotice stopped,MTNotice error) { pthread_mutex_lock(&lock);g.snapshot=snapshot;g.stopped=stopped;g.error=error;pthread_mutex_unlock(&lock); }
 void MT_set_persist(MTPersist persist) { pthread_mutex_lock(&lock);g.persist=persist;pthread_mutex_unlock(&lock); }
 void MT_enable(int enabled) { pthread_mutex_lock(&lock);g.enabled=!!enabled;pthread_mutex_unlock(&lock); }
-int MT_game_code(const uint8_t code[4]) {
-    if(!code||code[3]<'A'||code[3]>'Z')return 0;
-    return !memcmp(code,"AXV",3)||!memcmp(code,"AXP",3)||!memcmp(code,"BPR",3)||!memcmp(code,"BPG",3)||!memcmp(code,"BPE",3);
+enum MTTitle MT_title(const uint8_t code[4]) {
+    if(!code||code[3]<'A'||code[3]>'Z')return MT_TITLE_UNKNOWN;
+    static const char prefixes[][4]={"AXV","AXP","BPE","BPR","BPG"};
+    for(unsigned i=0;i<sizeof(prefixes)/sizeof(prefixes[0]);i++)
+        if(!memcmp(code,prefixes[i],3))return (enum MTTitle)(MT_TITLE_RUBY+i);
+    return MT_TITLE_UNKNOWN;
 }
+int MT_game_code(const uint8_t code[4]) { return MT_title(code)!=MT_TITLE_UNKNOWN; }
 int MT_compatible(const uint8_t a[4],const uint8_t b[4]) { return MT_game_code(a)&&MT_game_code(b)&&a[3]==b[3]; }
 void MT_loaded(const char *path,const uint8_t code[4]) {
     MT_unloaded();pthread_mutex_lock(&lock);
@@ -140,8 +144,8 @@ static int terminal_locked(void) {
     for(size_t i=0;i<g.out_count;i++)if(g.out[(g.out_head+i)%MT_QUEUE_SIZE].type==DATA)return 0;
     return 1;
 }
-static int quiet_close_allowed(void) { // FR/LG's known subconnections return to the room; they are not exits.
-    if(!memcmp(g.code,"BPR",3)||!memcmp(g.code,"BPG",3))
+static int quiet_close_allowed(void) { // R/S/E and FR/LG share these room-return subconnections.
+    if(MT_title(g.code)!=MT_TITLE_UNKNOWN)
         return g.link_type!=0x1122&&g.link_type!=0x1133&&g.link_type!=0x1144&&g.link_type!=0x2211;
     return 1;
 }
@@ -254,7 +258,7 @@ static int classify(const uint8_t *p,int outgoing) { // Metadata only; party/blo
     if(!(p[4]&0x80))return 1;
     unsigned cmd=(unsigned)p[8]<<8|p[9];
     unsigned arg=(unsigned)p[10]<<8|p[11];
-    if(cmd==0xcafe&&arg==0x17&&(!memcmp(g.code,"BPR",3)||!memcmp(g.code,"BPG",3))&&
+    if(cmd==0xcafe&&arg==0x17&&MT_title(g.code)!=MT_TITLE_UNKNOWN&&
         (g.link_type==0x1111||g.link_type==0x2233||g.link_type==0x2244)){
         if(outgoing)g.room_exit_sent=1;else g.room_exit_received=1;diagnostic(outgoing?"room-exit-key-tx":"room-exit-key-rx",arg);
     }

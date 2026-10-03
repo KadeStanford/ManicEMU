@@ -11,6 +11,7 @@
 #define MT_CLOSE_QUIET_FRAMES 180 // ~3 seconds at normal GBA speed; reopening cancels finalization.
 enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN, MT_CLOSING, MT_HELD };
 enum MTMode { MT_MODE_UNKNOWN, MT_MODE_TRADE, MT_MODE_SINGLE_BATTLE, MT_MODE_DOUBLE_BATTLE };
+enum MTTitle { MT_TITLE_UNKNOWN, MT_TITLE_RUBY, MT_TITLE_SAPPHIRE, MT_TITLE_EMERALD, MT_TITLE_FIRERED, MT_TITLE_LEAFGREEN };
 typedef struct {
     void (*start)(unsigned role);
     void (*receive)(const void *, size_t, unsigned peer);
@@ -28,6 +29,7 @@ void MT_install(MTSnapshot snapshot, MTNotice stopped, MTNotice error);
 void MT_set_persist(MTPersist persist); // Core thread: current SRAM + post-link backup, never the old checkpoint.
 void MT_enable(int enabled);
 int MT_game_code(const uint8_t code[4]);
+enum MTTitle MT_title(const uint8_t code[4]); // Cartridge header only; no game-memory addresses or save patches.
 int MT_compatible(const uint8_t a[4], const uint8_t b[4]);
 void MT_loaded(const char *path, const uint8_t code[4]);
 void MT_unloaded(void);
@@ -42,7 +44,7 @@ void MT_serial_registers(uint16_t siocnt, uint16_t rcnt); // Transition diagnost
 size_t MT_diagnostics(char *buffer, size_t capacity, uint64_t *revision); // Bounded metadata, no game/save/peer data.
 int MT_complete(void); // Read-only. Completion is applied and announced by MT_frame.
 int MT_finishing(void);
-int MT_terminal_exit(void); // Acknowledged FireRed/LeafGreen room-exit keys + locally disabled hardware.
+int MT_terminal_exit(void); // Acknowledged Gen3 cable-room exit keys + locally disabled hardware.
 int MT_local_closed(void);
 int MT_peer_disconnected(void); // Ordered fences or acknowledged bilateral room exit; never waives serial DATA.
 uint64_t MT_epoch(void); // Guards queued frontend callbacks across games/sessions.

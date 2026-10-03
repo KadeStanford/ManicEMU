@@ -30,8 +30,10 @@ static void report(void){
     printf("REG %04x %04x %04x %04x PHASE %d PENDING %zu RX %llu MODE %d SRAM %u FLUSH %u EPOCH %llu TERMINAL %d\n",read_ioreg(REG_SIOMULTI0),read_ioreg(REG_SIOMULTI1),read_ioreg(REG_SIOMULTI2),read_ioreg(REG_SIOMULTI3),MT_phase(),MT_pending(),(unsigned long long)MT_received(),MT_mode(),((uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))[0],flushes,(unsigned long long)MT_epoch(),MT_terminal_exit());puts("END");fflush(stdout);
 }
 int main(int argc,char **argv){
-    assert(argc==2||argc==3);unsigned role=(unsigned)atoi(argv[1]);assert(role<2);if(argc==3)save_path=argv[2];MT_set_persist(persist);
-    memcpy(rom+0xac,"BPRE",4);rom[0xb2]=0x96;uint32_t entry=0xea00002e,loop=0xeafffffe;memcpy(rom,&entry,4);memcpy(rom+0xc0,&loop,4);memcpy(rom+0x200,"FLASH1M_V",9);
+    assert(argc>=2&&argc<=4);unsigned role=(unsigned)atoi(argv[1]);assert(role<2);
+    if(argc>=3&&strcmp(argv[2],"-"))save_path=argv[2];MT_set_persist(persist);
+    const char *code=argc==4?argv[3]:"BPRE";assert(strlen(code)==4&&MT_game_code((const uint8_t *)code));
+    memcpy(rom+0xac,code,4);rom[0xb2]=0x96;uint32_t entry=0xea00002e,loop=0xeafffffe;memcpy(rom,&entry,4);memcpy(rom+0xc0,&loop,4);memcpy(rom+0x200,"FLASH1M_V",9);
     char path[]="/tmp/manic-gba-peer-XXXXXX";int fd=mkstemp(path);assert(fd>=0&&write(fd,rom,sizeof(rom))==sizeof(rom));close(fd);
     MT_enable(1);retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample(sample);retro_set_audio_sample_batch(audio);retro_set_input_poll(poll);retro_set_input_state(input);retro_init();struct retro_game_info game={path,NULL,0,NULL};assert(retro_load_game(&game));
     uint8_t *battery=retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);battery[0]=0x45;

@@ -63,12 +63,17 @@ static NSMutableDictionary *report;
         NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr5",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player One"] withDiscoveryInfo:one];
         [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player Two"] withDiscoveryInfo:two];
+        NSArray *otherCodes=@[@"AXVE",@"AXPE",@"BPEE"];
+        for(NSUInteger i=0;i<otherCodes.count;i++){
+            NSDictionary *info=@{@"v":@"g3-fc4afeb-mtr5",@"room":[NSString stringWithFormat:@"%032lu",(unsigned long)i+3],@"code":otherCodes[i]};
+            [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"Player %lu",(unsigned long)i+3]] withDiscoveryInfo:info];
+        }
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         UIAlertController *picker=(UIAlertController *)root.presentedViewController;
         assert([picker isKindOfClass:UIAlertController.class]&&[picker.title isEqual:@"Nearby players"]);
         assert(MT_phase()==MT_WAITING&&root.view.subviews.count==2);assert([picker.actions.lastObject.title isEqual:@"Cancel"]);
-        assert(picker.actions.count==3); // Both nearby players are visible.
+        assert(picker.actions.count==6); // All five title profiles are visible, plus Cancel.
         for(UIAlertAction *a in picker.actions)assert(![a.title containsString:@"Host"]&&![a.title containsString:@"Join"]);
         NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSURL *base=[documents URLByAppendingPathComponent:@"ManicTradeBackups"];
@@ -86,7 +91,7 @@ static NSMutableDictionary *report;
         Ivar desired=class_getInstanceVariable(cls,"_dialog");id first=object_getIvar(manager,desired);
         ((void (*)(id,SEL,id))objc_msgSend)(manager,halt,@"Repeated disconnected callback");
         assert(first==object_getIvar(manager,desired)); // One interruption owns ONE recovery alert.
-        report=[@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"rapid_discovery_updates_show_both_players":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES} mutableCopy];
+        report=[@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"rapid_discovery_updates_show_both_players":@YES,@"all_five_gen3_titles_discovered":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES} mutableCopy];
     });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         assert(recovery_presentations==1); // Real pause + two repeated halt notifications own one presentation.

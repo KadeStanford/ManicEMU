@@ -12,8 +12,11 @@ from pathlib import Path
 
 
 class Peer:
-    def __init__(self, role, save=None):
-        self.proc = subprocess.Popen([sys.argv[1], str(role)] + ([str(save)] if save else []), stdin=subprocess.PIPE,
+    def __init__(self, role, save=None, code=None):
+        args = [sys.argv[1], str(role)]
+        if save or code: args.append(str(save) if save else '-')
+        if code: args.append(code)
+        self.proc = subprocess.Popen(args, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True, bufsize=1)
         self.pending = []
         self.acks = []

@@ -5,15 +5,14 @@ session. It targets FireRed, LeafGreen, Ruby, Sapphire and Emerald (game-code
 prefixes BPR, BPG, AXV, AXP and BPE). Original Game Boy Red/Blue are a different
 protocol; the earlier GB experiment is archived under `GBLink`.
 
-The user reported a successful two-phone FireRed trade with v0.4 and that the
-result persisted after saving. They also reported two consecutive "Link paused"
-prompts while leaving through FireRed's own trade-room exit, and no discovery
-prompt on a subsequent Colosseum visit. Cold app restart was not established.
-v0.5 recognizes FireRed/LeafGreen's explicit exit-room keys and direct CloseLink,
-returns the session to IDLE, and gives each interruption one recovery alert.
-**The revised exit and battle behavior still needs physical two-phone testing.**
-Synthetic traces reproduce the stale-session defect and exercise the fix; they
-do not execute Pokemon game logic or establish actual battle compatibility.
+The user confirmed a FireRed trade/save and quiet room exit in v0.5, plus a
+battle when it was the first link after loading. Battle after trade did not
+rediscover, and ordinary battle-result/save pauses showed recovery prompts.
+v0.6 fixes completed-session bootstrap interrupts and adds cooperative frontend
+HOLD/RELEASE controls. It also extends the shared cable-room lifecycle to all
+five titles. See [the compatibility and evidence matrix](COMPATIBILITY.md).
+**v0.6 still needs physical two-phone testing.** Synthetic traces exercise real
+gpSP, not Pokemon game logic; they do not establish actual game compatibility.
 
 ## Use with existing progress
 
@@ -37,8 +36,8 @@ do not execute Pokemon game logic or establish actual battle compatibility.
    the current result. Keep both apps alive during the link. Use normal speed; avoid
    slow motion. The core inhibits fast-forward when the frontend supports the
    libretro override and rejects one-sided rewind/state loading during a link.
-   Keep both games open for at least three seconds after leaving the cable club
-   so both idle barriers and current-save writes can complete.
+   Keep both games open until the normal room exit finishes and current-save
+   writes complete. Supported room exits use explicit bilateral game intent.
 
 All GBA cores in upstream Manic use the same `sdmc/saves/gba/<game-name>.sav`
 location and `.sav` extension. Pokemon's 128KiB raw Flash battery data needs no
@@ -61,8 +60,12 @@ shows a save warning and retains current memory rather than rolling it back.
 Neither the user-supplied IPA nor files on connected devices are edited by the
 packaging/build scripts.
 
-Disconnect/backgrounding or Manic's public pause action suspends the cable;
-reconnect resumes the existing frontend through its public bridge. A 1.5-second receive timeout occurs
+Disconnect/backgrounding suspends the cable and requires explicit recovery.
+Manic's ordinary public pause/resume instead sends ordered HOLD/RELEASE, freezes
+both cores while either frontend is held, and resumes without a recovery alert.
+The local core waits for its RELEASE acknowledgment before advancing. Ordinary
+resume cannot clear a genuine transport suspension. Reconnect resumes the
+existing frontend through its public bridge. A 1.5-second receive timeout occurs
 before gpSP's normal four-second peer timeout. Reconnect uses the same peer,
 session identity and retained sequence queues. Duplicate retransmissions are
 acknowledged without being executed twice. A lost/overflowed core packet requires
@@ -83,7 +86,7 @@ command alone identifies a final exit. v0.3 incorrectly treated the first toggle
 as final. The source-derived reproduction failed at `CLOSING` with one premature
 save flush while its prior transport tests all passed.
 
-v0.4 and v0.5 send ordered hardware OFF/ON notifications while preserving the session,
+v0.4 and later send ordered hardware OFF/ON notifications while preserving the session,
 roles and automatic pre-link checkpoint. It stops fake serial IRQs while hardware
 is disabled and resets the game-side handshake engine when it reopens. A final
 exit requires both games' `5FFF` commands, both hardware OFF notifications, all
@@ -95,11 +98,11 @@ completion. The quiet window is an explicitly bounded protocol heuristic, not
 cycle-exact detection of game intent. A ROM hack that delays reopening beyond
 both quiet deadlines remains outside the verified trace.
 
-FireRed/LeafGreen's terminal room exit is a separate path. In the cable-club
+All five supported titles' terminal room exit is a separate path. In the cable-club
 room (`1111`, `2233` or `2244`), both players send `CAFE/17`
 (`LINK_KEY_CODE_EXIT_ROOM`), then the exit script calls CloseLink directly,
 without sending `5FFF`. v0.4 missed this and stayed paired forever, blocking the
-next discovery request. v0.5 finishes once those commands and earlier DATA are
+next discovery request. v0.6 applies the shared exit rule to all five titles and finishes once those commands and earlier DATA are
 acknowledged, both hardware OFF controls are accepted, and the inbox is drained.
 It uses ordered CLOSE fences and the same core-owned save persistence; there is
 no quiet timer on this explicit path. Once acknowledged bilateral exit intent
@@ -107,7 +110,10 @@ and local hardware closure are known, a missing peer OFF/CLOSE control from a
 transport disconnect can be treated as expected. Unacknowledged DATA still
 requires recovery. Reopening hardware clears all room-exit intent. A single exit
 key, EXIT_SEAT (`1D`) or a non-room link type cannot claim a successful ending.
-The bounded quiet fallback above remains for other Gen3 endings/handoffs.
+The bounded quiet fallback remains for other endings. Known menu/animation/
+battle-return link types (1122/1133/1144/2211) cannot trigger it even when they
+remain hardware-off beyond that window. Final IDLE permits the game's initial
+zero-word bootstrap IRQ again, so the next handshake can request fresh discovery.
 
 Recovery UI has one alert per interruption. Repeated timeout, pause and
 disconnect notifications reuse it; queued alerts are checked again before
@@ -152,8 +158,8 @@ master schedule (5242 emulated cycles), busy-bit/IRQ behavior and both direction
 of actual serial words across isolated engines. Network packets carry those
 24-byte serial frames inside a sequenced 56-byte envelope. Encrypted
 MultipeerConnectivity handles discovery and reliable local transport. MTR1 wire
-version 4 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL and QUIET in one sequence. Both
-phones must use v0.5; older wire versions cannot pair with it. ROM and
+version 5 carries DATA, ACK, CLOSE, PAUSE, READY, SERIAL, QUIET, HOLD and RELEASE
+in one sequence. Both phones must use v0.6; older wire versions cannot pair with it. ROM and
 battery bytes are never sent to the other player. Protocol version, peer/session
 identity, game-code family and language code must match the compatibility checks.
 The game itself still determines inter-title trade eligibility.
@@ -192,6 +198,13 @@ reconnect/restore dialog, the active frontend save path, and separate pre/post
 backups. The simulator uses a small test frontend;
 it does not launch the full original Manic app or run Pokemon game logic.
 See [the trace provenance and limits](Tests/TRANSITION_TRACE.md).
+
+v0.6 adds same-core sequential trade/battle/result/save/room/reentry checks,
+release-ACK and real-drop-during-hold recovery checks, and a 25 ordered English
+header-pair matrix through Trade/Single/Double (75 activity traces). The UIKit
+stub verifies all five titles in discovery and normal result pauses without
+recovery UI. Neither the simulator stub nor protocol fixtures run the full
+original Manic app or establish real two-device game combinations.
 
 Download `ManicGBA-Trade-unsigned` from a successful workflow run. Keep both
 framework directory names and contents. On Windows/macOS/Linux with Python 3:

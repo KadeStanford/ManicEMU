@@ -20,6 +20,15 @@ int main(void){
     battery[0]=0x45;state[0]=0x67;MT_install(snap,ended,error);MT_set_persist(persist);MT_enable(1);
     assert(MT_game_code((uint8_t *)"BPRE"));assert(!MT_game_code((uint8_t *)"ABCD"));
     assert(MT_compatible((uint8_t *)"BPRE",(uint8_t *)"AXPE"));assert(!MT_compatible((uint8_t *)"BPRE",(uint8_t *)"BPRJ"));
+    const char *codes[]={"AXVE","AXPE","BPEE","BPRE","BPGE"};
+    for(unsigned i=0;i<5;i++){
+        assert(MT_title((const uint8_t *)codes[i])==(enum MTTitle)(MT_TITLE_RUBY+i));
+        for(unsigned j=0;j<5;j++)assert(MT_compatible((const uint8_t *)codes[i],(const uint8_t *)codes[j]));
+        uint8_t foreign[4];memcpy(foreign,codes[i],4);foreign[3]='J';
+        assert(!MT_compatible((const uint8_t *)codes[i],foreign));
+        foreign[3]='0';assert(!MT_game_code(foreign));
+    }
+    assert(MT_title(NULL)==MT_TITLE_UNKNOWN&&!MT_game_code((const uint8_t *)"ABCE"));
     MT_loaded("/synthetic.gba",(uint8_t *)"BPRE");assert(MT_frame(&gba));MT_request();assert(!MT_frame(&gba));assert(snapshots==1);
     uint8_t session[16]={1},data[24]={ 'M','P','K','1',0,0,0,1 },packet[56],ack[56];
     MT_connect(0,session);assert(MT_frame(&gba));MT_send(0xffff,data,24);assert(MT_pending()==1&&MT_sent()==1);
