@@ -373,6 +373,7 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
 static void copyPresentedFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer) {captureFrame(drawable,layer,nil);}
 static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
     CAMetalLayer *layer=objc_getAssociatedObject(drawable,sourceKey);
+    if(!layer||!MASManager.shared.plan)return;
     id<MTLCommandBuffer> buffer=(__bridge id)scheduledBuffer;
     NSMutableArray *frames=buffer?objc_getAssociatedObject(buffer,framesKey):nil;
     if(!frames||layer!=MASManager.shared.plan.source||[objc_getAssociatedObject(drawable,encodedKey) boolValue])return;
