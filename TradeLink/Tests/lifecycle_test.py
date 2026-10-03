@@ -19,7 +19,10 @@ def hold_roundtrip(master, slave, owner='master'):
         if len(active)==2 and index==0:
             settle(master,slave);assert master.phase==slave.phase==9, 'other frontend is still paused'
     settle(master,slave)
-    for peer in (master,slave):peer.command('frame');assert peer.phase==3
+    # This ROM has no serial IRQ handler. Preserve manually driven word
+    # alignment after release; executing free slave clocks would consume a
+    # word without a matching game-side master transfer.
+    for peer in (master,slave):peer.command('status');assert peer.phase==3
 
 
 def sequential():
