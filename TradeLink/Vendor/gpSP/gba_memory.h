@@ -247,6 +247,7 @@ extern u8 ws_cyc_nseq[16][2];
 
 extern u32 gamepak_size;
 extern u32 gamepak_buffer_count;
+extern u8 *gamepak_buffers[32];
 extern bool gamepak_mini_materialized;
 extern bool gamepak_header_nonstandard;
 extern char gamepak_filename[512];
