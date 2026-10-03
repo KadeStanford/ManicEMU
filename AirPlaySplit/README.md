@@ -21,3 +21,18 @@ Azahar for the replacement 3GX core and split display support.
 frontend and checks real Metal crop output pixels. These tests do not establish
 physical AirPlay behavior, a game's touchscreen behavior, or Vapecord execution.
 Physical device testing is required before calling the resulting IPA verified.
+
+Run `37157254569` passed 54 simulator checks, including 120 matched producer
+frames with casting disabled versus a blocked display queue, for DS and 3DS at
+1x, 2x and 4x. Each blocked case held three snapshots and dropped the following
+117 captures while producer command buffers completed. `performance.json`
+records measured timings; these synthetic comparisons do not measure physical
+AirPlay source-drawable pacing.
+
+The optional `MASAirPlayDiagnostics` app plist flag emits public numeric counters
+once per second: source drawable wait, copy encoding/completion time, sink
+drawable wait, captures/drops, allocations, in-flight snapshots and presentations.
+It contains no game paths, save contents or plugin payloads. The source drawable
+still comes from the original external-screen layer, so a bounded snapshot pool
+alone does not prove that emulation is independent of AirPlay pacing. Physical
+DS and 3DS slowdown that clears on disconnect remains under investigation.

@@ -32,3 +32,15 @@ lowercase fallback is not present in this original executable. A `.3gz` or
 Machine-code verification and packaging checks cannot establish physical plugin
 execution. That requires launching the existing game and opening Vapecord's menu
 on the user's device. Original-core boot is already confirmed independently.
+
+The private integrated simulator comparison at run `37157015313` executed the
+matching original core with Software rendering. The enabled-loader job completed
+3,600 `retro_run` calls with 3,495 nonblack frames and no native fatal signal.
+Its encrypted frame at call 3,000 visibly shows Vapecord's first-run notice.
+This establishes plugin code execution in that simulator configuration; it does
+not establish Select-menu operation or physical Vulkan compatibility. The phone
+uses Vulkan and previously exited with SIGSEGV after the uppercase plugin copy
+was introduced. The added diagnostic copy is disabled pending a controlled test.
+
+Private inputs and detailed runtime evidence are absent from the source branch.
+Public diagnostic artifacts contain a sanitized summary and encrypted evidence.
