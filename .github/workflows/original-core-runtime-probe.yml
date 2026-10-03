@@ -13,6 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
+      - name: Compile integrated game diagnostic frontend
+        run: |
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          mkdir -p OriginalCoreRepair/Tests/build-probe
+          xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
+            -fobjc-arc -Wall -Werror OriginalCoreRepair/Tests/simulator_game_probe.m \
+            -framework UIKit -framework Foundation -o OriginalCoreRepair/Tests/build-probe/GameProbe
       - name: Probe original core with untouched code on simulator
         run: bash OriginalCoreRepair/Tests/simulator-probe.sh
       - uses: actions/upload-artifact@v4
