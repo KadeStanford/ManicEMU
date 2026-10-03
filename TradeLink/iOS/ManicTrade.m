@@ -10,7 +10,7 @@
 #include "FrontendSave.h"
 #include <dlfcn.h>
 
-static NSString *const TradeProtocol = @"g3-fc4afeb-mtr2";
+static NSString *const TradeProtocol = @"g3-fc4afeb-mtr3";
 static NSString *const Service = @"manic-trade";
 static void resumeFrontend(void) {
     Class cls=NSClassFromString(@"LibretroCore");SEL shared=NSSelectorFromString(@"sharedInstance");
@@ -68,6 +68,8 @@ static NSString *gameTitle(NSString *code) {
     NSString *_epoch;
     uint64_t _coreEpoch;
     NSString *_saveWarning;
+    uint64_t _diagnosticRevision;
+    CFTimeInterval _diagnosticAt;
 }
 + (instancetype)shared { static ManicTrade *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v; }
 - (instancetype)init {
@@ -93,6 +95,11 @@ static NSString *gameTitle(NSString *code) {
     _ending=NO;_fatal=NO;_ready=_peerReady=NO;_cursor=0;_lastPhase=MT_WAITING;_saveWarning=nil;
     uuid_t bytes;[NSUUID.UUID getUUIDBytes:bytes];_room=[NSData dataWithBytes:bytes length:16];
     _meta=@{@"v":TradeProtocol,@"room":hex(_room),@"code":code};
+    NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *logs=[documents URLByAppendingPathComponent:@"ManicTradeDiagnostics" isDirectory:YES];
+    NSData *previous=[NSData dataWithContentsOfURL:[logs URLByAppendingPathComponent:@"latest.txt"]];
+    if(previous.length&&previous.length<=24576)[previous writeToURL:[logs URLByAppendingPathComponent:@"previous.txt"] options:NSDataWritingAtomic error:nil];
+    _diagnosticRevision=0;_diagnosticAt=0;[self writeDiagnostics];
     _identity=[[MCPeerID alloc] initWithDisplayName:[NSString stringWithFormat:@"%@ · %@",UIDevice.currentDevice.model,[_epoch substringToIndex:4]]];
     // Copy only the current game's core-owned battery/checkpoint; no file scans.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -180,7 +187,16 @@ static NSString *gameTitle(NSString *code) {
     }]];[self show:a];
 }
 - (void)background:(NSNotification *)note { if(_partner&&!_ending)[self halt:@"Return to both games, then reconnect with the same player."]; }
+- (void)writeDiagnostics {
+    char buffer[24576];uint64_t revision=0;size_t length=MT_diagnostics(buffer,sizeof(buffer),&revision);
+    if(!length||revision==_diagnosticRevision)return;
+    NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *logs=[documents URLByAppendingPathComponent:@"ManicTradeDiagnostics" isDirectory:YES];
+    if(![NSFileManager.defaultManager createDirectoryAtURL:logs withIntermediateDirectories:YES attributes:nil error:nil])return;
+    if([[NSData dataWithBytes:buffer length:length] writeToURL:[logs URLByAppendingPathComponent:@"latest.txt"] options:NSDataWritingAtomic error:nil])_diagnosticRevision=revision;
+}
 - (void)tick:(NSTimer *)timer {
+    CFTimeInterval diagnosticNow=CACurrentMediaTime();if(diagnosticNow-_diagnosticAt>1){_diagnosticAt=diagnosticNow;[self writeDiagnostics];}
     if(_ending||_coreEpoch!=MT_epoch()||!_partner||![_session.connectedPeers containsObject:_partner])return;
     CFTimeInterval now=CACurrentMediaTime();
     enum MTPhase phase=MT_phase();
@@ -198,6 +214,7 @@ static NSString *gameTitle(NSString *code) {
     static unsigned count=0;if(++count%40==0)[self control:@"PING"];
 }
 - (void)ended:(NSString *)reason {
+    [self writeDiagnostics];
     if([reason isEqual:@"Pre-trade checkpoint restored"]){[self notice:reason message:@"Back out of the cable club. Your automatic battery backup is also kept in ManicTradeBackups."];return;}
     if(_ending&&MT_phase()!=MT_OFF)return;
     if(MT_phase()==MT_OFF||[reason isEqual:@"Link cancelled"]){[self cleanup];return;}

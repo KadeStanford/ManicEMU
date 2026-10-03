@@ -98,6 +98,7 @@ def settle(master, slave):
 
 
 def handshake(master, slave):
+    master.command('master b9a0') # Also starts a fresh game-side subconnection.
     relay(master, slave, True)
     slave.command('slave b9a0 280065')
     relay(slave, master)
@@ -177,11 +178,14 @@ def lifecycle():
                 first.command('leave')
                 if order!='both':
                     settle(m,s)
-                    assert first.phase==second.phase==8
-                    first.command('frame');assert first.flushes==1
+                    assert first.phase==second.phase==3
+                    first.command('frames 200');assert first.flushes==0, 'one-sided idle finalized'
                 second.command('leave');settle(m,s)
+                for peer in (m,s):peer.command('frames 180')
+                settle(m,s)
                 for peer in (m,s):
                     peer.command('frame');assert peer.phase==1 and peer.flushes==1
+                    peer.command('stopped')
                     peer.command('disconnected');assert peer.expected==1
                     peer.command('resume');peer.command('checksave');assert peer.phase==1
                 for path in paths:assert len(path.read_bytes())==131072 and path.read_bytes()[0]==0x99
@@ -203,7 +207,7 @@ def lifecycle():
         for peer in (m,s):peer.command('restore');assert peer.sram==0x45 and peer.phase==6
     finally:close(m);close(s)
     print('PASS: real-core trade/single/double command + 24 block/turn frames, '
-          '140-frame reconnect burst with engine backpressure, three bilateral reconnect rounds, parent/child/simultaneous IRQ-disable exits, '
+          '140-frame reconnect burst with engine backpressure, three bilateral reconnect rounds, bilateral quiet parent/child/simultaneous exits, '
           'no rollback/rejoin after ending, persisted SRAM in new processes, '
           'battle disconnect retains explicit checkpoint recovery')
 

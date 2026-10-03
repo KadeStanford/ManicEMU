@@ -8,6 +8,7 @@
 #define MT_DATA_SIZE 24
 #define MT_PACKET_SIZE 56
 #define MT_QUEUE_SIZE 512
+#define MT_CLOSE_QUIET_FRAMES 180 // ~3 seconds at normal GBA speed; reopening cancels finalization.
 enum MTPhase { MT_OFF, MT_IDLE, MT_WAITING, MT_LINKED, MT_SUSPENDED, MT_RESTORE, MT_CANCELLED, MT_BROKEN, MT_CLOSING };
 enum MTMode { MT_MODE_UNKNOWN, MT_MODE_TRADE, MT_MODE_SINGLE_BATTLE, MT_MODE_DOUBLE_BATTLE };
 typedef struct {
@@ -36,6 +37,8 @@ int MT_active(void);
 enum MTPhase MT_phase(void);
 void MT_request(void); // Called at the first Gen3 cable handshake, on core thread.
 void MT_leave(void);
+void MT_serial_state(int enabled); // Game hardware toggle, NOT an immediate session end.
+size_t MT_diagnostics(char *buffer, size_t capacity, uint64_t *revision); // Bounded metadata, no game/save/peer data.
 int MT_complete(void); // Read-only. Completion is applied and announced by MT_frame.
 int MT_finishing(void);
 int MT_local_closed(void);

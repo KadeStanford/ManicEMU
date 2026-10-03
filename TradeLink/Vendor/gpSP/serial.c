@@ -80,8 +80,8 @@ cpu_alert_type write_rcnt(u16 value) {
   u32 nwmode = get_serial_mode(read_ioreg(REG_SIOCNT), value);
 
   write_ioreg(REG_RCNT, value);
-  if (MT_active() && get_serial_mode(read_ioreg(REG_SIOCNT), value) != SERIAL_MODE_MULTI)
-    MT_leave();
+  if (MT_active())
+    MT_serial_state(nwmode == SERIAL_MODE_MULTI && (read_ioreg(REG_SIOCNT) & 0x4000));
 
   switch (nwmode) {
   case SERIAL_MODE_GPIO:
@@ -112,11 +112,15 @@ cpu_alert_type write_siocnt(u16 value) {
   u16 newval = (value & 0x7F8B) | (oldval & 0x0004);
   u32 pvmode = get_serial_mode(oldval, read_ioreg(REG_RCNT));
   u32 nwmode = get_serial_mode(newval, read_ioreg(REG_RCNT));
-  // Gen3 DisableSerial writes SIO_MULTI_MODE (0x2000), clearing IRQ while
-  // retaining multiplayer mode. Merely checking a mode change misses the exit.
-  if (MT_active() && pvmode == SERIAL_MODE_MULTI &&
-      (nwmode != SERIAL_MODE_MULTI || ((oldval & 0x4000) && !(newval & 0x4000))))
-    MT_leave();
+  // DisableSerial is also used between room/menu/animation/battle phases.
+  // Report ordered hardware state without tearing down the paired transport.
+  if (MT_active()) {
+    MT_serial_state(nwmode == SERIAL_MODE_MULTI && (newval & 0x4000));
+    if (!(newval & 0x4000) || nwmode != SERIAL_MODE_MULTI)
+      serial_irq_cycles = 0;
+    else if (pvmode == SERIAL_MODE_MULTI && !(oldval & 0x4000))
+      serialproto_reset(); // Fresh game-side handshake, same network session.
+  }
 
   switch (nwmode) {
   case SERIAL_MODE_NORMAL:
@@ -209,6 +213,8 @@ u32 serial_next_event() {
 // Account for consumed cycles and return if a serial IRQ should be raised.
 bool update_serial(unsigned cycles) {
   if (MT_active() && MT_local_closed()) return false;
+  if (MT_active() && (get_serial_mode(read_ioreg(REG_SIOCNT), read_ioreg(REG_RCNT)) != SERIAL_MODE_MULTI || !(read_ioreg(REG_SIOCNT) & 0x4000)))
+    return false; // Disabled hardware must not consume words or fake IRQs.
   if (MT_active() && (MT_phase() == MT_WAITING || MT_phase() == MT_SUSPENDED || MT_phase() == MT_BROKEN))
     return false; // No handshake IRQ can complete before pairing/backup.
   // Might wanna check if the connected device has some update (IRQ).

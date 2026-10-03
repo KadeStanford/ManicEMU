@@ -68,5 +68,26 @@ int main(void){
     MT_set_persist(fail_save);battery[0]=0x99;state[0]=0xaa;unsigned before=errors;
     MT_leave();roundtrip();assert(MT_frame(&gba)&&MT_phase()==MT_IDLE&&errors==before+1);
     assert(battery[0]==0x99&&state[0]==0xaa);MT_restore();assert(MT_phase()==MT_IDLE);MT_unloaded();
-    puts("PASS: Gen3 compatibility, automatic checkpoint, duplicate/replay/session guards, pause/resume, battery + full-state rollback");
+    // Cancellable hardware-idle window. Ordered OFF/ON is sequenced with DATA:
+    // stale replay cannot replace a newer state, pause halts finalization, and
+    // an unacknowledged close command cannot be committed as a completed link.
+    battery[0]=0x45;state[0]=0x67;MT_set_persist(persist);MT_loaded("/synthetic.gba",(uint8_t *)"BPRE");
+    MT_request();assert(!MT_frame(&gba));MT_connect(0,session);assert(MT_frame(&gba));
+    MT_serial_state(1);roundtrip();unsigned prior=flushes;
+    uint8_t closing[24]={'M','P','K','1',0x80,0,0,2,0x5f,0xff};
+    MT_send(0xffff,closing,24);MT_serial_state(0);roundtrip();
+    for(unsigned i=0;i<MT_CLOSE_QUIET_FRAMES-1;i++)assert(MT_frame(&gba)&&MT_phase()==MT_LINKED&&flushes==prior);
+    MT_serial_state(1);roundtrip();assert(MT_frame(&gba)&&MT_phase()==MT_LINKED); // Reopen at the deadline cancels.
+    MT_serial_state(0);roundtrip();for(unsigned i=0;i<200;i++)assert(MT_frame(&gba)&&MT_phase()==MT_LINKED&&flushes==prior);
+    MT_serial_state(1);roundtrip();MT_send(0xffff,closing,24);MT_serial_state(0);
+    uint64_t cursor=0;while(MT_next_packet(cursor,packet)){cursor=0;for(unsigned j=24;j<32;j++)cursor=(cursor<<8)|packet[j];assert(MT_receive_packet(packet,56,ack)>=0);}
+    for(unsigned i=0;i<200;i++)assert(MT_frame(&gba)&&MT_phase()==MT_LINKED&&flushes==prior);
+    roundtrip();MT_suspend();roundtrip();for(unsigned i=0;i<200;i++)assert(!MT_frame(&gba)&&flushes==prior);
+    MT_resume();roundtrip();battery[0]=0x99;state[0]=0xaa;
+    for(unsigned i=0;i<MT_CLOSE_QUIET_FRAMES;i++)assert(MT_frame(&gba));
+    roundtrip();assert(MT_frame(&gba)&&MT_complete()&&flushes==prior+1);
+    char log[24576];uint64_t revision;size_t bytes=MT_diagnostics(log,sizeof(log),&revision);
+    assert(bytes>0&&bytes<sizeof(log)&&revision>0&&strstr(log,"serial-off")&&strstr(log,"complete"));
+    assert(!strstr(log,"/synthetic.gba"));char tiny[1];assert(MT_diagnostics(tiny,1,NULL)==0&&tiny[0]==0);MT_unloaded();
+    puts("PASS: Gen3 compatibility, automatic checkpoint, duplicate/replay/session guards, bilateral idle/reopen/ACK/deadline safety, bounded diagnostics, pause/resume, battery + full-state rollback");
 }
