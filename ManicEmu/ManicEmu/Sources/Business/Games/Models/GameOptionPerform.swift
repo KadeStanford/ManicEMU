@@ -11,6 +11,7 @@ import IceCream
 import Kingfisher
 import RealmSwift
 import Haptica
+import Darwin
 
 extension GameOption {
     func performAction(with games: [Game],
@@ -20,6 +21,22 @@ extension GameOption {
         guard let firstGame = games.first else { return }
         
         switch self {
+        case .gbLink:
+            guard firstGame.gameType == .gb,
+                  let path = Bundle.main.path(forResource: "ManicGBLink", ofType: "framework", inDirectory: "Frameworks"),
+                  let library = dlopen(path + "/ManicGBLink", RTLD_NOW | RTLD_LOCAL),
+                  let symbol = dlsym(library, "MGLPresent") else {
+                UIView.makeToast(message: "Build and embed the ManicGBLink framework first. See GBLink/README.md in this fork.")
+                return
+            }
+            typealias PresentLink = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void
+            let present = unsafeBitCast(symbol, to: PresentLink.self)
+            let rom = firstGame.romUrl as NSURL
+            let save = FileManager.default.fileExists(atPath: firstGame.gameSaveUrl.path) ? firstGame.gameSaveUrl as NSURL : nil
+            // The library retains these objects before returning. It reads both
+            // files, and exports new SRAM copies without changing core settings.
+            present(nil, Unmanaged.passUnretained(rom).toOpaque(), save.map { Unmanaged.passUnretained($0).toOpaque() })
+
         case .rename:
             GameInfoView.show(readyAction: .rename, game: firstGame)
             

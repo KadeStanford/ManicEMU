@@ -85,7 +85,8 @@ enum GameOption: Int, CaseIterable {
          slowMotion,
          ndsLidToggle,
          editLink,
-         skinButtonBinding
+         skinButtonBinding,
+         gbLink
         
     //When adding a new option, make sure to add it at the end; otherwise, it might affect the existing Prefference configurations
     
@@ -225,7 +226,7 @@ enum GameOption: Int, CaseIterable {
                 .symbolImage(R.image.joycon_iconSymbols())
         case .rewind:
                 .symbolImage(R.image.rewind_iconSymbols())
-        case .netplay:
+        case .netplay, .gbLink:
                 .symbolImage(R.image.online_iconSymbols())
         case .symbianDevice:
                 .symbol(.candybarphone)
@@ -378,6 +379,8 @@ enum GameOption: Int, CaseIterable {
             R.string.localizable.rewind()
         case .netplay:
             R.string.localizable.netplay()
+        case .gbLink:
+            "Game Boy Link (local)"
         case .symbianDevice:
             R.string.localizable.symbianFirmwareChoosing()
         case .coverScraping:
@@ -1116,6 +1119,11 @@ enum GameOption: Int, CaseIterable {
         
         var allOptions = Set(GameOption.allCases)
         allOptions.remove(.editLink)
+        // A separate linked pair starts from battery saves. Do not run it over
+        // the normal emulator or advertise it for GBA titles like FireRed.
+        if game.gameType != .gb || scene == .gaming {
+            allOptions.remove(.gbLink)
+        }
         
         if GameType.gameTypes(multiPlatformFileExtension: game.fileExtension).count == 0 {
             allOptions.remove(.platformChange)

@@ -6,6 +6,7 @@
 	<array>
 		<string>_manicemu._tcp</string>
 		<string>_ra_netplay._tcp</string>
+		<string>_manic-gblink._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Manic EMU needs access to your local network to find and connect with other devices for online gaming.</string>

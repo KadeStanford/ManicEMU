@@ -7,6 +7,7 @@ set(SOURCES gb sgb apu memory mbc timing display camera sm83_cpu joypad
 list(TRANSFORM SOURCES PREPEND "${SB}/Core/")
 list(TRANSFORM SOURCES APPEND ".c")
 add_library(mgl STATIC Core/MGLCore.c ${SOURCES})
+set_source_files_properties(${SOURCES} PROPERTIES COMPILE_DEFINITIONS GB_INTERNAL)
 target_include_directories(mgl PUBLIC Core ${SB}/Core)
 target_compile_definitions(mgl PUBLIC GB_DISABLE_TIMEKEEPING GB_DISABLE_REWIND
     GB_DISABLE_DEBUGGER GB_DISABLE_CHEATS GB_VERSION="1.0.3" GB_COPYRIGHT_YEAR="2026")
