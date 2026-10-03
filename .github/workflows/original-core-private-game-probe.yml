@@ -1,0 +1,111 @@
+name: Private original-core game and plugin diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_enabled:
+        description: Enable the existing 3GX loader in the isolated core copy
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  private-game:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Prepare and verify private inputs without printing credentials
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,urllib.request,zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'manic-private-inputs'
+          root.mkdir()
+          config=json.loads(os.environ['PRIVATE_INPUTS'])
+          def download(item,dest):
+              digest=hashlib.sha256();count=0
+              try:
+                  with urllib.request.urlopen(item['url'],timeout=60) as src,dest.open('xb') as out:
+                      while chunk:=src.read(4*1024*1024):
+                          out.write(chunk);digest.update(chunk);count+=len(chunk)
+              except Exception:
+                  raise RuntimeError('Private input transfer failed; refresh its expiring link') from None
+              assert digest.hexdigest()==item['sha256'] and count==item['bytes'], 'Private input verification failed'
+          with (root/'game.cxi').open('xb') as game:
+              for i,item in enumerate(config['parts']):
+                  part=root/f'part{i}'
+                  download(item,part)
+                  with part.open('rb') as f:
+                      while chunk:=f.read(4*1024*1024):game.write(chunk)
+                  part.unlink()
+          with (root/'game.cxi').open('rb') as f:
+              assert hashlib.file_digest(f,'sha256').hexdigest()==config['game_sha256']
+          download(config['plugin'],root/'plugin.zip')
+          with zipfile.ZipFile(root/'plugin.zip') as z:
+              for entry in z.infolist():
+                  assert (root/entry.filename).resolve().is_relative_to(root.resolve())
+              z.extractall(root)
+          print('Private game and plugin copies verified; no saves or keys imported.')
+          PY
+      - name: Compile integrated diagnostic frontend
+        run: |
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          mkdir -p OriginalCoreRepair/Tests/build-probe
+          xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" \
+            -fobjc-arc -Wall -Werror OriginalCoreRepair/Tests/simulator_game_probe.m \
+            -framework UIKit -framework Foundation -o OriginalCoreRepair/Tests/build-probe/GameProbe
+      - name: Verify original core initialization
+        run: bash OriginalCoreRepair/Tests/simulator-probe.sh
+      - name: Execute private game and supplied plugin
+        env:
+          MANIC_PROBE_PLUGIN_ENABLED: ${{ inputs.plugin_enabled && '1' || '0' }}
+        run: |
+          bash OriginalCoreRepair/Tests/simulator-game-probe.sh \
+            "$RUNNER_TEMP/manic-private-inputs/game.cxi" \
+            "$RUNNER_TEMP/manic-private-inputs/sdmc/luma/plugins/0004000000198E00/Vapecord_Public.3gx"
+      - name: Summarize diagnostic state without publishing private runtime logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,struct,re
+          root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
+          state=root/'private-game-probe.json'
+          result=json.loads(state.read_text()) if state.exists() else {'game_state_unavailable':True}
+          log=root/'private-core-runtime.log'
+          text=log.read_text(errors='replace') if log.exists() else ''
+          # Match known stage markers only; never publish the full private log.
+          result['plugin_load_marker_seen']=bool(re.search(r'Trying to load plugin',text))
+          result['plugin_load_error_seen']=bool(re.search(r'Failed to load 3GX plugin',text))
+          result['unimplemented_svc_seen']=bool(re.search(r'unimplemented SVC|Unimplemented SVC',text))
+          fault=root/'private-fatal-signal.bin'
+          if fault.exists() and fault.stat().st_size==64:
+              r=struct.unpack('<8Q',fault.read_bytes())
+              result['fatal_signal']=r[1]
+              result['fault_address']=hex(r[2])
+              images=result.get('loaded_images',[])
+              for label,address in [('pc',r[4]),('lr',r[5])]:
+                  image=next((i for i in images if i['base']<=address<i['base']+i['text_size']),None)
+                  result[label+'_image']=image['name'] if image else None
+                  result[label+'_image_offset']=hex(address-image['base']) if image else None
+          result.pop('loaded_images',None)
+          (root/'private-game-summary.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: private-game-sanitized-diagnostic-summary
+          path: OriginalCoreRepair/Tests/build-probe/private-game-summary.json
+      - name: Remove runner-only private diagnostic copies
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'manic-private-inputs'
+          if root.is_dir():shutil.rmtree(root)
+          for name in ['private-core-runtime.log','private-fatal-signal.bin','private-game-probe.json']:
+              p=pathlib.Path('OriginalCoreRepair/Tests/build-probe')/name
+              p.unlink(missing_ok=True)
+          PY

@@ -4,6 +4,8 @@
 #import <signal.h>
 #import <sys/ucontext.h>
 #import <fcntl.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 #import <unistd.h>
 #import <stdarg.h>
 #include <stdbool.h>
@@ -110,6 +112,21 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
         void (*setinput)(void *)=dlsym(h,"retro_set_input_state");
         if(!init||!run||!load||!deinit||!unload||!setenv||!setvideo||!setaudio||!setbatch||!setpoll||!setinput){checkpoint(@"missing_entrypoint");return;}
         Dl_info location={0};dladdr(init,&location);coreBase=(uintptr_t)location.dli_fbase;
+        NSMutableArray *images=[NSMutableArray new];
+        for(uint32_t i=0;i<_dyld_image_count();i++){
+            const struct mach_header_64 *header=(const void *)_dyld_get_image_header(i);
+            if(header->magic!=MH_MAGIC_64)continue;
+            const uint8_t *command=(const uint8_t *)(header+1);uint64_t textSize=0;
+            for(uint32_t j=0;j<header->ncmds;j++){
+                const struct load_command *load=(const void *)command;
+                if(load->cmd==LC_SEGMENT_64){const struct segment_command_64 *seg=(const void *)command;
+                    if(!strcmp(seg->segname,"__TEXT"))textSize=seg->vmsize;}
+                command+=load->cmdsize;
+            }
+            [images addObject:@{@"name":@(_dyld_get_image_name(i)).lastPathComponent,
+                @"base":@((uintptr_t)header),@"text_size":@(textSize)}];
+        }
+        report[@"loaded_images"]=images;
         setenv(environment);setvideo(video);setaudio(audio);setbatch(audioBatch);setpoll(poll);setinput(input);
         checkpoint(@"retro_init");init();checkpoint(@"retro_load_game");
         NSString *gamePath=[root stringByAppendingPathComponent:@"input/game.cxi"];

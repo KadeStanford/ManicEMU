@@ -7,11 +7,11 @@ app="$build/GameProbe.app"
 mkdir -p "$app"
 cp "$build/GameProbe" "$app/GameProbe"
 python3 - "$build/original-core-download.dylib" "$app/game-probe-core.dylib" <<'PY'
-import hashlib,pathlib,struct,sys
+import hashlib,pathlib,struct,sys,os
 b=pathlib.Path(sys.argv[1]).read_bytes()
 assert hashlib.sha256(b).hexdigest()=='183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e5954a6df940c'
 out=bytearray(b)
-for offset,expected in [(0x524954,'29435939'),(0x52495c,'29e35939'),(0x5281ac,'a9425939'),(0x5281b4,'a9e25939')]:
+for offset,expected in ([(0x524954,'29435939'),(0x52495c,'29e35939'),(0x5281ac,'a9425939'),(0x5281b4,'a9e25939')] if os.environ.get('MANIC_PROBE_PLUGIN_ENABLED','1')=='1' else []):
     assert b[offset:offset+4]==bytes.fromhex(expected)
     out[offset:offset+4]=bytes.fromhex('29008052')
 pos=32;found=False
@@ -38,7 +38,7 @@ PLIST
 codesign --force --sign - "$app/game-probe-core.dylib"
 codesign --force --sign - "$app"
 device="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"
-trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
+trap 'xcrun simctl uninstall "$device" org.manicemu.game-probe >/dev/null 2>&1 || true; xcrun simctl shutdown "$device" >/dev/null 2>&1 || true' EXIT
 xcrun simctl boot "$device"
 xcrun simctl bootstatus "$device" -b
 xcrun simctl install "$device" "$app"
@@ -75,7 +75,12 @@ PY
   for prefix in '' '3DS/' 'citra/'; do
     target="$container/Documents/${prefix}sdmc/luma/plugins/0004000000198E00"
     mkdir -p "$target"
-    cp "$plugin" "$target/Vapecord_Public.3gx"
+    cp -R "$(dirname "$plugin")/." "$target/"
+    resources="$(dirname "$(dirname "$(dirname "$(dirname "$plugin")")")")/Vapecord"
+    if [[ -d "$resources" ]]; then
+      mkdir -p "$container/Documents/${prefix}sdmc/Vapecord"
+      cp -R "$resources/." "$container/Documents/${prefix}sdmc/Vapecord/"
+    fi
   done
   xcrun simctl launch "$device" org.manicemu.game-probe
   for attempt in {1..150}; do
