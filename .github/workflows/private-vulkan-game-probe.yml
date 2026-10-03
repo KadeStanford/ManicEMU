@@ -1,5 +1,8 @@
 name: Private Vulkan game and plugin diagnostic
 on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/private-vulkan-run.json']
   workflow_run:
     workflows: ['Vulkan simulator source diagnostic']
     types: [completed]
@@ -15,7 +18,7 @@ permissions:
   actions: read
 jobs:
   private-game:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: Vulkan original core with plugin loader ${{ matrix.plugin_enabled }}
     runs-on: macos-15
     timeout-minutes: 25
@@ -60,12 +63,22 @@ jobs:
               z.extractall(root)
           print('Private game and plugin copies verified; no saves or keys imported.')
           PY
+      - name: Resolve verified driver diagnostic run
+        id: driver
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          p=pathlib.Path('OriginalCoreRepair/private-vulkan-run.json')
+          if p.exists():
+              with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+                  f.write('run_id='+str(json.loads(p.read_text())['driver_run_id'])+'\n')
+          PY
       - uses: actions/download-artifact@v4
         with:
           name: moltenvk-real-simulator-diagnostic
           path: OriginalCoreRepair/Tests/build-probe/driver-sdk
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id || inputs.driver_run_id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.driver_run_id || steps.driver.outputs.run_id }}
       - name: Compile integrated diagnostic frontend
         run: |
           sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
