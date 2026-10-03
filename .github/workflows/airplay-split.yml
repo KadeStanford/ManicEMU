@@ -1,0 +1,30 @@
+name: AirPlay split component
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths:
+      - 'AirPlaySplit/**'
+      - '.github/workflows/airplay-split.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  render-and-lifecycle:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+          submodules: false
+      - name: Build unsigned iOS component
+        run: bash AirPlaySplit/scripts/build-ios.sh
+      - name: Verify live GPU crops, swap, touch and disconnect lifecycle
+        run: bash AirPlaySplit/scripts/simulator-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: airplay-split-component-and-tests
+          path: |
+            AirPlaySplit/build/ManicAirPlaySplit.framework
+            AirPlaySplit/build-simulator/smoke.json
