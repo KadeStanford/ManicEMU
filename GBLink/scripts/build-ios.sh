@@ -2,14 +2,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
-build="$root/build"
+build="${MGL_BUILD_DIR:-$root/build}"
 mkdir -p "$build/ManicGBLink.framework"
 rgbasm -I "$root/Vendor/SameBoy/BootROMs/" -o "$build/dmg_boot.o" "$root/Vendor/SameBoy/BootROMs/dmg_boot.asm"
 rgblink -x -o "$build/dmg_boot.bin" "$build/dmg_boot.o"
 node "$root/scripts/embed-boot.mjs" "$build/dmg_boot.bin" "$build/dmg_boot.h"
-sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-cc="$(xcrun --sdk iphoneos --find clang)"
-flags=(-arch arm64 -isysroot "$sdk" -miphoneos-version-min=15.0 -O2
+sdk_name="${MGL_SDK:-iphoneos}"
+sdk="$(xcrun --sdk "$sdk_name" --show-sdk-path)"
+cc="$(xcrun --sdk "$sdk_name" --find clang)"
+target="arm64-apple-ios15.0"
+if [[ "$sdk_name" == "iphonesimulator" ]]; then target="$target-simulator"; fi
+flags=(-target "$target" -isysroot "$sdk" -O2
        -DGB_DISABLE_TIMEKEEPING -DGB_DISABLE_REWIND -DGB_DISABLE_DEBUGGER -DGB_DISABLE_CHEATS
        '-DGB_VERSION="1.0.3"' '-DGB_COPYRIGHT_YEAR="2026"'
        -I "$root/Core" -I "$root/Vendor/SameBoy/Core" -I "$build")
@@ -23,7 +26,7 @@ done
 "$cc" "${flags[@]}" -dynamiclib -install_name '@rpath/ManicGBLink.framework/ManicGBLink' \
     "${objects[@]}" "$build/MGLCore.o" "$build/MGLViewController.o" \
     -framework Foundation -framework UIKit -framework MultipeerConnectivity \
-    -framework UniformTypeIdentifiers -framework QuartzCore \
+    -framework UniformTypeIdentifiers -framework QuartzCore -framework CoreGraphics \
     -o "$build/ManicGBLink.framework/ManicGBLink"
 cat > "$build/ManicGBLink.framework/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,5 +44,6 @@ cat > "$build/ManicGBLink.framework/Info.plist" <<'PLIST'
 PLIST
 cp "$root/Vendor/SameBoy/LICENSE" "$build/ManicGBLink.framework/SameBoy-LICENSE"
 cp "$root/../LICENSE" "$build/ManicGBLink.framework/LICENSE"
-xcrun --sdk iphoneos otool -L "$build/ManicGBLink.framework/ManicGBLink"
+xcrun --sdk "$sdk_name" otool -L "$build/ManicGBLink.framework/ManicGBLink"
+if [[ "$sdk_name" == "iphoneos" ]]; then python3 "$root/scripts/check-swift-bridge.py" "$sdk"; fi
 echo "Built unsigned arm64 iOS framework. No signing credentials used."

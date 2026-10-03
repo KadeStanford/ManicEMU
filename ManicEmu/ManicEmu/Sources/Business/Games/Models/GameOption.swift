@@ -1014,7 +1014,8 @@ enum GameOption: Int, CaseIterable {
                 .coverScraping,
                 .ndsLidToggle,
                 .pspJitType,
-                .skinButtonBinding:
+                .skinButtonBinding,
+                .gbLink:
             break
         }
         return .chevron(nil)
