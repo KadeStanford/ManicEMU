@@ -80,6 +80,9 @@ class IPATests(unittest.TestCase):
                 self.assertIn('_ra_netplay._tcp', changed['NSBonjourServices'])
                 self.assertNotIn('Payload/Manic.app/_CodeSignature/CodeResources', z.namelist())
                 self.assertIn('Payload/Manic.app/Frameworks/ManicGBLink.framework/LICENSE', z.namelist())
+                library = z.getinfo('Payload/Manic.app/Frameworks/ManicGBLink.framework/ManicGBLink')
+                self.assertEqual(library.create_system, 3)
+                self.assertEqual(library.external_attr >> 16, 0o100755)
             with self.assertRaisesRegex(ValueError, 'preserved'):
                 ipa.repackage(source, framework, out)
             with self.assertRaisesRegex(ValueError, 'preserved'):

@@ -192,7 +192,13 @@ def repackage(source, framework, output):
                     plistlib.dumps(info, fmt=plistlib.FMT_BINARY) if item.filename == plist_path else original.read(item))
                 target.writestr(item, contents)
             for file in files:
-                target.write(file, prefix + file.relative_to(framework).as_posix())
+                # Downloads on Windows lose POSIX executable bits. Record the
+                # framework's ordinary iOS bundle permissions in the ZIP.
+                entry = zipfile.ZipInfo.from_file(file, prefix + file.relative_to(framework).as_posix())
+                entry.create_system = 3
+                entry.external_attr = (0o100755 if file.name == 'ManicGBLink' else 0o100644) << 16
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                target.writestr(entry, file.read_bytes())
     return output
 
 
