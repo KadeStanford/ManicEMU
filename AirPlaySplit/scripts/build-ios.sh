@@ -11,7 +11,7 @@ dir="$build/ManicAirPlaySplit.framework"
 mkdir -p "$dir"
 xcrun --sdk "$sdk_name" clang -target "$target" -isysroot "$sdk" -fobjc-arc -O2 -Wall -Wextra \
   -Wno-unused-parameter -dynamiclib "$root/iOS/ManicAirPlaySplit.m" "$root/iOS/MASRender.m" \
-  -framework Foundation -framework UIKit -framework QuartzCore -framework Metal \
+  -framework Foundation -framework UIKit -framework QuartzCore -framework Metal -framework CoreGraphics \
   -install_name '@rpath/ManicAirPlaySplit.framework/ManicAirPlaySplit' \
   -o "$dir/ManicAirPlaySplit"
 cat > "$dir/Info.plist" <<'PLIST'

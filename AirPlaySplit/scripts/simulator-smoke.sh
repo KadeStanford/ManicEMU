@@ -8,7 +8,7 @@ mkdir -p "$app"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios15.0-simulator -isysroot "$sdk" -fobjc-arc -O0 -g \
   "$root/Tests/simulator_main.m" "$root/iOS/MASRender.m" -framework UIKit -framework Foundation \
-  -framework QuartzCore -framework Metal -Wl,-export_dynamic -o "$app/AirPlaySmoke"
+  -framework QuartzCore -framework Metal -framework CoreGraphics -Wl,-export_dynamic -o "$app/AirPlaySmoke"
 cat > "$app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
