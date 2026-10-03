@@ -54,6 +54,8 @@ static NSString *gameTitle(NSString *code) {
     NSDictionary *_meta,*_partnerMeta;
     NSData *_room;
     UIAlertController *_dialog;
+    UIAlertController *_presentedDialog;
+    BOOL _uiBusy;
     NSTimer *_timer;
     uint64_t _cursor;
     CFTimeInterval _heard,_lastResend;
@@ -110,15 +112,23 @@ static NSString *gameTitle(NSString *code) {
     [self finder];
 }
 - (void)dismissDialog {
-    if(_dialog.presentingViewController)[_dialog dismissViewControllerAnimated:NO completion:nil];_dialog=nil;
+    _dialog=nil;[self publishDialog];
 }
-- (void)show:(UIAlertController *)dialog {
-    [self dismissDialog];_dialog=dialog;UIViewController *vc=presenter();
+- (void)publishDialog {
+    if(_uiBusy||_dialog==_presentedDialog)return;
+    if(_presentedDialog.presentingViewController){
+        _uiBusy=YES;
+        [_presentedDialog dismissViewControllerAnimated:NO completion:^{self->_presentedDialog=nil;self->_uiBusy=NO;[self publishDialog];}];return;
+    }
+    _presentedDialog=nil;UIAlertController *dialog=_dialog;if(!dialog)return;
+    UIViewController *vc=presenter();
     if(!vc){MT_cancel();[self cleanup];return;}
     dialog.popoverPresentationController.sourceView=vc.view;
     dialog.popoverPresentationController.sourceRect=CGRectMake(CGRectGetMidX(vc.view.bounds),CGRectGetMidY(vc.view.bounds),1,1);
-    [vc presentViewController:dialog animated:YES completion:nil];
+    _presentedDialog=dialog;_uiBusy=YES;
+    [vc presentViewController:dialog animated:YES completion:^{self->_uiBusy=NO;[self publishDialog];}];
 }
+- (void)show:(UIAlertController *)dialog {_dialog=dialog;[self publishDialog];}
 - (void)finder {
     if(_partner||_ending||_fatal)return;
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby players" message:@"Your friend also needs to start a cable trade in their game." preferredStyle:UIAlertControllerStyleActionSheet];

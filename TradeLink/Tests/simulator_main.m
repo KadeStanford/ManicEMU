@@ -1,5 +1,8 @@
 // Native UIKit integration smoke test. This is a test frontend, not Manic itself.
 #import <UIKit/UIKit.h>
+#import <MultipeerConnectivity/MultipeerConnectivity.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 #include "TradeCore.h"
 #include <assert.h>
 #include <string.h>
@@ -34,10 +37,21 @@ static MTGBA gba={start,receive,stop,size,save,load,battery};
         assert(!root.presentedViewController&&root.view.subviews.count==2); // No home overlay or setup UI.
         battery[0]=0x45;state[0]=0x67;MT_loaded("/legal/synthetic.gba",(const uint8_t *)"BPRE");assert(MT_active());MT_request();assert(!MT_frame(&gba));
     });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        // Rapid discovery changes must rebuild the visible list without stacking
+        // new alerts on an alert that is still being dismissed.
+        Class cls=NSClassFromString(@"ManicTrade");id<MCNearbyServiceBrowserDelegate> manager=((id (*)(id,SEL))objc_msgSend)(cls,NSSelectorFromString(@"shared"));
+        MCNearbyServiceBrowser *browser=object_getIvar(manager,class_getInstanceVariable(cls,"_browser"));
+        NSDictionary *one=@{@"v":@"g3-fc4afeb-mtr1",@"room":@"00000000000000000000000000000001",@"code":@"BPRE"};
+        NSDictionary *two=@{@"v":@"g3-fc4afeb-mtr1",@"room":@"00000000000000000000000000000002",@"code":@"BPGE"};
+        [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player One"] withDiscoveryInfo:one];
+        [manager browser:browser foundPeer:[[MCPeerID alloc] initWithDisplayName:@"Player Two"] withDiscoveryInfo:two];
+    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         UIAlertController *picker=(UIAlertController *)root.presentedViewController;
         assert([picker isKindOfClass:UIAlertController.class]&&[picker.title isEqual:@"Nearby players"]);
         assert(MT_phase()==MT_WAITING&&root.view.subviews.count==2);assert([picker.actions.lastObject.title isEqual:@"Cancel"]);
+        assert(picker.actions.count==3); // Both nearby players are visible.
         for(UIAlertAction *a in picker.actions)assert(![a.title containsString:@"Host"]&&![a.title containsString:@"Join"]);
         NSURL *documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSURL *base=[documents URLByAppendingPathComponent:@"ManicTradeBackups"];
@@ -46,7 +60,7 @@ static MTGBA gba={start,receive,stop,size,save,load,battery};
         NSData *checkpoint=[NSData dataWithContentsOfURL:[folders[0] URLByAppendingPathComponent:@"pre-trade.gpspstate"]];assert(checkpoint.length==sizeof(state)&&((const uint8_t *)checkpoint.bytes)[0]==0x67);
         uint8_t session[16]={1};MT_connect(0,session);assert(MT_frame(&gba));
         [[LibretroCore sharedInstance] pause];assert(MT_phase()==MT_SUSPENDED&&[[LibretroCore sharedInstance] isPaused]);
-        NSDictionary *report=@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES};
+        NSDictionary *report=@{@"no_home_overlay":@YES,@"kept_existing_game_view":@YES,@"automatic_pairing_picker":@YES,@"rapid_discovery_updates_show_both_players":@YES,@"no_host_join_or_rom_fields":@YES,@"battery_and_state_backup_before_pairing":@YES,@"frontend_pause_suspends_link":@YES};
         NSData *json=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];assert([json writeToURL:[documents URLByAppendingPathComponent:@"smoke.json"] atomically:YES]);
         NSLog(@"PASS: GBA in-game discovery picker and automatic backup UI smoke");
     });return YES;
