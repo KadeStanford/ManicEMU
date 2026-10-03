@@ -3,7 +3,7 @@
 //  ManicEmu
 //
 //  Created by Daiuno on 2025/3/9.
-//  Copyright © 2025 Manic EMU. All rights reserved.
+//  Copyright c 2025 Manic EMU. All rights reserved.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -62,7 +62,6 @@ class AirPlayViewController: UIViewController {
         
         gameContainerView.transform = .identity
         gameContainerView.subviews.forEach { $0.removeFromSuperview() }
-        let gameViewHeight = dimensions.height
         
         gameContainerView.snp.remakeConstraints { make in
             make.center.equalToSuperview()
@@ -76,11 +75,14 @@ class AirPlayViewController: UIViewController {
         }
         
         if let windowSize = ExternalSceneDelegate.externalWindow {
-            let scale = windowSize.height/gameViewHeight
+            let scale = windowSize.width > 0 && windowSize.height > 0
+                ? min(windowSize.width/dimensions.width, windowSize.height/dimensions.height) : 1
             gameContainerView.transform = CGAffineTransform(scaleX: scale, y: scale)
         } else {
             DispatchQueue.main.asyncAfter(delay: 1) {
-                let scale = self.view.frame.size.height/gameViewHeight
+                let bounds = self.view.bounds.size
+                let scale = bounds.width > 0 && bounds.height > 0
+                    ? min(bounds.width/dimensions.width, bounds.height/dimensions.height) : 1
                 self.gameContainerView.transform = CGAffineTransform(scaleX: scale, y: scale)
             }
         }
@@ -88,3 +90,4 @@ class AirPlayViewController: UIViewController {
         return dimensions
     }
 }
+
