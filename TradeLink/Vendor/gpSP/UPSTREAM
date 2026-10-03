@@ -4,4 +4,7 @@ Matched to v1.1.0-fc4afeb reported in the user's original gpSP framework.
 GPL-2.0-or-later. Open replacement BIOS provenance: bios/README.md.
 Modifications: libretro/libretro.c and serial.c integrate Manic's in-game
 trade callbacks, serialize pre-trade checkpoints, and pause while pairing.
-serial_proto.c bounds peer IDs. No original game or Nintendo BIOS is supplied.
+serial_proto.c bounds peer IDs and uses unsigned shifts for Gen3 frame words.
+libretro.c fixes dummy performance callback prototypes exposed by UBSan.
+serial.c detects Gen3 DisableSerial's IRQ clear while still in multiplayer mode.
+No original game or Nintendo BIOS is supplied.
