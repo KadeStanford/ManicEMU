@@ -1,0 +1,9 @@
+build/
+build-*/
+private*/
+*.nds
+*.srm
+*.sav
+*.dsv
+*.state
+__pycache__/

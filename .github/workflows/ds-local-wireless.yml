@@ -1,0 +1,59 @@
+name: DS local wireless candidate
+on:
+  push:
+    branches: [feature/ds-local-wireless]
+    paths: ['DSLink/**', '.github/workflows/ds-local-wireless.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop-protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Build independent peers with sanitizers
+        run: >-
+          cmake -S DSLink -B ds-protocol-build -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - run: cmake --build ds-protocol-build --parallel 2
+      - run: ctest --test-dir ds-protocol-build --output-on-failure
+        env: {UBSAN_OPTIONS: 'halt_on_error=1:print_stacktrace=1'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DS-protocol-evidence
+          path: |
+            ds-protocol-build/protocol.json
+            ds-protocol-build/Testing/Temporary/LastTest.log
+  ios-core:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Build unsigned physical iOS DS core and bridge
+        run: bash DSLink/scripts/build-ios.sh
+      - name: Check physical iOS Mach-O metadata
+        run: |
+          python3 - <<'PY'
+          import pathlib,sys
+          sys.path.insert(0,'GBLink/scripts')
+          import ipa_link
+          for name in ('DSOriginal','melondsds.libretro'):
+              path=pathlib.Path('DSLink/build')/(name+'.framework')/name
+              info=ipa_link.inspect_slice(path.read_bytes())
+              assert info['platform']==2 and info['filetype']==6 and not info['encrypted']
+              assert all(p.startswith(('/usr/lib/','/System/Library/')) for p in info['load_paths'])
+              print(name,info)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DS-iOS-unsigned
+          path: |
+            DSLink/build/*.framework
+            DSLink/build/build-manifest.json
