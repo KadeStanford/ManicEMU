@@ -19,7 +19,7 @@
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
-static NSString *const WireVersion=@"ds131-room5";
+static NSString *const WireVersion=@"ds131-room6";
 static std::mutex lock;
 static std::condition_variable packetsReady;
 static struct {

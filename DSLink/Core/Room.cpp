@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #include "Room.hpp"
+#include "NintendoIdentity.hpp"
 #include <algorithm>
 #include <cstring>
 namespace manicds {
@@ -23,6 +24,7 @@ void Room::translate(Bytes &p,bool outgoing)const{
     const auto &from=outgoing?native_:alias_,&to=outgoing?alias_:native_;
     for(size_t offset:{size_t(26),size_t(32),size_t(38)})
         if(std::equal(from.begin(),from.end(),p.begin()+offset))std::copy(to.begin(),to.end(),p.begin()+offset);
+    if(title(code_.data())>=6)mapGen5BeaconIdentity(p,from,to);
 }
 bool Room::receive(Nonce n,const void *data,size_t size){
     auto p=peers_.find(n);if(p==peers_.end())return false;
