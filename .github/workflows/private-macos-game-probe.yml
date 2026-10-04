@@ -1,0 +1,160 @@
+name: Native macOS Vulkan game and plugin comparison
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/private-macos-run.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  private-game:
+    name: ${{ matrix.label }}
+    runs-on: macos-15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: Software-loader-on, plugin_enabled: '1', renderer: Software, fill_repair: '0'}
+          - {label: Vulkan-R4-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '4'}
+          - {label: Vulkan-R5-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5'}
+          - {label: Vulkan-R5-loader-off, plugin_enabled: '0', renderer: Vulkan, fill_repair: '5'}
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false, ref: recovery/dual-airplay-azahar}
+      - name: Prepare and verify private inputs without printing credentials
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,urllib.request,zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'manic-private-inputs'
+          root.mkdir()
+          config=json.loads(os.environ['PRIVATE_INPUTS'])
+          def download(item,dest):
+              digest=hashlib.sha256();count=0
+              try:
+                  with urllib.request.urlopen(item['url'],timeout=60) as src,dest.open('xb') as out:
+                      while chunk:=src.read(4*1024*1024):
+                          out.write(chunk);digest.update(chunk);count+=len(chunk)
+              except Exception:
+                  raise RuntimeError('Private input transfer failed; refresh its expiring link') from None
+              assert digest.hexdigest()==item['sha256'] and count==item['bytes'], 'Private input verification failed'
+          with (root/'game.cxi').open('xb') as game:
+              for i,item in enumerate(config['parts']):
+                  part=root/f'part{i}'
+                  download(item,part)
+                  with part.open('rb') as f:
+                      while chunk:=f.read(4*1024*1024):game.write(chunk)
+                  part.unlink()
+          with (root/'game.cxi').open('rb') as f:
+              assert hashlib.file_digest(f,'sha256').hexdigest()==config['game_sha256']
+          download(config['plugin'],root/'plugin.zip')
+          with zipfile.ZipFile(root/'plugin.zip') as z:
+              for entry in z.infolist():
+                  assert (root/entry.filename).resolve().is_relative_to(root.resolve())
+              z.extractall(root)
+          print('Private game and plugin copies verified; no saves or keys imported.')
+          PY
+      - name: Compile the native host Vulkan frontend
+        env:
+          PROBE_RENDERER: ${{ matrix.renderer }}
+        run: |
+          mkdir -p OriginalCoreRepair/Tests/build-probe
+          curl --fail --location --retry 3 --silent --show-error https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.8/MoltenVK-macos.tar -o "$RUNNER_TEMP/MoltenVK-macos.tar"
+          mkdir "$RUNNER_TEMP/host-moltenvk"
+          tar xf "$RUNNER_TEMP/MoltenVK-macos.tar" -C "$RUNNER_TEMP/host-moltenvk"
+          header="$(find "$RUNNER_TEMP/host-moltenvk" -path '*/vulkan/vulkan.h' -type f | head -1)"
+          test -n "$header"
+          include="$(dirname "$(dirname "$header")")"
+          extra=()
+          if [[ "$PROBE_RENDERER" == Vulkan ]]; then extra=(-DMANIC_GAME_VULKAN=1); fi
+          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror -Wno-unused-parameter -DMANIC_GAME_MACOS=1 "${extra[@]}" -I "$include" -I OriginalCoreRepair/Tests/vendor OriginalCoreRepair/Tests/simulator_game_probe.m -framework AppKit -framework Foundation -framework CoreGraphics -o OriginalCoreRepair/Tests/build-probe/GameProbe
+      - name: Fetch the hash-guarded original core for the Vulkan runtime test
+        run: |
+          curl --fail --location --retry 3 --silent --show-error \
+            https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro \
+            -o OriginalCoreRepair/Tests/build-probe/original-core-download.dylib
+          test "$(shasum -a 256 OriginalCoreRepair/Tests/build-probe/original-core-download.dylib | cut -d' ' -f1)" = 183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e5954a6df940c
+      - name: Execute the private game and supplied plugin with the original core
+        env:
+          MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
+          MANIC_PROBE_FILL_REPAIR: ${{ matrix.fill_repair }}
+        run: |
+          driver="$(find "$RUNNER_TEMP/host-moltenvk" -path '*/dynamic/dylib/macOS/libMoltenVK.dylib' -type f | head -1)"
+          test -n "$driver"
+          bash OriginalCoreRepair/Tests/macos-game-probe.sh "$RUNNER_TEMP/manic-private-inputs/game.cxi" "$RUNNER_TEMP/manic-private-inputs/sdmc/luma/plugins/0004000000198E00/Vapecord_Public.3gx" "$driver"
+      - name: Summarize diagnostic state without publishing private runtime logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,struct,re
+          root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
+          state=root/'private-game-probe.json'
+          result=json.loads(state.read_text()) if state.exists() else {'game_state_unavailable':True}
+          log=root/'private-core-runtime.log'
+          text=log.read_text(errors='replace') if log.exists() else ''
+          # Match known stage markers only; never publish the full private log.
+          result['plugin_load_marker_seen']=bool(re.search(r'Trying to load plugin',text))
+          result['plugin_load_error_seen']=bool(re.search(r'Failed to load 3GX plugin',text))
+          result['unimplemented_svc_seen']=bool(re.search(r'unimplemented SVC|Unimplemented SVC',text))
+          fault=root/'private-fatal-signal.bin'
+          if fault.exists() and fault.stat().st_size==64:
+              r=struct.unpack('<8Q',fault.read_bytes())
+              result['fatal_signal']=r[1]
+              result['fault_address']=hex(r[2])
+              images=result.get('loaded_images',[])
+              for label,address in [('pc',r[4]),('lr',r[5])]:
+                  image=next((i for i in images if i['base']<=address<i['base']+i['text_size']),None)
+                  result[label+'_image']=image['name'] if image else None
+                  result[label+'_image_offset']=hex(address-image['base']) if image else None
+          result.pop('loaded_images',None)
+          (root/'private-game-summary.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+      - name: Encrypt detailed diagnostics for private local inspection
+        if: always()
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess,zipfile
+          root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
+          records=[root/'private-core-runtime.log',root/'private-game-system.log',root/'private-game-probe.json',root/'private-fatal-signal.bin']
+          records+=list(root.glob('private-frame-*.png'))
+          existing=[p for p in records if p.exists()]
+          if existing:
+              archive=root/'private-runtime-evidence.zip'
+              with zipfile.ZipFile(archive,'x',compression=zipfile.ZIP_DEFLATED) as z:
+                  for p in existing:z.write(p,p.name)
+              env=os.environ.copy()
+              env['MANIC_EVIDENCE_PASSWORD']=json.loads(env.pop('PRIVATE_INPUTS'))['evidence_password']
+              subprocess.run(['openssl','enc','-aes-256-cbc','-pbkdf2','-iter','200000','-salt',
+                  '-pass','env:MANIC_EVIDENCE_PASSWORD','-in',str(archive),
+                  '-out',str(root/'private-runtime-evidence.enc')],env=env,check=True)
+              archive.unlink()
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-macos-${{ matrix.label }}-private-evidence
+          path: |
+            OriginalCoreRepair/Tests/build-probe/private-game-summary.json
+            OriginalCoreRepair/Tests/build-probe/private-runtime-evidence.enc
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight.json
+            OriginalCoreRepair/Tests/build-probe/vulkan-fatal.bin
+            OriginalCoreRepair/Tests/build-probe/vulkan-preflight-system.log
+      - name: Remove runner-only private diagnostic copies
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'manic-private-inputs'
+          if root.is_dir():shutil.rmtree(root)
+          for name in ['private-core-runtime.log','private-game-system.log','private-fatal-signal.bin','private-game-probe.json']:
+              p=pathlib.Path('OriginalCoreRepair/Tests/build-probe')/name
+              p.unlink(missing_ok=True)
+          for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-frame-*.png'):
+              p.unlink()
+          PY

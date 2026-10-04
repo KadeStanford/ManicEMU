@@ -24,14 +24,19 @@ static NSDictionary *guestExecutionState(uintptr_t address) {
     uint32_t pc,cpsr;uint64_t budget;
     memcpy(&pc,state+0x4c,sizeof(pc));memcpy(&cpsr,state+0x320,sizeof(cpsr));
     memcpy(&budget,state+0x358,sizeof(budget));
-    return @{@"guest_pc":@(pc),@"guest_cpsr":@(cpsr),@"instruction_budget":@(budget)};
+    NSMutableArray *registers=[NSMutableArray new];
+    for(unsigned i=0;i<16;i++){
+        uint32_t value;memcpy(&value,state+0x10+4*i,sizeof(value));
+        [registers addObject:@(value)];
+    }
+    return @{@"guest_pc":@(pc),@"guest_cpsr":@(cpsr),@"instruction_budget":@(budget),@"guest_registers":registers};
 }
 #ifdef MANIC_NATIVE_RECORDER_SELF_TEST
 int ManicVerifyGuestStateSampler(void) {
     uint8_t state[0x380]={0};uint32_t pc=0x07001234,cpsr=0x60000010;uint64_t budget=10000;
     memcpy(state+0x4c,&pc,sizeof(pc));memcpy(state+0x320,&cpsr,sizeof(cpsr));memcpy(state+0x358,&budget,sizeof(budget));
     NSDictionary *result=guestExecutionState((uintptr_t)state);
-    return [result[@"guest_pc"] unsignedIntValue]==pc&&[result[@"guest_cpsr"] unsignedIntValue]==cpsr&&[result[@"instruction_budget"] unsignedLongLongValue]==budget&&guestExecutionState(1)==nil;
+    return [result[@"guest_pc"] unsignedIntValue]==pc&&[result[@"guest_cpsr"] unsignedIntValue]==cpsr&&[result[@"instruction_budget"] unsignedLongLongValue]==budget&&[result[@"guest_registers"] count]==16&&[result[@"guest_registers"][15] unsignedIntValue]==pc&&guestExecutionState(1)==nil;
 }
 #endif
 _Static_assert(sizeof(vm_address_t)>=sizeof(uintptr_t),"VM sampling must preserve native pointer width");

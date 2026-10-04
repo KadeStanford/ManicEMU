@@ -46,7 +46,7 @@ static bool vkEnvironment(unsigned cmd,void *data){
 }
 static bool initializeVulkan(void){
     checkpoint(@"vulkan_driver_load");
-    void *h=dlopen([[NSBundle.mainBundle pathForResource:@"moltenvk-probe" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
+    void *h=dlopen([probeResource(@"moltenvk-probe",@"dylib") fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
     if(!h){logger(3,"Driver load failed: %s\n",dlerror());return false;}
     vkGet=(void *)dlsym(h,"vkGetInstanceProcAddr");if(!vkGet)return false;
     pthread_mutexattr_t attributes;pthread_mutexattr_init(&attributes);pthread_mutexattr_settype(&attributes,PTHREAD_MUTEX_RECURSIVE);
@@ -133,7 +133,7 @@ static void vulkanVideo(unsigned width,unsigned height){
         CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();bool bgra=currentImage.create_info.format==VK_FORMAT_B8G8R8A8_UNORM||currentImage.create_info.format==VK_FORMAT_B8G8R8A8_SRGB;
         CGBitmapInfo flags=bgra?(kCGBitmapByteOrder32Little|kCGImageAlphaNoneSkipFirst):(kCGBitmapByteOrder32Big|kCGImageAlphaNoneSkipLast);
         CGContextRef bitmap=CGBitmapContextCreate(pixels,width,height,8,width*4,space,flags);
-        if(bitmap){CGImageRef image=CGBitmapContextCreateImage(bitmap);[UIImagePNGRepresentation([UIImage imageWithCGImage:image]) writeToFile:[root stringByAppendingPathComponent:[NSString stringWithFormat:@"private-frame-%d.png",runCalls]] atomically:YES];CGImageRelease(image);CGContextRelease(bitmap);}CGColorSpaceRelease(space);
+        if(bitmap){CGImageRef image=CGBitmapContextCreateImage(bitmap);[probePNG(image) writeToFile:[root stringByAppendingPathComponent:[NSString stringWithFormat:@"private-frame-%d.png",runCalls]] atomically:YES];CGImageRelease(image);CGContextRelease(bitmap);}CGColorSpaceRelease(space);
         vkUnmapMemory(vkInterface.device,memory);vkDestroyBuffer(vkInterface.device,buffer,NULL);vkFreeMemory(vkInterface.device,memory,NULL);vkDestroyCommandPool(vkInterface.device,pool,NULL);
     }
     if(signalSemaphore){VkSubmitInfo signal={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.signalSemaphoreCount=1,.pSignalSemaphores=&signalSemaphore};vkQueueSubmit(vkInterface.queue,1,&signal,VK_NULL_HANDLE);signalSemaphore=VK_NULL_HANDLE;}

@@ -21,6 +21,10 @@ add x2, x8, x10
 mov x1, x21
 mov x0, x19
 bl 0x9fb388 // ConfigureFramebufferTexture
+// SwapBuffers cached the old view in ScreenInfo before calling FillScreen.
+// A newly configured texture must update that sampled view for this frame.
+ldr x8, [x21, #24]
+str x8, [x21, #56]
 ready:
 mov x0, x19
 mov x1, x20

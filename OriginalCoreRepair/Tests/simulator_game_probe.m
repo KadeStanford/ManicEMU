@@ -1,5 +1,9 @@
 // Standalone diagnostic frontend. Runs only private copies in a fresh sandbox.
+#ifdef MANIC_GAME_MACOS
+#import <AppKit/AppKit.h>
+#else
 #import <UIKit/UIKit.h>
+#endif
 #import <dlfcn.h>
 #import <signal.h>
 #import <sys/ucontext.h>
@@ -22,6 +26,21 @@ static volatile sig_atomic_t runCalls;
 static unsigned frames,nonblackFrames;
 static bool shutdownRequested;
 static NSString *stage;
+static NSString *probeResource(NSString *name,NSString *extension) {
+#ifdef MANIC_GAME_MACOS
+    return [NSProcessInfo.processInfo.environment[@"MANIC_PROBE_RESOURCE_DIR"]
+        stringByAppendingPathComponent:[name stringByAppendingPathExtension:extension]];
+#else
+    return [NSBundle.mainBundle pathForResource:name ofType:extension];
+#endif
+}
+static NSData *probePNG(CGImageRef image) {
+#ifdef MANIC_GAME_MACOS
+    return [[[NSBitmapImageRep alloc] initWithCGImage:image] representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+#else
+    return UIImagePNGRepresentation([UIImage imageWithCGImage:image]);
+#endif
+}
 static void checkpoint(NSString *next) {
     stage=next;report[@"stage"]=next;report[@"run_calls"]=@(runCalls);
     report[@"frames"]=@(frames);report[@"nonblack_frames"]=@(nonblackFrames);
@@ -91,7 +110,7 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
         CGContextRef context=CGBitmapContextCreate((void *)pixels,width,height,8,pitch,space,
             kCGBitmapByteOrder32Little|kCGImageAlphaNoneSkipFirst);
         if(context){CGImageRef image=CGBitmapContextCreateImage(context);
-            [UIImagePNGRepresentation([UIImage imageWithCGImage:image])
+            [probePNG(image)
                 writeToFile:[root stringByAppendingPathComponent:snapshot] atomically:YES];
             CGImageRelease(image);CGContextRelease(context);}
         CGColorSpaceRelease(space);
@@ -108,15 +127,13 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     if(id==8)return runCalls>=1200&&runCalls<1206;
     return id==2&&runCalls>=2000&&runCalls<2006;
 }
-@interface GameProbeApp : UIResponder <UIApplicationDelegate>
-@property(nonatomic,strong) UIWindow *window;
-@end
-@implementation GameProbeApp
-- (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.window.rootViewController=[UIViewController new];[self.window makeKeyAndVisible];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+static void runProbe(void) {
+#ifdef MANIC_GAME_MACOS
+        root=NSProcessInfo.processInfo.environment[@"MANIC_PROBE_DATA_DIR"];
+        if(!root.length)abort();
+#else
         root=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+#endif
         report=[@{@"actual_game_load_attempted":@NO,@"game_execution_completed":@NO,
             @"plugin_menu_verified":@NO,@"renderer":@"Software",
             @"original_inputs_and_saves_unchanged":@YES} mutableCopy];
@@ -135,7 +152,7 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
             checkpoint(@"diagnostic_signal_self_test");raise(SIGSEGV);return;
         }
         checkpoint(@"dlopen");
-        void *h=dlopen([[NSBundle.mainBundle pathForResource:@"game-probe-core" ofType:@"dylib"] fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
+        void *h=dlopen([probeResource(@"game-probe-core",@"dylib") fileSystemRepresentation],RTLD_NOW|RTLD_LOCAL);
         if(!h){report[@"error"]=@(dlerror()?:"dlopen failed");checkpoint(@"dlopen_failed");return;}
         void (*init)(void)=dlsym(h,"retro_init");void (*run)(void)=dlsym(h,"retro_run");
         bool (*load)(const Game *)=dlsym(h,"retro_load_game");
@@ -203,7 +220,19 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
             checkpoint(@"retro_unload_game");unload();
         }
         checkpoint(@"retro_deinit");deinit();checkpoint(@"completed");
-    });return YES;
+}
+#ifdef MANIC_GAME_MACOS
+int main(int argc,char **argv){@autoreleasepool{runProbe();return 0;}}
+#else
+@interface GameProbeApp : UIResponder <UIApplicationDelegate>
+@property(nonatomic,strong) UIWindow *window;
+@end
+@implementation GameProbeApp
+- (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
+    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    self.window.rootViewController=[UIViewController new];[self.window makeKeyAndVisible];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{runProbe();});return YES;
 }
 @end
 int main(int argc,char **argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(GameProbeApp.class));}}
+#endif

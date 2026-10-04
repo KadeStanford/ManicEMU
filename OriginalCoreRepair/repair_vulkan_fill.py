@@ -16,13 +16,20 @@ CONFIGURE=0x9FB388
 ENTRY_ORIGINAL=bytes.fromhex('eb2bbc6d')
 ENTRY_BRANCH=bytes.fromhex('9d430d14')
 # ARM64 assembly is included in repair_vulkan_fill.s for review.
-STUB=bytes.fromhex(
+R4_STUB=bytes.fromhex(
  'fd7bbca9fd030091f35301a9f55b02a9f30300aaf40301aaf50302aa480840f9'
  '880100b5686240f9a90213cb0abb87d23f010aeb098082d20aa082d24a21899a'
  '02010a8be10315aae00313aa8fbcf297e00313aae10314aae20315aaf55b42a9'
  'f35341a9fd7bc4a8eb2bbc6d49bcf217')
+STUB=bytearray(R4_STUB[:0x50]+bytes.fromhex('a80e40f9a81e00f9')+R4_STUB[0x50:])
+# Existing-image branch skips allocation and its view refresh. The final
+# resume branch moves eight bytes while retaining the same destination.
+struct.pack_into('<I',STUB,0x20,struct.unpack_from('<I',R4_STUB,0x20)[0]+(2<<5))
+struct.pack_into('<I',STUB,len(STUB)-4,struct.unpack_from('<I',R4_STUB,len(R4_STUB)-4)[0]-2)
+STUB=bytes(STUB)
 
-def patch_core(data):
+def patch_core(data,refresh_sampled_view=True):
+    stub=STUB if refresh_sampled_view else R4_STUB
     canonical=bytearray(data)
     for offset,before,after,_ in PATCHES:
         if data[offset:offset+4] not in (before,after):
@@ -31,14 +38,14 @@ def patch_core(data):
     digest=hashlib.sha256(canonical).hexdigest().upper()
     if digest not in (ORIGINAL_SHA256,PUBLIC_SHA256):
         raise ValueError('Input is not a hash-verified original Manic core')
-    if data[ENTRY:ENTRY+4]!=ENTRY_ORIGINAL or any(data[CAVE:CAVE+len(STUB)]):
+    if data[ENTRY:ENTRY+4]!=ENTRY_ORIGINAL or any(data[CAVE:CAVE+len(stub)]):
         raise ValueError('Entry or unused executable padding guard failed')
     # Exact hash guarantees __TEXT VM == file offset and executable protection;
     # cave lies beyond all __TEXT sections, within existing zero page padding.
     out=bytearray(data)
     out[ENTRY:ENTRY+4]=ENTRY_BRANCH
-    out[CAVE:CAVE+len(STUB)]=STUB
-    allowed=set(range(ENTRY,ENTRY+4))|set(range(CAVE,CAVE+len(STUB)))
+    out[CAVE:CAVE+len(stub)]=stub
+    allowed=set(range(ENTRY,ENTRY+4))|set(range(CAVE,CAVE+len(stub)))
     assert len(out)==len(data)
     assert all(a==b or i in allowed for i,(a,b) in enumerate(zip(data,out)))
     return bytes(out)
