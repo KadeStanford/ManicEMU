@@ -21,6 +21,18 @@ jobs:
           # Upstream --parallel-build installs an EXIT 'kill 0' trap, which
           # terminates the Actions runner's process group after dependencies.
           ./fetchDependencies --iossim --no-parallel-build
+          # Simulator legacy feature queries report false despite successful
+          # real texture/sampler-array execution (capability run 37163437721).
+          # This correction is diagnostic and applies only to Simulator builds.
+          python3 - <<'PY'
+          import pathlib
+          p=pathlib.Path('MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm')
+          t=p.read_text()
+          before='#if MVK_OS_SIMULATOR\n\t_metalFeatures.mtlBufferAlignment = 256;\t// Even on Apple Silicon\n#endif'
+          assert t.count(before)==1
+          after=before.replace('#endif','\t_metalFeatures.arrayOfTextures = true;\n\t_metalFeatures.arrayOfSamplers = true;\n#endif')
+          p.write_text(t.replace(before,after))
+          PY
           make iossim
       - name: Exercise real simulator driver with Vulkan preflight
         run: |
