@@ -40,6 +40,15 @@ The baseline core is kept unchanged. Frame skipping OFF is still the physically
 confirmed Vulkan/Vapecord setting. Existing R6 gate mechanics are revalidated
 separately, but are not asserted to fix the currently reported random freeze.
 
+After a diagnostic build is integrated by its owner, read only the new
+Documents/ManicAzaharStabilityDiagnostics folder through the existing trusted
+connection. Leave a freeze in place briefly so the rolling snapshots can cover
+it. Run decode.py DIRECTORY --output NEW_PRIVATE_SUMMARY.json locally. The
+decoder accounts for loaded/unloaded images, bounds its stack walk, and emits
+native offsets and per-thread CPU deltas instead of stack memory. Keep the
+capture and decoded summary private. iPhone sampling overhead still needs to
+be measured from capture_duration_ms; host self-test timings are not a substitute.
+
 Windows lacks Xcode/iPhoneOS SDK. Build access exists on KadeStanford/ManicEMU,
 but that repository is public. The user authorized publication of this sanitized
 diagnostic source branch and its build on October 4, 2026. This authorization

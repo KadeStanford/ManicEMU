@@ -1,5 +1,10 @@
 name: Isolated Azahar stability diagnostic component
 on:
+  push:
+    branches: [recovery/azahar-stability-20261004]
+    paths:
+      - 'OriginalCoreRepair/StabilityDiagnostics/**'
+      - '.github/workflows/azahar-stability-diagnostic.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -53,6 +53,7 @@ report={'real_own_task_sampling_passed':True,'known_waiting_thread_captured':Tru
 (root/'self-test.json').write_text(json.dumps(report,indent=2))
 print(json.dumps(report))
 PY
+python3 decode.py "$testdir" --output "$testdir/private-decoded-summary.json"
 python3 - "$framework" "$build/component-manifest.json" <<'PY'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);binary=root/'ManicAzaharStabilityRecorder'
