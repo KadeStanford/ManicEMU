@@ -38,7 +38,7 @@ private:
     struct Edge { std::unique_ptr<Protocol> protocol; MAC alias; uint16_t slot; };
     void translate(Bytes &packet,bool outgoing) const;
     Nonce identity_; std::array<char,4> code_{};uint8_t revision_;
-    MAC native_,alias_;bool radio_=false,held_=false;
+    MAC alias_;bool radio_=false,held_=false;
     uint16_t nextSlot_=1,cursor_=0;
     std::map<Nonce,Edge> peers_;
 };

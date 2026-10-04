@@ -4,7 +4,7 @@
 #include <cstring>
 namespace manicds {
 MAC Room::address(Nonce n){return MAC{2,n[0],n[1],n[2],n[3],n[4]};}
-Room::Room(Nonce n,const char code[4],uint8_t r,MAC native):identity_(n),revision_(r),native_(native),alias_(native){
+Room::Room(Nonce n,const char code[4],uint8_t r,MAC native):identity_(n),revision_(r),alias_(native){
     if(code)std::memcpy(code_.data(),code,4);
 }
 bool Room::add(Nonce n,const char code[4],uint8_t revision,MAC alias){
