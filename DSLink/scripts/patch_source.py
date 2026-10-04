@@ -4,12 +4,17 @@ This source route is required for a shippable core. The separately verified
 binary instrumentation is a diagnostic prototype: the shipped 1.3.1 stop
 callback does not clear its queue, and must not be used for repeated sessions.
 """
-import argparse,pathlib,subprocess
-COMMIT='1a28e0fe2a78c9d2318f4324835ff906488299a2'
+import argparse,hashlib,pathlib,subprocess
+COMMIT='bc4e4b67d2d470d7c682810a1e892cafd6f9082b'
+COMPAT_SHA256='2f7f74fb63994137c527372d997e28206b7a578eb2e618271db6b2f296085779'
 def patch(root):
     root=pathlib.Path(root)
     commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
-    if commit!=COMMIT:raise ValueError('Pinned Manic melonDS DS v1.3.1 fork required')
+    if commit!=COMMIT:raise ValueError('Pinned melonDS DS v1.3.1 required')
+    compat=pathlib.Path(__file__).resolve().parents[1]/'patches/manic-v131-compat.patch'
+    if hashlib.sha256(compat.read_bytes()).hexdigest()!=COMPAT_SHA256:raise ValueError('Manic compatibility patch checksum mismatch')
+    subprocess.check_call(['git','-C',str(root),'apply','--check',str(compat)])
+    subprocess.check_call(['git','-C',str(root),'apply',str(compat)])
     changes={}
     def replace(file,before,after):
         p=root/file;s=changes.get(p,p.read_text())

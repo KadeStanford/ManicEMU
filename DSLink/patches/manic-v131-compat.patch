@@ -1,0 +1,1445 @@
+diff --git a/cmake/FetchDependencies.cmake b/cmake/FetchDependencies.cmake
+index 7265cb20..081a910e 100644
+--- a/cmake/FetchDependencies.cmake
++++ b/cmake/FetchDependencies.cmake
+@@ -41,7 +41,7 @@ function(fetch_dependency name default_url default_tag)
+     FetchContent_GetProperties(${name})
+ endfunction()
+ 
+-fetch_dependency(melonDS "https://github.com/melonDS-emu/melonDS" "7117178")
++fetch_dependency(melonDS "https://github.com/Daiuno/melonDS" "ee7505609fcfa48946d3e0235acecf315fa322ae")
+ fetch_dependency(libretro-common "https://github.com/libretro/libretro-common" "ad9124f")
+ fetch_dependency("embed-binaries" "https://github.com/andoalon/embed-binaries" "078b62b")
+ fetch_dependency(glm "https://github.com/g-truc/glm" "e7970a8")
+diff --git a/src/libretro/CMakeLists.txt b/src/libretro/CMakeLists.txt
+index 0ed80162..739f88e8 100644
+--- a/src/libretro/CMakeLists.txt
++++ b/src/libretro/CMakeLists.txt
+@@ -3,7 +3,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ 
+ include(embed-binaries)
+ 
+-if (BUILD_AS_SHARED_LIBRARY)
++if (BUILD_AS_SHARED_LIBRARY OR IOS)
+     set(LIBRARY_TYPE SHARED)
+ else ()
+     set(LIBRARY_TYPE MODULE)
+@@ -252,7 +252,23 @@ set_target_properties(melondsds_libretro PROPERTIES PREFIX "")
+ 
+ # Some platforms or compilers don't use the expected suffixes for shared libraries
+ if (APPLE)
+-    set_target_properties(melondsds_libretro PROPERTIES SUFFIX ".dylib")
++    if (IOS)
++        # For iOS, create a proper framework structure
++        set_target_properties(melondsds_libretro PROPERTIES
++            OUTPUT_NAME "melondsds.libretro"
++            FRAMEWORK TRUE
++            FRAMEWORK_VERSION A
++            MACOSX_FRAMEWORK_IDENTIFIER com.melonds.libretro.melondsds
++            MACOSX_FRAMEWORK_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
++            MACOSX_FRAMEWORK_SHORT_VERSION_STRING ${CMAKE_PROJECT_VERSION}
++            MACOSX_FRAMEWORK_BUNDLE_VERSION ${CMAKE_PROJECT_VERSION}
++            PUBLIC_HEADER ""
++            XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
++            XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
++        )
++    else()
++        set_target_properties(melondsds_libretro PROPERTIES SUFFIX ".dylib")
++    endif()
+ elseif(ANDROID)
+     set_target_properties(melondsds_libretro PROPERTIES SUFFIX "_android.so")
+ elseif (UNIX)
+@@ -265,6 +281,27 @@ if (WIN32 AND MINGW)
+     target_link_options(melondsds_libretro PUBLIC -static-libgcc -static-libstdc++ -static)
+ endif()
+ 
++# iOS specific linker flags to ensure App Store compatibility
++if (IOS)
++    target_link_options(melondsds_libretro PRIVATE
++        -Wl,-install_name,@rpath/melondsds.libretro.framework/melondsds.libretro
++        -Wl,-compatibility_version,1.0.0
++        -Wl,-current_version,${CMAKE_PROJECT_VERSION}
++    )
++
++    # Ensure the binary is built as a dynamic library, not a bundle
++    set_target_properties(melondsds_libretro PROPERTIES
++        XCODE_ATTRIBUTE_MACH_O_TYPE mh_dylib
++        XCODE_ATTRIBUTE_DYLIB_INSTALL_NAME_BASE "@rpath"
++    )
++
++    # Add code signing step for iOS
++    add_custom_command(TARGET melondsds_libretro POST_BUILD
++        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:melondsds_libretro>/melondsds.libretro"
++        COMMENT "Code signing melondsds.libretro framework"
++    )
++endif()
++
+ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "(.+)?Clang")
+     target_compile_options(melondsds_libretro PUBLIC -Werror=return-type)
+     # For some reason, C++ allows functions to not return values in all code paths.
+diff --git a/src/libretro/Info.plist.in b/src/libretro/Info.plist.in
+new file mode 100644
+index 00000000..02d262be
+--- /dev/null
++++ b/src/libretro/Info.plist.in
+@@ -0,0 +1,32 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++    <key>CFBundleDevelopmentRegion</key>
++    <string>English</string>
++    <key>CFBundleExecutable</key>
++    <string>melondsds.libretro</string>
++    <key>CFBundleIdentifier</key>
++    <string>com.melonds.libretro.melondsds</string>
++    <key>CFBundleInfoDictionaryVersion</key>
++    <string>6.0</string>
++    <key>CFBundleName</key>
++    <string>melondsds.libretro</string>
++    <key>CFBundlePackageType</key>
++    <string>FMWK</string>
++    <key>CFBundleShortVersionString</key>
++    <string>@CMAKE_PROJECT_VERSION@</string>
++    <key>CFBundleVersion</key>
++    <string>@CMAKE_PROJECT_VERSION@</string>
++    <key>CFBundleSignature</key>
++    <string>????</string>
++    <key>NSPrincipalClass</key>
++    <string></string>
++    <key>CFBundleSupportedPlatforms</key>
++    <array>
++        <string>iPhoneOS</string>
++    </array>
++    <key>MinimumOSVersion</key>
++    <string>14.0</string>
++</dict>
++</plist>
+diff --git a/src/libretro/buffer.cpp b/src/libretro/buffer.cpp
+index 9c03d7c0..ba1becd3 100644
+--- a/src/libretro/buffer.cpp
++++ b/src/libretro/buffer.cpp
+@@ -17,6 +17,7 @@
+ #include "buffer.hpp"
+ #include "screenlayout.hpp"
+ #include "tracy.hpp"
++#include <algorithm>
+ 
+ #include <cstring>
+ 
+@@ -61,4 +62,31 @@ void MelonDsDs::PixelBuffer::CopyRows(const uint32_t* source, uvec2 destination,
+             destinationSize.x * PIXEL_SIZE
+         );
+     }
+-}
+\ No newline at end of file
++}
++
++void MelonDsDs::PixelBuffer::CopyScaled(const uint32_t* source, uvec2 sourceSize, uvec2 destination, uvec2 destinationSize) noexcept {
++    ZoneScopedN(TracyFunction);
++    if (destinationSize.x == 0 || destinationSize.y == 0)
++        return;
++    // Simple nearest-neighbor scaling (skip destination pixels outside the framebuffer)
++    for (unsigned destY = 0; destY < destinationSize.y; destY++) {
++        const unsigned dstY = destination.y + destY;
++        if (dstY >= size.y)
++            continue;
++        for (unsigned destX = 0; destX < destinationSize.x; destX++) {
++            const unsigned dstX = destination.x + destX;
++            if (dstX >= size.x)
++                continue;
++            // Map destination pixel to source pixel
++            unsigned srcX = (destX * sourceSize.x) / destinationSize.x;
++            unsigned srcY = (destY * sourceSize.y) / destinationSize.y;
++
++            // Clamp to source bounds
++            srcX = std::min(srcX, sourceSize.x - 1);
++            srcY = std::min(srcY, sourceSize.y - 1);
++
++            uint32_t pixel = source[srcY * sourceSize.x + srcX];
++            this->operator[](uvec2(dstX, dstY)) = pixel;
++        }
++    }
++}
+diff --git a/src/libretro/buffer.hpp b/src/libretro/buffer.hpp
+index 126af2bf..278ace16 100644
+--- a/src/libretro/buffer.hpp
++++ b/src/libretro/buffer.hpp
+@@ -62,6 +62,7 @@ namespace MelonDsDs {
+         void Clear() noexcept;
+         void CopyDirect(const uint32_t* source, glm::uvec2 destination) noexcept;
+         void CopyRows(const uint32_t* source, glm::uvec2 destination, glm::uvec2 destinationSize) noexcept;
++        void CopyScaled(const uint32_t* source, glm::uvec2 sourceSize, glm::uvec2 destination, glm::uvec2 destinationSize) noexcept;
+     private:
+         glm::uvec2 size;
+         unsigned stride;
+diff --git a/src/libretro/config/config.cpp b/src/libretro/config/config.cpp
+index 4f1a08ea..8485cf68 100644
+--- a/src/libretro/config/config.cpp
++++ b/src/libretro/config/config.cpp
+@@ -382,6 +382,7 @@ static void MelonDsDs::config::ParseJitOptions(CoreConfig& config) noexcept {
+ 
+     if (optional<bool> value = ParseBoolean(get_variable(cpu::JIT_ENABLE))) {
+         config.SetJitEnable(*value);
++        retro::info("[MelonDS-JIT] ParseJitOptions: melonds_jit_enable={}", *value ? "enabled" : "disabled");
+     } else {
+         retro::warn("Failed to get value for {}; defaulting to {}", cpu::JIT_ENABLE, values::ENABLED);
+         config.SetJitEnable(true);
+@@ -611,11 +612,13 @@ static void MelonDsDs::config::ParseFirmwareOptions(CoreConfig& config) noexcept
+     }
+ 
+     if (string_view wfcDnsText = get_variable(firmware::WFC_DNS); wfcDnsText == values::DEFAULT) {
++        retro::debug("无法读取wfc nds", firmware::WFC_DNS);
+         config.SetDnsServer(nullopt);
+     } else if (optional<IpAddress> wfcDns = ParseIpAddress(wfcDnsText)) {
++        retro::debug("读取wfc dns成功 {}", wfcDnsText);
+         config.SetDnsServer(*wfcDns);
+     } else {
+-        retro::warn("Failed to get value for {}; defaulting to existing firmware value", firmware::WFC_DNS);
++        retro::warn("无法读取wfc nds", firmware::WFC_DNS);
+         config.SetDnsServer(nullopt);
+     }
+ }
+@@ -815,6 +818,21 @@ static void MelonDsDs::config::ParseScreenOptions(CoreConfig& config) noexcept {
+         config.SetHybridRatio(2);
+     }
+ 
++        // Custom layout params (allow a wide safe range)
++    auto parsePx = [&](const char* key, unsigned def, unsigned min, unsigned max)->unsigned {
++        if (optional<unsigned> v = ParseIntegerInRange<unsigned>(retro::get_variable(key), min, max)) return *v;
++        retro::warn("Failed to get value for {}; defaulting to {}", key, def);
++        return def;
++    };
++    // Parse custom layout configuration string
++    auto customLayoutValue = get_variable(CUSTOM_LAYOUT_CONFIG);
++    if (!customLayoutValue.empty()) {
++        config.SetCustomLayoutConfig(std::string(customLayoutValue));
++    } else {
++        retro::warn("Failed to get value for {}; using default", CUSTOM_LAYOUT_CONFIG);
++        config.SetCustomLayoutConfig("0,0,256,192,256,0,256,192,512,384");
++    }
++
+     if (optional<HybridSideScreenDisplay> value = ParseHybridSideScreenDisplay(get_variable(HYBRID_SMALL_SCREEN))) {
+         config.SetSmallScreenLayout(*value);
+     } else {
+diff --git a/src/libretro/config/config.hpp b/src/libretro/config/config.hpp
+index d0e86f32..771dd371 100644
+--- a/src/libretro/config/config.hpp
++++ b/src/libretro/config/config.hpp
+@@ -294,16 +294,104 @@ namespace MelonDsDs {
+         void SetJoystickCursorDeadzone(int joystickCursorDeadzone) noexcept { _joystickCursorDeadzone = joystickCursorDeadzone; }
+ 
+         [[nodiscard]] int JoystickCursorMaxSpeed() const noexcept { return _joystickCursorMaxSpeed; }
+-        void SetJoystickCursorMaxSpeed(int joystickCursorMaxSpeed) noexcept { _joystickCursorMaxSpeed = joystickCursorMaxSpeed; }        
++        void SetJoystickCursorMaxSpeed(int joystickCursorMaxSpeed) noexcept { _joystickCursorMaxSpeed = joystickCursorMaxSpeed; }
+ 
+         [[nodiscard]] int JoystickCursorResponse() const noexcept { return _joystickCursorResponse; }
+-        void SetJoystickCursorResponse(int joystickCursorResponse) noexcept { _joystickCursorResponse = joystickCursorResponse; }        
+-            
++        void SetJoystickCursorResponse(int joystickCursorResponse) noexcept { _joystickCursorResponse = joystickCursorResponse; }
++
+         [[nodiscard]] int JoystickCursorSpeedup() const noexcept { return _joystickCursorSpeedup; }
+-        void SetJoystickCursorSpeedup(int joystickCursorSpeedup) noexcept { _joystickCursorSpeedup = joystickCursorSpeedup; }        
++        void SetJoystickCursorSpeedup(int joystickCursorSpeedup) noexcept { _joystickCursorSpeedup = joystickCursorSpeedup; }
+ 
+         [[nodiscard]] bool JoystickSpeedupEnabled() const noexcept { return _joystickSpeedupEnabled; }
+-        void SetJoystickSpeedupEnabled(bool joystickSpeedupEnabled) noexcept { _joystickSpeedupEnabled = joystickSpeedupEnabled; }           
++        void SetJoystickSpeedupEnabled(bool joystickSpeedupEnabled) noexcept { _joystickSpeedupEnabled = joystickSpeedupEnabled; }
++        // Custom layout parameters
++        [[nodiscard]] std::string_view CustomLayoutConfig() const noexcept { return _customLayoutConfig; }
++        void SetCustomLayoutConfig(const std::string& config) noexcept { _customLayoutConfig = config; }
++
++        // Convenience methods for parsed custom layout parameters
++        // Integer versions for backward compatibility
++        [[nodiscard]] unsigned CustomTopX() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetTopX();
++        }
++        [[nodiscard]] unsigned CustomTopY() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetTopY();
++        }
++        [[nodiscard]] unsigned CustomTopW() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetTopWidth();
++        }
++        [[nodiscard]] unsigned CustomTopH() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetTopHeight();
++        }
++        [[nodiscard]] unsigned CustomBottomX() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBottomX();
++        }
++        [[nodiscard]] unsigned CustomBottomY() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBottomY();
++        }
++        [[nodiscard]] unsigned CustomBottomW() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBottomWidth();
++        }
++        [[nodiscard]] unsigned CustomBottomH() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBottomHeight();
++        }
++        [[nodiscard]] unsigned CustomBufferWidth() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBufferWidth();
++        }
++        [[nodiscard]] unsigned CustomBufferHeight() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.GetBufferHeight();
++        }
++
++        // New floating-point versions for precise positioning
++        [[nodiscard]] float CustomTopXFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.topX;
++        }
++        [[nodiscard]] float CustomTopYFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.topY;
++        }
++        [[nodiscard]] float CustomTopWFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.topWidth;
++        }
++        [[nodiscard]] float CustomTopHFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.topHeight;
++        }
++        [[nodiscard]] float CustomBottomXFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bottomX;
++        }
++        [[nodiscard]] float CustomBottomYFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bottomY;
++        }
++        [[nodiscard]] float CustomBottomWFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bottomWidth;
++        }
++        [[nodiscard]] float CustomBottomHFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bottomHeight;
++        }
++        [[nodiscard]] float CustomBufferWidthFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bufferWidth;
++        }
++        [[nodiscard]] float CustomBufferHeightFloat() const noexcept {
++            EnsureCustomLayoutParsed();
++            return _parsedCustomLayout.bufferHeight;
++        }
+ 
+         [[nodiscard]] MelonDsDs::ConsoleType ConsoleType() const noexcept { return _consoleType; }
+         void SetConsoleType(MelonDsDs::ConsoleType consoleType) noexcept { _consoleType = consoleType; }
+@@ -425,6 +513,13 @@ namespace MelonDsDs {
+         [[nodiscard]] bool UseRealLightSensor() const noexcept { return _useRealLightSensor; }
+         void SetUseRealLightSensor(bool enabled) noexcept { _useRealLightSensor = enabled; }
+     private:
++        void EnsureCustomLayoutParsed() const noexcept {
++            static std::string lastParsedConfig;
++            if (_customLayoutConfig != lastParsedConfig) {
++                _parsedCustomLayout = ParseCustomLayoutConfig(_customLayoutConfig);
++                lastParsedConfig = _customLayoutConfig;
++            }
++        }
+         void CustomizeFirmware(melonDS::Firmware& firmware);
+         MelonDsDs::MicButtonMode _micButtonMode = MelonDsDs::MicButtonMode::Hold;
+         MelonDsDs::MicInputMode _micInputMode = *ParseMicInputMode(config::definitions::MicInput.default_value);
+@@ -502,6 +597,9 @@ namespace MelonDsDs {
+         int _joystickCursorSpeedup = 200;
+         bool _joystickSpeedupEnabled = false;
+         MelonDsDs::TouchMode _touchMode;
++        // Custom layout configuration
++        std::string _customLayoutConfig = "0,0,256,192,256,0,256,192,512,384";
++        mutable CustomLayoutParams _parsedCustomLayout;
+         MelonDsDs::ConsoleType _consoleType;
+         MelonDsDs::BootMode _bootMode;
+         MelonDsDs::SysfileMode _sysfileMode;
+diff --git a/src/libretro/config/console.cpp b/src/libretro/config/console.cpp
+index 969c301c..d862db87 100644
+--- a/src/libretro/config/console.cpp
++++ b/src/libretro/config/console.cpp
+@@ -240,6 +240,28 @@ void MelonDsDs::UpdateConsole(const CoreConfig& config, melonDS::NDS& nds) noexc
+ 
+     nds.SPU.SetInterpolation(config.Interpolation());
+     nds.SPU.SetDegrade10Bit(config.BitDepth());
++
++#ifdef JIT_ENABLED
++    bool wantJIT = config.JitEnable();
++    bool currentJIT = nds.IsJITEnabled();
++    if (wantJIT != currentJIT) {
++        retro::info("[MelonDS-JIT] JIT config changed: {} -> {}", currentJIT ? "enabled" : "disabled", wantJIT ? "enabled" : "disabled");
++        if (wantJIT) {
++            nds.SetJITArgs(melonDS::JITArgs {
++                .MaxBlockSize = config.MaxBlockSize(),
++                .LiteralOptimizations = config.LiteralOptimizations(),
++                .BranchOptimizations = config.BranchOptimizations(),
++#   ifdef HAVE_JIT_FASTMEM
++                .FastMemory = config.FastMemory(),
++#   else
++                .FastMemory = false,
++#   endif
++            });
++        } else {
++            nds.SetJITArgs(std::nullopt);
++        }
++    }
++#endif
+ }
+ 
+ // First, load the system files
+@@ -523,6 +545,16 @@ static void MelonDsDs::ApplyCommonArgs(const CoreConfig& config, melonDS::NDSArg
+     args.BitDepth = config.BitDepth();
+ #ifdef JIT_ENABLED
+     if (config.JitEnable()) {
++        retro::info("[MelonDS-JIT] JIT recompiler ENABLED (MaxBlockSize={}, LiteralOpt={}, BranchOpt={}, FastMem={})",
++            config.MaxBlockSize(),
++            config.LiteralOptimizations() ? "true" : "false",
++            config.BranchOptimizations() ? "true" : "false",
++#   ifdef HAVE_JIT_FASTMEM
++            config.FastMemory() ? "true" : "false"
++#   else
++            "false (not available)"
++#   endif
++        );
+         args.JIT = {
+             .MaxBlockSize = config.MaxBlockSize(),
+             .LiteralOptimizations = config.LiteralOptimizations(),
+@@ -535,9 +567,11 @@ static void MelonDsDs::ApplyCommonArgs(const CoreConfig& config, melonDS::NDSArg
+         };
+     }
+     else {
++        retro::info("[MelonDS-JIT] JIT recompiler DISABLED by config (melonds_jit_enable=disabled)");
+         args.JIT = std::nullopt;
+     }
+ #else
++    retro::info("[MelonDS-JIT] JIT not compiled in (JIT_ENABLED not defined)");
+     args.JIT = std::nullopt;
+ #endif
+ }
+@@ -1424,4 +1458,4 @@ static optional<melonDS::FATStorage> MelonDsDs::LoadDSiSDCardImage(const CoreCon
+         config.DsiSdReadOnly(),
+         config.DsiSdFolderSync() ? make_optional(string(config.DsiSdFolderPath())) : nullopt
+     );
+-}
+\ No newline at end of file
++}
+diff --git a/src/libretro/config/constants.hpp b/src/libretro/config/constants.hpp
+index 07d633f6..6a176f58 100644
+--- a/src/libretro/config/constants.hpp
++++ b/src/libretro/config/constants.hpp
+@@ -118,6 +118,7 @@ namespace MelonDsDs::config {
+         static constexpr const char *const JOYSTICK_CURSOR_MAXSPEED = "melonds_joystick_cursor_maxspeed";
+         static constexpr const char *const JOYSTICK_CURSOR_RESPONSE = "melonds_joystick_cursor_response";
+         static constexpr const char *const JOYSTICK_CURSOR_SPEEDUP = "melonds_joystick_cursor_speedup";
++        static constexpr const char *const CUSTOM_LAYOUT_CONFIG = "melonds_custom_layout_config";
+         static constexpr std::array SCREEN_LAYOUTS = {
+                 SCREEN_LAYOUT1,
+                 SCREEN_LAYOUT2,
+@@ -186,7 +187,7 @@ namespace MelonDsDs::config {
+     namespace values {
+         namespace firmware {
+             static constexpr const char *const FIRMWARE_USERNAME = "existing_username"; // longer than 10 chars so it's not a valid DS username
+-            static constexpr const char *const GUESS_USERNAME = "guess_username";
++            static constexpr const char *const GUESS_USERNAME = "ManicEMU";
+             static constexpr const char *const DEFAULT_USERNAME = "melonDS DS";
+         }
+         namespace system {
+@@ -198,7 +199,7 @@ namespace MelonDsDs::config {
+             static constexpr const char *const DEFAULT = "0.0.0.0";
+             static constexpr const char *const ALTWFC = "172.104.88.237";
+             static constexpr const char *const KAERU = "178.62.43.212";
+-            static constexpr const char *const WIIMMFI = "95.217.77.181";
++            static constexpr const char *const WIIMMFI = "167.235.229.36";
+         }
+         static constexpr const char *const _10BIT = "10bit";
+         static constexpr const char *const _16BIT = "16bit";
+@@ -274,6 +275,7 @@ namespace MelonDsDs::config {
+         static constexpr const char *const UPSIDE_DOWN = "rotate-180";
+         static constexpr const char *const WEAK = "weak";
+         static constexpr const char *const FROM_USERNAME = "from-username";
++        static constexpr const char *const CUSTOM = "custom";
+     }
+ 
+     constexpr size_t NOCASH_FOOTER_SIZE = 0x40;
+diff --git a/src/libretro/config/definitions.hpp b/src/libretro/config/definitions.hpp
+index c927cb38..85eb8d61 100644
+--- a/src/libretro/config/definitions.hpp
++++ b/src/libretro/config/definitions.hpp
+@@ -80,6 +80,7 @@ namespace MelonDsDs::config::definitions {
+         ScreenGap,
+         SecondaryScreenScale,
+         SecondaryScreenFiltering,
++        CustomLayoutConfig,
+ 
+         DnsOverride,
+         Language,
+diff --git a/src/libretro/config/definitions/firmware.hpp b/src/libretro/config/definitions/firmware.hpp
+index 24d6e584..a1cdca47 100644
+--- a/src/libretro/config/definitions/firmware.hpp
++++ b/src/libretro/config/definitions/firmware.hpp
+@@ -44,7 +44,7 @@ namespace MelonDsDs::config::definitions {
+         {
+             {config::values::wfc::KAERU, "Kaeru WFC (178.62.43.212)"},
+             {config::values::wfc::ALTWFC, "AltWFC (172.104.88.237)"},
+-            {config::values::wfc::WIIMMFI, "Wiimmfi (95.217.77.181)"},
++            {config::values::wfc::WIIMMFI, "Wiimmfi (167.235.229.36)"},
+             {config::values::wfc::DEFAULT, "Force Default DNS"},
+             {config::values::DEFAULT, "Don't Override"},
+             {nullptr, nullptr},
+diff --git a/src/libretro/config/definitions/screen.hpp b/src/libretro/config/definitions/screen.hpp
+index 5a233470..dae99bc3 100644
+--- a/src/libretro/config/definitions/screen.hpp
++++ b/src/libretro/config/definitions/screen.hpp
+@@ -170,8 +170,8 @@ namespace MelonDsDs::config::definitions {
+             {nullptr, nullptr},
+         },
+         "200"
+-    };    
+-    
++    };
++
+     constexpr retro_core_option_v2_definition HybridRatio {
+         config::screen::HYBRID_RATIO,
+         "Hybrid/Largescreen Ratio",
+@@ -453,6 +453,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::TOP_BOTTOM
+@@ -483,6 +484,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::LEFT_RIGHT
+@@ -513,6 +515,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::LARGESCREEN_TOP
+@@ -543,6 +546,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::LARGESCREEN_BOTTOM
+@@ -573,6 +577,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::HYBRID_TOP
+@@ -603,6 +608,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::HYBRID_BOTTOM
+@@ -633,6 +639,7 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::TOP
+@@ -663,11 +670,33 @@ namespace MelonDsDs::config::definitions {
+             {MelonDsDs::config::values::ROTATE_LEFT, "Rotated Left"},
+             {MelonDsDs::config::values::ROTATE_RIGHT, "Rotated Right"},
+             {MelonDsDs::config::values::UPSIDE_DOWN, "Upside Down"},
++            {MelonDsDs::config::values::CUSTOM, "Custom"},
+             {nullptr, nullptr},
+         },
+         MelonDsDs::config::values::BOTTOM
+     };
+ 
++    constexpr retro_core_option_v2_definition CustomLayoutConfig {
++        config::screen::CUSTOM_LAYOUT_CONFIG,
++        "Custom Layout Configuration",
++        "Custom Config",
++        "Custom layout parameters as comma-separated values: topX,topY,topWidth,topHeight,bottomX,bottomY,bottomWidth,bottomHeight,bufferWidth,bufferHeight. Example: \"0,0,256,192,256,0,256,192,512,384\"",
++        nullptr,
++        config::screen::CATEGORY,
++        {
++            {"0,0,256,192,256,0,256,192,512,384", "Side by Side"},
++            {"0,0,256,192,0,192,256,192,256,384", "Vertical"},
++            {"128,96,256,192,128,288,256,192,512,576", "Centered Vertical"},
++            {"0,48,384,288,0,336,384,288,384,624", "Large Scaled"},
++            {"50.5,50.5,200,150,300.5,50.5,200,150,550,250", "Precise Positioning"},
++            {"0,0,512,384,0,384,512,384,512,768", "Large Vertical"},
++            {"100.25,25.75,256,192,400.75,125.25,256,192,750,350", "Sub-pixel Layout"},
++            {nullptr, nullptr},
++        },
++        "0,0,256,192,256,0,256,192,512,384"
++    };
++
++
+     constexpr std::initializer_list<retro_core_option_v2_definition> ScreenOptionDefinitions {
+         ShowCursor,
+         CursorTimeout,
+@@ -691,6 +720,7 @@ namespace MelonDsDs::config::definitions {
+         ScreenGap,
+         SecondaryScreenScale,
+         SecondaryScreenFiltering,
++        CustomLayoutConfig,
+     };
+ }
+ 
+diff --git a/src/libretro/config/parse.cpp b/src/libretro/config/parse.cpp
+index 57e9557e..4960194a 100644
+--- a/src/libretro/config/parse.cpp
++++ b/src/libretro/config/parse.cpp
+@@ -19,6 +19,7 @@
+ #include <optional>
+ 
+ #include <net/net_compat.h>
++#include "../environment.hpp"
+ 
+ std::optional<melonDS::IpAddress> MelonDsDs::ParseIpAddress(std::string_view value) noexcept {
+     ZoneScopedN(TracyFunction);
+@@ -36,4 +37,127 @@ std::optional<melonDS::IpAddress> MelonDsDs::ParseIpAddress(std::string_view val
+     }
+ 
+     return std::nullopt;
+-}
+\ No newline at end of file
++}
++
++MelonDsDs::CustomLayoutParams MelonDsDs::ParseCustomLayoutConfig(std::string_view value) noexcept {
++    CustomLayoutParams params;
++    retro::debug(">>>>>开始解析自定义布局: {}", value);
++    if (value.empty()) {
++        retro::debug("自定义布局为空");
++        return params;
++    }
++
++    // Simple comma-separated parsing
++    // Expected format: "topX,topY,topWidth,topHeight,bottomX,bottomY,bottomWidth,bottomHeight,bufferWidth,bufferHeight"
++    // Now supports floating-point values like "100.5,200.25,256.0,192.0,300.75,0,256,192,512,384"
++    size_t pos = 0;
++    float values[10] = {0.0f};
++    int valueIndex = 0;
++
++    while (pos < value.length() && valueIndex <= 10) {
++        size_t commaPos = value.find(',', pos);
++        if (commaPos == std::string_view::npos) {
++            commaPos = value.length();
++        }
++
++        std::string_view numberStr = value.substr(pos, commaPos - pos);
++
++        if (numberStr.empty()) {
++            retro::debug("自定义布局格式错误1");
++            return params;  // Invalid format
++        }
++
++        // Parse floating-point number
++        float num = 0.0f;
++        float decimal = 0.0f;
++        float divisor = 1.0f;
++        bool hasDecimal = false;
++        bool validNumber = true;
++        bool negative = false;
++        int decimalDigits = 0;
++
++        size_t i = 0;
++        if (!numberStr.empty() && numberStr[0] == '-') {
++            negative = true;
++            i = 1;
++            if (i >= numberStr.length()) {
++                retro::debug("自定义布局格式错误2");
++                return params;  // Invalid: only negative sign
++            }
++        }
++
++        bool hasDigits = false;
++        bool hasDigitsAfterDecimal = false;
++
++        for (; i < numberStr.length(); ++i) {
++            char c = numberStr[i];
++            if (c >= '0' && c <= '9') {
++                hasDigits = true;
++                if (hasDecimal) {
++                    hasDigitsAfterDecimal = true;
++                    // Limit decimal precision to avoid overflow
++                    if (decimalDigits < 10) {  // Only process first 10 decimal digits
++                        decimal = decimal * 10.0f + (c - '0');
++                        divisor *= 10.0f;
++                        decimalDigits++;
++                    }
++                    // Ignore additional decimal digits but continue parsing
++                } else {
++                    num = num * 10.0f + (c - '0');
++                    if (num > 99999.0f) {  // Reasonable limits for integer part
++                        validNumber = false;
++                        break;
++                    }
++                }
++            } else if (c == '.' && !hasDecimal) {
++                hasDecimal = true;
++            } else {
++                validNumber = false;
++                break;
++            }
++        }
++
++        // Validate number format
++        if (!validNumber || !hasDigits || (hasDecimal && !hasDigitsAfterDecimal)) {
++            retro::debug("自定义布局格式错误3 - 数值: '{}', 索引: {}, validNumber: {}, hasDigits: {}, hasDecimal: {}, hasDigitsAfterDecimal: {}",
++                        std::string(numberStr), valueIndex, validNumber, hasDigits, hasDecimal, hasDigitsAfterDecimal);
++            return params;  // Invalid format
++        }
++
++        float finalValue = num + (decimal / divisor);
++        if (negative) {
++            finalValue = -finalValue;
++        }
++
++        retro::debug("解析数值 {}: '{}' -> {}", valueIndex, std::string(numberStr), finalValue);
++
++        if (valueIndex < 10) {
++            values[valueIndex] = finalValue;
++        }
++        valueIndex++;
++        pos = commaPos + 1;
++    }
++
++    // Need exactly 10 values
++    if (valueIndex == 10) {
++        params.topX = values[0];
++        params.topY = values[1];
++        params.topWidth = values[2];
++        params.topHeight = values[3];
++        params.bottomX = values[4];
++        params.bottomY = values[5];
++        params.bottomWidth = values[6];
++        params.bottomHeight = values[7];
++        params.bufferWidth = values[8];
++        params.bufferHeight = values[9];
++        params.valid = true;
++    }
++
++    // 打印params
++    retro::debug("自定义布局参数: topX={}, topY={}, topWidth={}, topHeight={}, bottomX={}, bottomY={}, bottomWidth={}, bottomHeight={}, bufferWidth={}, bufferHeight={}, valid={}",
++        params.topX, params.topY, params.topWidth, params.topHeight,
++        params.bottomX, params.bottomY, params.bottomWidth, params.bottomHeight,
++        params.bufferWidth, params.bufferHeight, params.valid);
++
++    return params;
++}
+diff --git a/src/libretro/config/parse.hpp b/src/libretro/config/parse.hpp
+index b6c7245d..f6535fc0 100644
+--- a/src/libretro/config/parse.hpp
++++ b/src/libretro/config/parse.hpp
+@@ -155,6 +155,8 @@ namespace MelonDsDs {
+         if (value == config::values::LARGESCREEN_BOTTOM) return ScreenLayout::LargescreenBottom;
+         if (value == config::values::FLIPPED_LARGESCREEN_TOP) return ScreenLayout::FlippedLargescreenTop;
+         if (value == config::values::FLIPPED_LARGESCREEN_BOTTOM) return ScreenLayout::FlippedLargescreenBottom;
++        if (value == config::values::CUSTOM) return ScreenLayout::Custom;
++
+         return std::nullopt;
+     }
+ 
+@@ -239,5 +241,35 @@ namespace MelonDsDs {
+     }
+ 
+     std::optional<melonDS::IpAddress> ParseIpAddress(std::string_view value) noexcept;
++    // Custom layout configuration parser
++    struct CustomLayoutParams {
++        float topX = 0.0f;
++        float topY = 0.0f;
++        float topWidth = 256.0f;
++        float topHeight = 192.0f;
++        float bottomX = 256.0f;
++        float bottomY = 0.0f;
++        float bottomWidth = 256.0f;
++        float bottomHeight = 192.0f;
++        float bufferWidth = 512.0f;
++        float bufferHeight = 384.0f;
++
++        bool valid = false;
++
++        // Convenience methods to get integer values for backward compatibility
++        unsigned GetTopX() const noexcept { return static_cast<unsigned>(topX + 0.5f); }
++        unsigned GetTopY() const noexcept { return static_cast<unsigned>(topY + 0.5f); }
++        unsigned GetTopWidth() const noexcept { return static_cast<unsigned>(topWidth + 0.5f); }
++        unsigned GetTopHeight() const noexcept { return static_cast<unsigned>(topHeight + 0.5f); }
++        unsigned GetBottomX() const noexcept { return static_cast<unsigned>(bottomX + 0.5f); }
++        unsigned GetBottomY() const noexcept { return static_cast<unsigned>(bottomY + 0.5f); }
++        unsigned GetBottomWidth() const noexcept { return static_cast<unsigned>(bottomWidth + 0.5f); }
++        unsigned GetBottomHeight() const noexcept { return static_cast<unsigned>(bottomHeight + 0.5f); }
++        unsigned GetBufferWidth() const noexcept { return static_cast<unsigned>(bufferWidth + 0.5f); }
++        unsigned GetBufferHeight() const noexcept { return static_cast<unsigned>(bufferHeight + 0.5f); }
++    };
++
++    // Declaration only - implementation in parse.cpp
++    CustomLayoutParams ParseCustomLayoutConfig(std::string_view value) noexcept;
+ }
+ #endif // MELONDSDS_PARSE_HPP
+diff --git a/src/libretro/config/types.hpp b/src/libretro/config/types.hpp
+index 7d64d38c..59d25754 100644
+--- a/src/libretro/config/types.hpp
++++ b/src/libretro/config/types.hpp
+@@ -155,6 +155,7 @@ namespace MelonDsDs {
+         LargescreenBottom = 14,
+         FlippedLargescreenTop = 15,
+         FlippedLargescreenBottom = 16,
++        Custom = 17,
+     };
+ 
+     enum class HybridSideScreenDisplay {
+diff --git a/src/libretro/config/visibility.cpp b/src/libretro/config/visibility.cpp
+index b28b5232..aee00b11 100644
+--- a/src/libretro/config/visibility.cpp
++++ b/src/libretro/config/visibility.cpp
+@@ -123,22 +123,26 @@ bool MelonDsDs::CoreOptionVisibility::Update() noexcept {
+         updated = true;
+     }
+ 
+-    // Show/hide Hybrid screen options
++    // Show/hide Hybrid screen options and Custom layout options
+     bool oldShowHybridOptions = ShowHybridOptions;
+     bool oldShowVerticalLayoutOptions = ShowVerticalLayoutOptions;
+     bool oldShowSecondaryScaleOptions = ShowSecondaryScaleOptions;
+     bool anyHybridLayouts = false;
+     bool anyVerticalLayouts = false;
+     bool anySecondaryScaleLayouts = false;
++    bool oldShowCustomLayoutOptions = ShowCustomLayoutOptions;
++    bool anyCustomLayouts = false;
+     for (unsigned i = 0; i < NumberOfShownScreenLayouts; i++) {
+         optional<MelonDsDs::ScreenLayout> parsedLayout = ParseScreenLayout(get_variable(screen::SCREEN_LAYOUTS[i]));
+         anyHybridLayouts |= !parsedLayout || IsHybridLayout(*parsedLayout) || IsLargeScreenLayout(*parsedLayout);
+         anyVerticalLayouts |= !parsedLayout || LayoutSupportsScreenGap(*parsedLayout);
+         anySecondaryScaleLayouts |= !parsedLayout || LayoutSupportsSecondaryScreenScale(*parsedLayout);
++        anyCustomLayouts |= parsedLayout && *parsedLayout == MelonDsDs::ScreenLayout::Custom;
+     }
+     ShowHybridOptions = anyHybridLayouts;
+     ShowVerticalLayoutOptions = anyVerticalLayouts;
+     ShowSecondaryScaleOptions = anySecondaryScaleLayouts;
++    ShowCustomLayoutOptions = anyCustomLayouts;
+ 
+     if (!VisibilityInitialized || ShowHybridOptions != oldShowHybridOptions) {
+         set_option_visible(screen::HYBRID_SMALL_SCREEN, ShowHybridOptions);
+@@ -158,6 +162,11 @@ bool MelonDsDs::CoreOptionVisibility::Update() noexcept {
+         updated = true;
+     }
+ 
++    if (!VisibilityInitialized || ShowCustomLayoutOptions != oldShowCustomLayoutOptions) {
++        set_option_visible(screen::CUSTOM_LAYOUT_CONFIG, ShowCustomLayoutOptions);
++        updated = true;
++    }
++
+     bool oldShowAlarm = ShowAlarm;
+     optional<AlarmMode> alarmMode = ParseAlarmMode(get_variable(firmware::ENABLE_ALARM));
+     ShowAlarm = !alarmMode || *alarmMode == AlarmMode::Enabled;
+@@ -216,6 +225,15 @@ bool MelonDsDs::CoreOptionVisibility::Update() noexcept {
+         updated = true;
+     }
+ 
++    // Force initial visibility state for custom layout options if not initialized
++    if (!VisibilityInitialized) {
++        // Set initial visibility based on current layout state
++        // This ensures that if Custom Layout is already selected on first start,
++        // the sub-options will be visible immediately
++        set_option_visible(screen::CUSTOM_LAYOUT_CONFIG, ShowCustomLayoutOptions);
++        updated = true;
++    }
++
+     VisibilityInitialized = true;
+     return updated;
+ }
+diff --git a/src/libretro/config/visibility.hpp b/src/libretro/config/visibility.hpp
+index 3d64d8b2..5522ede0 100644
+--- a/src/libretro/config/visibility.hpp
++++ b/src/libretro/config/visibility.hpp
+@@ -31,6 +31,7 @@ namespace MelonDsDs {
+         bool ShowHybridOptions = true;
+         bool ShowVerticalLayoutOptions = true;
+         bool ShowSecondaryScaleOptions = true;
++        bool ShowCustomLayoutOptions = false;
+         bool ShowCursorTimeout = true;
+         bool ShowAlarm = true;
+         unsigned NumberOfShownScreenLayouts = config::screen::MAX_SCREEN_LAYOUTS;
+diff --git a/src/libretro/core/core.cpp b/src/libretro/core/core.cpp
+index 20aa7165..2c2eb8f4 100644
+--- a/src/libretro/core/core.cpp
++++ b/src/libretro/core/core.cpp
+@@ -154,6 +154,9 @@ void MelonDsDs::CoreState::Run() noexcept {
+         UpdateConsole(Config, nds);
+     }
+ 
++    // WFC Connection Status Monitoring
++    UpdateWfcConnectionStatus(nds);
++
+     if (!_ndsSramInstalled) [[unlikely]] {
+         InstallNdsSram();
+         _ndsSramInstalled = true;
+@@ -758,6 +761,89 @@ void MelonDsDs::CoreState::InitContent(unsigned type, std::span<const retro_game
+                 }
+ 
+                 _ndsInfo = game[0];
++
++                // Try to find accompanying GBA ROM and save files
++                // Only search if not already provided through other game types
++                if (_ndsInfo && !_ndsInfo->GetPath().empty()) {
++                    std::string ndsPath{_ndsInfo->GetPath()};
++
++                    // Only look for GBA ROM if not already set
++                    if (!_gbaInfo) {
++                        // Construct GBA ROM path: /NDS/rom.nds -> /NDS/rom.nds.slot.gba
++                        std::string gbaRomPath = ndsPath + ".slot.gba";
++
++                        // Check if GBA ROM file exists
++                        if (path_is_valid(gbaRomPath.c_str())) {
++                        retro::info("Found accompanying GBA ROM: \"{}\"", gbaRomPath);
++
++                        // Create a retro_game_info structure for the GBA ROM
++                        // Note: We need to load the file data manually since we only have the path
++                        if (melonDS::Platform::FileHandle* gbaFile = melonDS::Platform::OpenFile(gbaRomPath, melonDS::Platform::FileMode::Read)) {
++                            size_t gbaSize = melonDS::Platform::FileLength(gbaFile);
++                            if (gbaSize > 0) {
++                                std::vector<uint8_t> gbaData(gbaSize);
++                                if (melonDS::Platform::FileRead(gbaData.data(), sizeof(uint8_t), gbaSize, gbaFile) == gbaSize) {
++                                    // Store the GBA data - note that this is a simplified approach
++                                    // In a real implementation, you'd need to manage memory more carefully
++                                    _gbaRomData = std::move(gbaData);
++
++                                    retro_game_info gbaInfo = {};
++                                    gbaInfo.path = gbaRomPath.c_str();
++                                    gbaInfo.data = _gbaRomData.data();
++                                    gbaInfo.size = _gbaRomData.size();
++                                    gbaInfo.meta = nullptr;
++
++                                    _gbaInfo = gbaInfo;
++                                }
++                                else {
++                                    retro::warn("Failed to read GBA ROM data from \"{}\"", gbaRomPath);
++                                }
++                            }
++                            melonDS::Platform::CloseFile(gbaFile);
++                        }
++                        else {
++                            retro::warn("Failed to open GBA ROM file \"{}\"", gbaRomPath);
++                        }
++                        }
++                    }
++
++                    // Only look for GBA save if not already set
++                    if (!_gbaSaveInfo) {
++                        // Construct GBA save path: /NDS/rom.nds -> /NDS/rom.nds.slot.sav
++                        std::string gbaSavePath = ndsPath + ".slot.sav";
++
++                        // Check if GBA save file exists
++                        if (path_is_valid(gbaSavePath.c_str())) {
++                        retro::info("Found accompanying GBA save: \"{}\"", gbaSavePath);
++
++                        // Create a retro_game_info structure for the GBA save
++                        if (melonDS::Platform::FileHandle* gbaSaveFile = melonDS::Platform::OpenFile(gbaSavePath, melonDS::Platform::FileMode::Read)) {
++                            size_t gbaSaveSize = melonDS::Platform::FileLength(gbaSaveFile);
++                            if (gbaSaveSize > 0) {
++                                std::vector<uint8_t> gbaSaveData(gbaSaveSize);
++                                if (melonDS::Platform::FileRead(gbaSaveData.data(), sizeof(uint8_t), gbaSaveSize, gbaSaveFile) == gbaSaveSize) {
++                                    _gbaSaveData = std::move(gbaSaveData);
++
++                                    retro_game_info gbaSaveInfo = {};
++                                    gbaSaveInfo.path = gbaSavePath.c_str();
++                                    gbaSaveInfo.data = _gbaSaveData.data();
++                                    gbaSaveInfo.size = _gbaSaveData.size();
++                                    gbaSaveInfo.meta = nullptr;
++
++                                    _gbaSaveInfo = gbaSaveInfo;
++                                }
++                                else {
++                                    retro::warn("Failed to read GBA save data from \"{}\"", gbaSavePath);
++                                }
++                            }
++                            melonDS::Platform::CloseFile(gbaSaveFile);
++                        }
++                        else {
++                            retro::warn("Failed to open GBA save file \"{}\"", gbaSavePath);
++                        }
++                        }
++                    }
++                }
+             }
+             break;
+         default:
+@@ -977,6 +1063,42 @@ void MelonDsDs::CoreState::CheatReset() noexcept
+     }
+ }
+ 
++void MelonDsDs::CoreState::UpdateWfcConnectionStatus(melonDS::NDS& nds) noexcept {
++    ZoneScopedN(TracyFunction);
++
++    // Track the last WFC status to detect changes
++    static int lastWfcStatus = -1;
++
++    // Get the current WFC status directly from WifiAP
++    // 0=disconnected 1=authenticated 2=associated
++    int currentWfcStatus = nds.Wifi.GetWfcStatus();
++
++    // Only update if status has changed
++    if (lastWfcStatus != currentWfcStatus) {
++        // Convert integer status to string for retro_variable
++        char statusBuffer[16];
++        snprintf(statusBuffer, sizeof(statusBuffer), "%d", currentWfcStatus);
++
++        // Set the variable for frontend access
++        retro::set_variable("melonds_wfc_status", statusBuffer);
++
++        // Optional: Log the status change for debugging
++        const char* statusText = "";
++        switch (currentWfcStatus) {
++            case 0: statusText = "Disconnected"; break;
++            case 1: statusText = "Authenticated"; break;
++            case 2: statusText = "Associated"; break;
++            default: statusText = "Invalid"; break;
++        }
++
++        retro::debug("WFC status changed: {} -> {} ({})",
++                    lastWfcStatus, currentWfcStatus, statusText);
++
++        // Update the last known status
++        lastWfcStatus = currentWfcStatus;
++    }
++}
++
+ void MelonDsDs::CoreState::CheatSet(unsigned index, bool enabled, std::string_view code) noexcept {
+     ZoneScopedN(TracyFunction);
+     retro::debug("retro_cheat_set({}, {}, {})\n", index, enabled, code);
+diff --git a/src/libretro/core/core.hpp b/src/libretro/core/core.hpp
+index 6c332f43..5545254f 100644
+--- a/src/libretro/core/core.hpp
++++ b/src/libretro/core/core.hpp
+@@ -125,6 +125,7 @@ namespace MelonDsDs {
+             int type
+         ) noexcept;
+         [[gnu::hot]] static void RenderAudio(melonDS::NDS& nds) noexcept;
++        [[gnu::hot]] void UpdateWfcConnectionStatus(melonDS::NDS& nds) noexcept;
+         [[gnu::cold]] bool InitErrorScreen(const config_exception& e) noexcept;
+         [[gnu::cold]] void RenderErrorScreen() noexcept;
+         [[gnu::cold]] void InitContent(unsigned type, std::span<const retro_game_info> game);
+@@ -152,6 +153,8 @@ namespace MelonDsDs {
+         std::optional<retro::GameInfo> _ndsInfo = std::nullopt;
+         std::optional<retro::GameInfo> _gbaInfo = std::nullopt;
+         std::optional<retro::GameInfo> _gbaSaveInfo = std::nullopt;
++        std::vector<uint8_t> _gbaRomData; // Storage for auto-loaded GBA ROM data
++        std::vector<uint8_t> _gbaSaveData; // Storage for auto-loaded GBA save data
+         std::optional<sram::SaveManager> _ndsSaveManager = std::nullopt;
+         std::optional<sram::SaveManager> _gbaSaveManager = std::nullopt;
+         std::optional<int> _timeToGbaFlush = std::nullopt;
+diff --git a/src/libretro/render/software.cpp b/src/libretro/render/software.cpp
+index 23400b28..d4e6e861 100644
+--- a/src/libretro/render/software.cpp
++++ b/src/libretro/render/software.cpp
+@@ -229,7 +229,15 @@ void MelonDsDs::SoftwareRenderState::CombineScreens(
+             // If we should display both screens, or if the top one is being focused...
+             buffer.CopyRows(bottomBuffer.data(), screenLayout.GetBottomScreenTranslation(), NDS_SCREEN_SIZE<unsigned>);
+         }
+-    } 
++    }
++    else if (layout == ScreenLayout::Custom) {
++        buffer.CopyScaled(topBuffer.data(), NDS_SCREEN_SIZE<unsigned>,
++            uvec2(screenLayout.GetCustomTopX(), screenLayout.GetCustomTopY()),
++            uvec2(screenLayout.GetCustomTopW(), screenLayout.GetCustomTopH()));
++        buffer.CopyScaled(bottomBuffer.data(), NDS_SCREEN_SIZE<unsigned>,
++            uvec2(screenLayout.GetCustomBottomX(), screenLayout.GetCustomBottomY()),
++            uvec2(screenLayout.GetCustomBottomW(), screenLayout.GetCustomBottomH()));
++    }
+     else if (IsLargeScreenLayout(layout)) {
+         bool focusTop = layout == ScreenLayout::LargescreenTop || layout == ScreenLayout::FlippedLargescreenTop;
+         if (focusTop) {
+@@ -249,11 +257,11 @@ void MelonDsDs::SoftwareRenderState::CombineScreens(
+                 hybridBuffer[0],
+                 screenLayout.GetBottomScreenTranslation(),
+                 NDS_SCREEN_SIZE<unsigned> * screenLayout.HybridRatio()
+-            );            
++            );
+             // If the bottom screen is the primary copy the top to the small screen
+             CopyScreen(topBuffer.data(), screenLayout.GetTopScreenTranslation(), layout);
+         }
+-    } 
++    }
+     else {
+         if (layout != ScreenLayout::BottomOnly) {
+             if (layout == ScreenLayout::BottomTop && LayoutSupportsSecondaryScreenScale(layout) && screenLayout.SecondaryScreenScale() < 100) {
+diff --git a/src/libretro/screenlayout.cpp b/src/libretro/screenlayout.cpp
+index ce00bf6f..6cd22773 100644
+--- a/src/libretro/screenlayout.cpp
++++ b/src/libretro/screenlayout.cpp
+@@ -19,7 +19,9 @@
+ #include "screenlayout.hpp"
+ 
+ #include <array>
++#include <climits>
+ #include <cmath>
++#include <cstdint>
+ 
+ #include <GPU3D.h>
+ 
+@@ -170,6 +172,34 @@ constexpr mat3 FlippedHybridSouthwestMatrix(unsigned resolutionScale, unsigned h
+     );
+ }
+ 
++/// For custom layout top screen
++mat3 CustomTopScreenMatrix(unsigned resolutionScale, unsigned x, unsigned y, unsigned w, unsigned h) noexcept {
++    using namespace MelonDsDs;
++    // Use absolute pixel coordinates and dimensions - ignore resolutionScale for custom layouts
++    // This ensures the screen renders at exactly the specified pixel size and position
++    float scaleX = float(w) / float(NDS_SCREEN_WIDTH);
++    float scaleY = float(h) / float(NDS_SCREEN_HEIGHT);
++
++    return math::ts<float>(
++        vec2(float(x), float(y)),    // Absolute pixel position
++        vec2(scaleX, scaleY)         // Absolute scale based on desired pixel size
++    );
++}
++
++/// For custom layout bottom screen
++mat3 CustomBottomScreenMatrix(unsigned resolutionScale, unsigned x, unsigned y, unsigned w, unsigned h) noexcept {
++    using namespace MelonDsDs;
++    // Use absolute pixel coordinates and dimensions - ignore resolutionScale for custom layouts
++    // This ensures the screen renders at exactly the specified pixel size and position
++    float scaleX = float(w) / float(NDS_SCREEN_WIDTH);
++    float scaleY = float(h) / float(NDS_SCREEN_HEIGHT);
++
++    return math::ts<float>(
++        vec2(float(x), float(y)),    // Absolute pixel position
++        vec2(scaleX, scaleY)         // Absolute scale based on desired pixel size
++    );
++}
++
+ mat3 MelonDsDs::ScreenLayoutData::GetTopScreenMatrix(unsigned scale) const noexcept {
+     ZoneScopedN(TracyFunction);
+     switch (Layout()) {
+@@ -198,6 +228,8 @@ mat3 MelonDsDs::ScreenLayoutData::GetTopScreenMatrix(unsigned scale) const noexc
+             return LargescreenEastMatrix(scale, hybridRatio);
+         case ScreenLayout::FlippedLargescreenBottom:
+             return FlippedLargescreenWestMatrix(scale, hybridRatio);
++        case ScreenLayout::Custom:
++            return CustomTopScreenMatrix(1, customTopX, customTopY, customTopW, customTopH);  // Always use scale=1 for absolute positioning
+         default:
+             return mat3(1);
+     }
+@@ -232,6 +264,8 @@ mat3 MelonDsDs::ScreenLayoutData::GetBottomScreenMatrix(unsigned scale) const no
+             return LargescreenEastMatrix(scale, hybridRatio);
+         case ScreenLayout::FlippedLargescreenTop:
+             return FlippedLargescreenWestMatrix(scale, hybridRatio);
++        case ScreenLayout::Custom:
++            return CustomBottomScreenMatrix(1, customBottomX, customBottomY, customBottomW, customBottomH);  // Always use scale=1 for absolute positioning
+         default:
+             return mat3(1);
+     }
+@@ -263,6 +297,20 @@ void MelonDsDs::ScreenLayoutData::Apply(const CoreConfig& config, const RenderSt
+     secondaryScreenScale = config.SecondaryScreenScale();
+     secondaryScreenScaleFactor = static_cast<float>(secondaryScreenScale) / 100.0f;
+     HybridRatio(config.HybridRatio());
++
++    // Apply custom layout parameters
++    SetCustomTop(config.CustomTopX(), config.CustomTopY(), config.CustomTopW(), config.CustomTopH());
++    SetCustomBottom(config.CustomBottomX(), config.CustomBottomY(), config.CustomBottomW(), config.CustomBottomH());
++
++    // Apply custom buffer size
++    customBufferWidth = config.CustomBufferWidth();
++    customBufferHeight = config.CustomBufferHeight();
++
++    retro::debug("使用的自定义布局: topX={}, topY={}, topW={}, topH={}, bottomX={}, bottomY={}, bottomW={}, bottomH={}, bufferW={}, bufferH={}",
++        config.CustomTopX(), config.CustomTopY(), config.CustomTopW(), config.CustomTopH(),
++        config.CustomBottomX(), config.CustomBottomY(), config.CustomBottomW(), config.CustomBottomH(),
++        config.CustomBufferWidth(), config.CustomBufferHeight());
++
+     Update();
+ }
+ 
+@@ -286,26 +334,83 @@ void MelonDsDs::ScreenLayoutData::Update() noexcept {
+     bottomScreenMatrixInverse = inverse(bottomScreenMatrix);
+ 
+     // Transform the base screen points
+-    transformedScreenPoints = {
+-        topScreenMatrix * vec3(baseScreenPoints[0], 1),
+-        topScreenMatrix * vec3(baseScreenPoints[1], 1),
+-        topScreenMatrix * vec3(baseScreenPoints[2], 1),
+-        topScreenMatrix * vec3(baseScreenPoints[3], 1),
+-        bottomScreenMatrix * vec3(baseScreenPoints[0], 1),
+-        bottomScreenMatrix * vec3(baseScreenPoints[1], 1),
+-        bottomScreenMatrix * vec3(baseScreenPoints[2], 1),
+-        bottomScreenMatrix * vec3(baseScreenPoints[3], 1),
+-        hybridScreenMatrix * vec3(baseScreenPoints[0], 1),
+-        hybridScreenMatrix * vec3(baseScreenPoints[1], 1),
+-        hybridScreenMatrix * vec3(baseScreenPoints[2], 1),
+-        hybridScreenMatrix * vec3(baseScreenPoints[3], 1)
+-    };
++    if (Layout() == ScreenLayout::Custom) {
++        // For custom layout, directly set screen points based on absolute coordinates
++        transformedScreenPoints = {
++            // Top screen corners
++            vec2(customTopX, customTopY),                           // northwest
++            vec2(customTopX + customTopW, customTopY),              // northeast
++            vec2(customTopX + customTopW, customTopY + customTopH), // southeast
++            vec2(customTopX, customTopY + customTopH),              // southwest
++            // Bottom screen corners
++            vec2(customBottomX, customBottomY),                           // northwest
++            vec2(customBottomX + customBottomW, customBottomY),           // northeast
++            vec2(customBottomX + customBottomW, customBottomY + customBottomH), // southeast
++            vec2(customBottomX, customBottomY + customBottomH),           // southwest
++            // Hybrid screen corners (not used for custom layout, but needed for array size)
++            vec2(0, 0), vec2(0, 0), vec2(0, 0), vec2(0, 0)
++        };
++    } else {
++        // For standard layouts, use matrix transformations
++        transformedScreenPoints = {
++            topScreenMatrix * vec3(baseScreenPoints[0], 1),
++            topScreenMatrix * vec3(baseScreenPoints[1], 1),
++            topScreenMatrix * vec3(baseScreenPoints[2], 1),
++            topScreenMatrix * vec3(baseScreenPoints[3], 1),
++            bottomScreenMatrix * vec3(baseScreenPoints[0], 1),
++            bottomScreenMatrix * vec3(baseScreenPoints[1], 1),
++            bottomScreenMatrix * vec3(baseScreenPoints[2], 1),
++            bottomScreenMatrix * vec3(baseScreenPoints[3], 1),
++            hybridScreenMatrix * vec3(baseScreenPoints[0], 1),
++            hybridScreenMatrix * vec3(baseScreenPoints[1], 1),
++            hybridScreenMatrix * vec3(baseScreenPoints[2], 1),
++            hybridScreenMatrix * vec3(baseScreenPoints[3], 1)
++        };
++    }
+ 
+     // We need to compute the buffer size to use it for rendering and the touch screen
+-    bufferSize = uvec2(0);
+-    for (const vec2& p : transformedScreenPoints) {
+-        bufferSize.x = max<unsigned>(bufferSize.x, p.x);
+-        bufferSize.y = max<unsigned>(bufferSize.y, p.y);
++    if (Layout() == ScreenLayout::Custom) {
++        // User buffer size can be smaller than the union of the two screens after float→int
++        // rounding (e.g. topH, bottomY, bottomH each round up). Expand so CopyScaled never OOBs.
++        const unsigned userBufferW = customBufferWidth;
++        const unsigned userBufferH = customBufferHeight;
++        const uint64_t topRight = uint64_t(customTopX) + uint64_t(customTopW);
++        const uint64_t topBottom = uint64_t(customTopY) + uint64_t(customTopH);
++        const uint64_t botRight = uint64_t(customBottomX) + uint64_t(customBottomW);
++        const uint64_t botBottom = uint64_t(customBottomY) + uint64_t(customBottomH);
++        const uint64_t requiredW = std::max(topRight, botRight);
++        const uint64_t requiredH = std::max(topBottom, botBottom);
++        uint64_t bw = std::max<uint64_t>(userBufferW, requiredW);
++        uint64_t bh = std::max<uint64_t>(userBufferH, requiredH);
++        if (bw > UINT_MAX) {
++            retro::warn("Custom layout: required width overflow; clamping to {}", UINT_MAX);
++            bw = UINT_MAX;
++        }
++        if (bh > UINT_MAX) {
++            retro::warn("Custom layout: required height overflow; clamping to {}", UINT_MAX);
++            bh = UINT_MAX;
++        }
++        customBufferWidth = static_cast<unsigned>(bw);
++        customBufferHeight = static_cast<unsigned>(bh);
++        if (customBufferWidth != userBufferW || customBufferHeight != userBufferH) {
++            retro::warn(
++                "Custom layout: buffer {}x{} is smaller than union of screens (needs at least {}x{}); expanded to {}x{}",
++                userBufferW,
++                userBufferH,
++                static_cast<unsigned>(std::min<uint64_t>(requiredW, UINT_MAX)),
++                static_cast<unsigned>(std::min<uint64_t>(requiredH, UINT_MAX)),
++                customBufferWidth,
++                customBufferHeight
++            );
++        }
++        bufferSize = uvec2(customBufferWidth, customBufferHeight);
++    } else {
++        // For standard layouts, use the existing logic
++        bufferSize = uvec2(0);
++        for (const vec2& p : transformedScreenPoints) {
++            bufferSize.x = max<unsigned>(bufferSize.x, p.x);
++            bufferSize.y = max<unsigned>(bufferSize.y, p.y);
++        }
+     }
+ 
+     topScreenTranslation = transformedScreenPoints[0];
+@@ -330,13 +435,26 @@ void MelonDsDs::ScreenLayoutData::Update() noexcept {
+ }
+ 
+ retro_game_geometry MelonDsDs::ScreenLayoutData::Geometry(RenderMode renderer) const noexcept {
+-    retro_game_geometry geometry {
+-        .base_width = BufferWidth(),
+-        .base_height = BufferHeight(),
+-        .max_width = MaxSoftwareRenderedWidth(),
+-        .max_height = MaxSoftwareRenderedHeight(),
+-        .aspect_ratio = BufferAspectRatio(),
+-    };
++    retro_game_geometry geometry;
++
++    if (Layout() == ScreenLayout::Custom) {
++        // For custom layout, use user-configured buffer size to prevent frontend scaling
++        // This allows absolute pixel positioning without interference from Libretro's scaling
++        unsigned bufferW = customBufferWidth;
++        unsigned bufferH = customBufferHeight;
++        geometry.base_width = bufferW;
++        geometry.base_height = bufferH;
++        geometry.max_width = bufferW;
++        geometry.max_height = bufferH;
++        geometry.aspect_ratio = float(bufferW) / float(bufferH);
++    } else {
++        // For standard layouts, use the existing logic
++        geometry.base_width = BufferWidth();
++        geometry.base_height = BufferHeight();
++        geometry.max_width = MaxSoftwareRenderedWidth();
++        geometry.max_height = MaxSoftwareRenderedHeight();
++        geometry.aspect_ratio = BufferAspectRatio();
++    }
+ 
+ #if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
+     if (renderer == RenderMode::OpenGl) {
+diff --git a/src/libretro/screenlayout.hpp b/src/libretro/screenlayout.hpp
+index 87da6489..6118b21b 100644
+--- a/src/libretro/screenlayout.hpp
++++ b/src/libretro/screenlayout.hpp
+@@ -31,6 +31,7 @@
+ #include <glm/trigonometric.hpp>
+ 
+ #include "config/constants.hpp"
++#include "config/types.hpp"
+ #include "environment.hpp"
+ #include "input/input.hpp"
+ #include "buffer.hpp"
+@@ -123,6 +124,9 @@ namespace MelonDsDs {
+                 case ScreenLayout::TurnLeft:
+                 case ScreenLayout::TurnRight:
+                     return float(BufferHeight()) / float(BufferWidth());
++                case ScreenLayout::Custom:
++                    // For custom layout, use the actual buffer dimensions without forced aspect ratio
++                    return float(BufferWidth()) / float(BufferHeight());
+                 default:
+                     return float(BufferWidth()) / float(BufferHeight());
+             }
+@@ -204,6 +208,26 @@ namespace MelonDsDs {
+             hybridRatio = _hybrid_ratio;
+         }
+ 
++        // Custom layout parameters (pixels, pre-scale)
++        void SetCustomTop(unsigned x,unsigned y,unsigned w,unsigned h) noexcept {
++            if (customTopX!=x||customTopY!=y||customTopW!=w||customTopH!=h) _dirty = true;
++            customTopX=x; customTopY=y; customTopW=w; customTopH=h;
++        }
++        void SetCustomBottom(unsigned x,unsigned y,unsigned w,unsigned h) noexcept {
++            if (customBottomX!=x||customBottomY!=y||customBottomW!=w||customBottomH!=h) _dirty = true;
++            customBottomX=x; customBottomY=y; customBottomW=w; customBottomH=h;
++        }
++
++        // Getters for custom layout parameters
++        unsigned GetCustomTopX() const noexcept { return customTopX; }
++        unsigned GetCustomTopY() const noexcept { return customTopY; }
++        unsigned GetCustomTopW() const noexcept { return customTopW; }
++        unsigned GetCustomTopH() const noexcept { return customTopH; }
++        unsigned GetCustomBottomX() const noexcept { return customBottomX; }
++        unsigned GetCustomBottomY() const noexcept { return customBottomY; }
++        unsigned GetCustomBottomW() const noexcept { return customBottomW; }
++        unsigned GetCustomBottomH() const noexcept { return customBottomH; }
++
+         /// @param input Coordinates in pointer space (from -32767 to 32767)
+         [[nodiscard]] glm::ivec2 TransformPointerInput(glm::i16vec2 input) const noexcept {
+             glm::vec3 transformed = bottomScreenMatrixInverse * pointerMatrix * glm::vec3(input, 1.0f);
+@@ -261,6 +285,18 @@ namespace MelonDsDs {
+         HybridSideScreenDisplay hybridSmallScreenLayout;
+         unsigned hybridRatio;
+ 
++        // Custom layout parameters
++        unsigned customTopX = 0;
++        unsigned customTopY = 0;
++        unsigned customTopW = 256;
++        unsigned customTopH = 192;
++        unsigned customBottomX = 256;
++        unsigned customBottomY = 0;
++        unsigned customBottomW = 256;
++        unsigned customBottomH = 192;
++        unsigned customBufferWidth = 375;
++        unsigned customBufferHeight = 812;
++
+         unsigned _layoutIndex;
+         unsigned _numberOfLayouts;
+         std::array<ScreenLayout, config::screen::MAX_SCREEN_LAYOUTS> _layouts;
+@@ -281,6 +317,8 @@ namespace MelonDsDs {
+             case ScreenLayout::TopBottom:
+             case ScreenLayout::BottomTop:
+                 return true;
++            case ScreenLayout::Custom:
++                return false; // Custom layout handles its own spacing
+             default:
+                 return false;
+         }
+@@ -306,6 +344,8 @@ namespace MelonDsDs {
+             case ScreenLayout::TopOnly:
+             case ScreenLayout::BottomOnly:
+                 return true;
++            case ScreenLayout::Custom:
++                return false; // Custom layout requires special handling
+             default:
+                 return false;
+         }
+@@ -348,6 +388,10 @@ namespace MelonDsDs {
+ 
+             // Sideways layout
+             NDS_SCREEN_HEIGHT * 2 + MAX_SCREEN_GAP,
++
++            // Custom layout - maximum possible dimensions based on core option ranges
++            // Max X (512) + Max Width (512) = 1024
++            1024u,
+         });
+     }
+ 
+@@ -359,6 +403,10 @@ namespace MelonDsDs {
+ 
+             // Hybrid layout
+             NDS_SCREEN_HEIGHT * MAX_HYBRID_RATIO,
++
++            // Custom layout - maximum possible dimensions based on core option ranges
++            // Max Y (384) + Max Height (384) = 768
++            768u,
+         });
+     }
+ 
+@@ -376,6 +424,10 @@ namespace MelonDsDs {
+ 
+             // Sideways layout
+             scale * (NDS_SCREEN_HEIGHT * 2 + MAX_SCREEN_GAP),
++
++            // Custom layout - maximum possible dimensions with scaling
++            // Max X (512) + Max Width (512) = 1024, scaled by MAX_OPENGL_SCALE
++            1024u * scale,
+         });
+     }
+ 
+@@ -383,10 +435,13 @@ namespace MelonDsDs {
+         using namespace config::screen;
+         unsigned scale = config::video::MAX_OPENGL_SCALE;
+ 
+-        return std::max(
++        return std::max({
+             scale * (NDS_SCREEN_HEIGHT * 2 + MAX_SCREEN_GAP),
+-            scale * NDS_SCREEN_HEIGHT * MAX_HYBRID_RATIO
+-        );
++            scale * NDS_SCREEN_HEIGHT * MAX_HYBRID_RATIO,
++            // Custom layout - maximum possible dimensions with scaling
++            // Max Y (384) + Max Height (384) = 768, scaled by MAX_OPENGL_SCALE
++            768u * scale,
++        });
+     }
+ }
+ #endif //MELONDS_DS_SCREENLAYOUT_HPP

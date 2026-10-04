@@ -9,7 +9,7 @@ spec=importlib.util.spec_from_file_location('ipa_link',ROOT/'GBLink/scripts/ipa_
 ipa=importlib.util.module_from_spec(spec);spec.loader.exec_module(ipa)
 BASELINE='26b2f6fef67e390e971e2ddc62fedfc349b2c7428a7e2835c9d631d3a67384d4'
 CORE_BASELINE='20b346952e860f7ca5dd2f92addcbbd8ffa3d1726c1764d3a94cebfefd05700b'
-UPSTREAM='1a28e0fe2a78c9d2318f4324835ff906488299a2'
+UPSTREAM='bc4e4b67d2d470d7c682810a1e892cafd6f9082b'
 ALLOWED_FILES={'Info.plist','LICENSE','melonDSDS-LICENSE','SOURCE'}
 def digest(data):return hashlib.sha256(data).hexdigest()
 def symbols(b):
