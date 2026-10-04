@@ -7,6 +7,8 @@
 #include <functional>
 static unsigned pauseCalls=0,resumeCalls=0,starts=0,stops=0,received=0;
 static bool wrongThread=false,hasPath=true;
+static unsigned nativeDatagrams=0,reliableMessages=0;
+static bool wrongDeliveryMode=false;
 static Bytes coreReceived,peerReceived;
 static uint8_t testBattery[512],testState[64];
 static MTSaveEntry testEntry{};static MTSaveList testFiles{};
@@ -35,7 +37,7 @@ static bool mockLoad(const retro_game_info *info){
 }
 static bool mockIdentity(uint8_t *out){memcpy(out,mockBootIdentity,6);return true;}
 static bool mockMatches(){return true;}
-static unsigned mockRevision(){return 6;}
+static unsigned mockRevision(){return 7;}
 static void mockUnload(){}
 static bool mockFrontend(unsigned command,void *data){(void)command;(void)data;return false;}
 static void *MDS_testEngineSymbol(const char *name){
@@ -96,9 +98,32 @@ static std::vector<Nonce> identities;
 static MCPeerID *peers[3];
 @interface TestBrowser:MCNearbyServiceBrowser
 @property unsigned invitations;
+@property unsigned starts,stops;
 @end
 @implementation TestBrowser
 -(void)invitePeer:(MCPeerID*)peer toSession:(MCSession*)session withContext:(NSData*)context timeout:(NSTimeInterval)timeout{(void)peer;(void)session;(void)context;(void)timeout;self.invitations++;}
+-(void)startBrowsingForPeers{self.starts++;}
+-(void)stopBrowsingForPeers{self.stops++;}
+@end
+@interface TestAdvertiser:MCNearbyServiceAdvertiser
+@property unsigned starts,stops;
+@end
+@implementation TestAdvertiser
+-(void)startAdvertisingPeer{self.starts++;}
+-(void)stopAdvertisingPeer{self.stops++;}
+@end
+@interface TestNearby:MDSNearby
+@property unsigned advertised;
+@property(strong) NSDictionary *published;
+@end
+@implementation TestNearby
+-(MCNearbyServiceBrowser*)newBrowser{
+    return [[TestBrowser alloc]initWithPeer:[self valueForKey:@"identity"] serviceType:Service];
+}
+-(MCNearbyServiceAdvertiser*)newAdvertiser{
+    NSDictionary *meta=[self valueForKey:@"meta"];self.published=meta;self.advertised++;
+    return [[TestAdvertiser alloc]initWithPeer:[self valueForKey:@"identity"] discoveryInfo:meta serviceType:Service];
+}
 @end
 @interface TestSession:MCSession
 @property(strong) NSArray<MCPeerID*> *mockPeers;
@@ -106,18 +131,23 @@ static MCPeerID *peers[3];
 @implementation TestSession
 -(NSArray<MCPeerID*>*)connectedPeers{return self.mockPeers?:@[];}
 -(BOOL)sendData:(NSData*)data toPeers:(NSArray<MCPeerID*>*)targets withMode:(MCSessionSendDataMode)mode error:(NSError**)error{
-    (void)mode;(void)error;if(data.length>=4&&!memcmp(data.bytes,"MDH5",4))return YES;
+    (void)error;if(data.length>=4&&!memcmp(data.bytes,"MDH5",4))return YES;
+    const bool radio=data.length>=4&&!memcmp(data.bytes,"MDR1",4);
+    wrongDeliveryMode|=radio?(mode!=MCSessionSendDataUnreliable||data.length>1000):(mode!=MCSessionSendDataReliable);
+    if(radio)nativeDatagrams++;else reliableMessages++;
     for(MCPeerID *peer in targets){std::vector<Bytes> frames,reply;
-        {std::lock_guard<std::mutex> guard(peerLock);auto room=static_cast<Room*>([mockRooms[peer] pointerValue]);if(!room||!unbatchWire(data.bytes,data.length,frames))return NO;
-            for(const auto &f:frames)if(!room->receive(g.nonce,f.data(),f.size()))return NO;
+        {std::lock_guard<std::mutex> guard(peerLock);auto room=static_cast<Room*>([mockRooms[peer] pointerValue]);if(!room)return NO;
+            if(radio){if(!room->receiveRadio(g.nonce,data.bytes,data.length))return NO;}
+            else {if(!unbatchWire(data.bytes,data.length,frames))return NO;for(const auto &f:frames)if(!room->receive(g.nonce,f.data(),f.size()))return NO;}
             Received packet;while(room->pop(packet))peerReceived=packet.data;reply=room->takeWire(g.nonce);}
         for(const auto &b:batchWire(reply))[[MDSNearby shared] session:self didReceiveData:[NSData dataWithBytes:b.data() length:b.size()] fromPeer:peer];
     }return YES;
 }
 @end
-static void inject(TestSession *session,unsigned index){std::vector<Bytes> frames;
-    {std::lock_guard<std::mutex> guard(peerLock);frames=owned[index]->takeWire(g.nonce);}
+static void inject(TestSession *session,unsigned index){std::vector<Bytes> frames,radio;
+    {std::lock_guard<std::mutex> guard(peerLock);frames=owned[index]->takeWire(g.nonce);radio=owned[index]->takeRadioWire(g.nonce);}
     for(const auto &b:batchWire(frames))[[MDSNearby shared] session:session didReceiveData:[NSData dataWithBytes:b.data() length:b.size()] fromPeer:peers[index]];
+    for(const auto &b:radio)[[MDSNearby shared] session:session didReceiveData:[NSData dataWithBytes:b.data() length:b.size()] fromPeer:peers[index]];
 }
 static bool settled(){std::lock_guard<std::mutex> guard(lock);return g.room&&g.room->pendingCount()==0;}
 static MAC peerMAC(unsigned i){return MAC{0,9,191,1,2,uint8_t(i+4)};}
@@ -150,6 +180,33 @@ static void tests(){@autoreleasepool{
         {std::lock_guard<std::mutex> guard(lock);g.radio=true;g.requested=true;}hasPath=false;MDS_afterFrame();check(@"save path verification blocks preparation",g.failedPrepare&&!g.prepared);check(@"failed preparation leaves battery intact",[[NSData dataWithContentsOfFile:path] isEqual:before]);
         MDS_gameLoaded("ADAE",5,core);hasPath=true;{std::lock_guard<std::mutex> guard(lock);g.radio=true;g.intent=true;g.requested=true;}MDS_afterFrame();check(@"independent save checkpoint prepared",g.prepared&&[g.savePath isEqual:path]);
         MAC native{0,9,191,1,2,3};for(unsigned i=0;i<3;i++){Nonce n{};n[0]=uint8_t(i+10);n[15]=uint8_t(i+20);identities.push_back(n);owned.push_back(std::make_unique<Room>(n,"CPUE",1,peerMAC(i)));owned.back()->radio(true);check(@"independent peer accepts local room",owned.back()->add(g.nonce,"ADAE",5,native));}
+        __block TestNearby *discovery;__block TestBrowser *pendingBrowser;__block MCPeerID *earlyPeer;
+        dispatch_sync(dispatch_get_main_queue(),^{
+            discovery=[TestNearby new];[discovery radio:YES generation:g.epoch];
+            check(@"preparing console never publishes unready Bonjour metadata",discovery.advertised==0&&[discovery valueForKey:@"browser"]==nil);
+            [discovery setValue:@"A" forKey:@"runtime"];
+            pendingBrowser=[[TestBrowser alloc]initWithPeer:[discovery valueForKey:@"identity"] serviceType:Service];
+            [discovery setValue:pendingBrowser forKey:@"browser"];
+            earlyPeer=[[MCPeerID alloc]initWithDisplayName:@"Already ready player"];
+            NSDictionary *info=metadata(0,@"B");
+            check(@"ready candidate accepted while local MAC is not prepared",[discovery candidate:info]&&![discovery valid:info]);
+            [discovery browser:pendingBrowser foundPeer:earlyPeer withDiscoveryInfo:info];
+        });
+        dispatch_sync(dispatch_get_main_queue(),^{
+            check(@"early ready discovery retained until local preparation",[[discovery valueForKey:@"peers"] count]==1&&pendingBrowser.invitations==0);
+            [discovery prepared:g.epoch];
+            check(@"prepared discovery starts immediately without rediscovery",pendingBrowser.starts==1&&pendingBrowser.invitations==1);
+            check(@"first advertisement already contains native ready identity",discovery.advertised==1&&[discovery.published[@"ready"] isEqual:@"1"]&&[discovery.published[@"local"] isEqual:@"1"]&&[discovery.published[@"mac"] isEqual:@"0009bf010203"]);
+            [discovery connectReadyPeers];check(@"simultaneous discovery keeps one invitation attempt",pendingBrowser.invitations==1);
+            [discovery radio:NO generation:g.epoch];
+            unsigned advertisements=discovery.advertised;{std::lock_guard<std::mutex> guard(lock);g.radio=false;}
+            [discovery prepared:g.epoch];
+            check(@"late preparation after native exit cannot restart discovery",discovery.advertised==advertisements&&pendingBrowser.starts==1);
+            {std::lock_guard<std::mutex> guard(lock);g.radio=true;}
+            [discovery radio:YES generation:g.epoch];
+            check(@"ready native reentry restarts discovery with same identity",pendingBrowser.starts==2&&[discovery.published[@"mac"] isEqual:@"0009bf010203"]);
+            [discovery cleanup];discovery=nil;
+        });
         __block TestSession *session;__block TestBrowser *browser;__block MCNearbyServiceAdvertiser *advertiser;
         dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *m=[MDSNearby shared];[m cleanup];[m setValue:@(g.epoch) forKey:@"generation"];[m setValue:@YES forKey:@"prepared"];[m setValue:@"A" forKey:@"runtime"];
             MCPeerID *identity=[[MCPeerID alloc]initWithDisplayName:@"Kade"];session=[[TestSession alloc]initWithPeer:identity securityIdentity:nil encryptionPreference:MCEncryptionRequired];m.session=session;
@@ -170,8 +227,12 @@ static void tests(){@autoreleasepool{
         check(@"two peers join shared radio without prompts",MDS_beforeFrame()&&starts==1&&g.room->size()==2);
         check(@"active radio blocks state restoration",!MDS_allowRestore());
         uint8_t packet[100]{};packet[22]=0x80;std::copy(native.begin(),native.end(),packet+32);std::copy(native.begin(),native.end(),packet+38);std::copy(native.begin(),native.end(),packet+70);
-        for(unsigned i=0;i<100;i++)sendPacket(0,packet,sizeof(packet),65535);waitUntil(settled);check(@"reliable shared burst drains ACKs",g.room->pendingCount()==0);
-        {std::lock_guard<std::mutex> guard(peerLock);owned[0]->send(packet,sizeof(packet));}inject(session,0);check(@"SDK delegate never invokes core receive",received==0);MDS_beforeFrame();check(@"native receive stays on core thread",received==1&&!wrongThread);
+        for(unsigned i=0;i<100;i++)sendPacket(0,packet,sizeof(packet),65535);
+        waitUntil([]{std::lock_guard<std::mutex> guard(lock);return !g.sendScheduled;});waitUntil(settled);
+        check(@"native shared burst uses datagrams without RF ACKs",g.room->pendingCount()==0&&nativeDatagrams==200&&!wrongDeliveryMode&&g.room->radioSentCount()==200);
+        unsigned controls=reliableMessages;sendPacket(RETRO_NETPACKET_RELIABLE,packet,sizeof(packet),g.room->slot(identities[0]));waitUntil(settled);
+        check(@"explicit reliable request preserves reliable delivery",reliableMessages>controls&&!wrongDeliveryMode);
+        {std::lock_guard<std::mutex> guard(peerLock);owned[0]->sendRadio(packet,sizeof(packet));}inject(session,0);check(@"SDK delegate never invokes core receive",received==0);MDS_beforeFrame();check(@"native receive stays on core thread",received==1&&!wrongThread);
         uint16_t oldSlot=g.room->slot(identities[0]);dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *m=[MDSNearby shared];session.mockPeers=@[peers[0],peers[1],peers[2]];NSMutableDictionary *known=[m valueForKey:@"peers"];known[peers[2]]=metadata(2,@"D");[m session:session peer:peers[2] didChangeState:MCSessionStateConnected];});
         waitUntil([]{std::lock_guard<std::mutex> guard(lock);return g.room->size()==3&&g.room->pendingCount()==0;});check(@"third arrival preserves established routing",g.room->slot(identities[0])==oldSlot&&starts==1);
         dispatch_sync(dispatch_get_main_queue(),^{[[MDSNearby shared] remove:peers[1]];session.mockPeers=@[peers[0],peers[2]];});check(@"one departed peer leaves other consoles active",g.room->size()==2&&g.room->active()&&MDS_beforeFrame()&&starts==1);

@@ -27,7 +27,7 @@ def symbols(b):
     raise ValueError('Expected exported symbol table')
 def frameworks(build):
     manifest=json.loads((build/'build-manifest.json').read_text());result={};metadata={}
-    if manifest['sdk']!='iphoneos' or manifest['upstream_commit']!=UPSTREAM or manifest['queue_reset_marker']!=6 or manifest['private_game_inputs_used'] or not manifest['manic_custom_screen_layout_preserved']:
+    if manifest['sdk']!='iphoneos' or manifest['upstream_commit']!=UPSTREAM or manifest['queue_reset_marker']!=7 or manifest['private_game_inputs_used'] or not manifest['manic_custom_screen_layout_preserved']:
         raise ValueError('Physical iOS Manic fork build and reset-capability evidence required')
     for name in ('DSOriginal','melondsds.libretro'):
         folder=build/(name+'.framework');files={p.relative_to(folder).as_posix():p.read_bytes() for p in folder.rglob('*') if p.is_file()}

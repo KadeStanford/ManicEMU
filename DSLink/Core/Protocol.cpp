@@ -68,7 +68,7 @@ bool localFrame(const void *data,size_t size,unsigned type){
     }
     return false;
 }
-Protocol::Protocol(Nonce identity,const char code[4],uint8_t revision):identity_(identity),revision_(revision){
+Protocol::Protocol(Nonce identity,const char code[4],uint8_t revision,uint64_t initialEpoch):identity_(identity),revision_(revision),localEpoch_(initialEpoch?initialEpoch:1){
     if(code)std::memcpy(code_.data(),code,4);
 }
 bool Protocol::bind(Nonce peer,const char code[4],uint8_t revision){
@@ -77,8 +77,8 @@ bool Protocol::bind(Nonce peer,const char code[4],uint8_t revision){
     peer_=peer;id_=identity_<peer?0:1;
     const Nonce &a=id_?peer:identity_,&b=id_?identity_:peer;
     std::copy(a.begin(),a.end(),room_.begin());std::copy(b.begin(),b.end(),room_.begin()+16);
-    bound_=true;uint8_t ready[6];std::memcpy(ready,code_.data(),4);ready[4]=revision_;ready[5]=radio_;
-    if(!enqueue(Kind::Ready,ready,6))return false;
+    bound_=true;uint8_t ready[14];std::memcpy(ready,code_.data(),4);ready[4]=revision_;ready[5]=radio_;put64(ready+6,localEpoch_);
+    if(!enqueue(Kind::Ready,ready,sizeof(ready)))return false;
     localReady_=true;readySeq_=tx_;return true;
 }
 Bytes Protocol::encode(Kind kind,uint64_t seq,const void *data,size_t size,uint16_t target)const{
@@ -108,12 +108,16 @@ bool Protocol::send(const void *data,size_t size,uint16_t target){
     return enqueue(Kind::Data,data,size,target);
 }
 void Protocol::radio(bool on){
-    if(radio_==on)return;radio_=on;
-    if(bound_&&!ended_&&!failed_){uint8_t v=on;enqueue(Kind::Radio,&v,1);}
+    if(radio_==on)return;if(!advanceRadioEpoch())return;radio_=on;
+    if(bound_&&!ended_&&!failed_){uint8_t v[9];v[0]=on;put64(v+1,localEpoch_);enqueue(Kind::Radio,v,sizeof(v));}
 }
 void Protocol::hold(bool on){
-    if(held_==on)return;held_=on;
-    if(bound_&&!ended_&&!failed_){uint8_t v=on;if(enqueue(Kind::Hold,&v,1)&&!on)releaseSeq_=tx_;}
+    if(held_==on)return;if(!advanceRadioEpoch())return;held_=on;
+    if(bound_&&!ended_&&!failed_){uint8_t v[9];v[0]=on;put64(v+1,localEpoch_);if(enqueue(Kind::Hold,v,sizeof(v))&&!on)releaseSeq_=tx_;}
+}
+bool Protocol::advanceRadioEpoch(){
+    if(localEpoch_==std::numeric_limits<uint64_t>::max()){fail();return false;}
+    ++localEpoch_;return true;
 }
 void Protocol::close(){
     if(!bound_||failed_||ended_||closeSent_)return;
@@ -137,9 +141,9 @@ bool Protocol::receive(const void *data,size_t size){
     }
     bool valid=false;
     switch(k){
-    case Kind::Ready:valid=len==6&&compatible(code_.data(),reinterpret_cast<const char*>(payload))&&payload[5]<=1;break;
+    case Kind::Ready:valid=len==14&&compatible(code_.data(),reinterpret_cast<const char*>(payload))&&payload[5]<=1&&get64(payload+6)>0;break;
     case Kind::Data:valid=peerReady_&&validPacket(payload,len);break;
-    case Kind::Radio:case Kind::Hold:valid=len==1&&payload[0]<=1&&peerReady_;break;
+    case Kind::Radio:case Kind::Hold:valid=len==9&&payload[0]<=1&&get64(payload+1)>0&&peerReady_;break;
     case Kind::Close:valid=len==0&&peerReady_;break;
     default:break;
     }
@@ -148,12 +152,13 @@ bool Protocol::receive(const void *data,size_t size){
         ++duplicates_;acknowledge(rx_);return !failed_;
     }
     if(seq!=rx_+1){fail();return false;} // Ordered channel broke: never skip game data.
+    if((k==Kind::Radio||k==Kind::Hold)&&get64(payload+1)<=peerEpoch_){fail();return false;}
     if(ended_||(k==Kind::Ready&&peerReady_)||(k==Kind::Data&&(peerClose_||incoming_.size()>=MaxQueue))||wire_.size()>=MaxQueue){fail();return false;}
     switch(k){
-    case Kind::Ready:peerReady_=true;peerRadio_=payload[5]!=0;break;
+    case Kind::Ready:peerReady_=true;peerRadio_=payload[5]!=0;peerEpoch_=get64(payload+6);break;
     case Kind::Data:incoming_.push_back({Bytes(payload,payload+len),uint16_t(1-id_)});break;
-    case Kind::Radio:peerRadio_=payload[0]!=0;break;
-    case Kind::Hold:peerHeld_=payload[0]!=0;break;
+    case Kind::Radio:peerRadio_=payload[0]!=0;peerEpoch_=get64(payload+1);break;
+    case Kind::Hold:peerHeld_=payload[0]!=0;peerEpoch_=get64(payload+1);break;
     case Kind::Close:peerClose_=true;break;
     default:break;
     }

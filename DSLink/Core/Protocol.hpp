@@ -40,7 +40,7 @@ bool localFrame(const void *data,size_t size,unsigned type);
 // controls and detect an interrupted transfer. There is no rollback or save sync.
 class Protocol {
 public:
-    Protocol(Nonce identity,const char code[4],uint8_t revision);
+    Protocol(Nonce identity,const char code[4],uint8_t revision,uint64_t initialEpoch=1);
     bool bind(Nonce peer,const char code[4],uint8_t revision);
     bool receive(const void *wire,size_t size);
     bool send(const void *data,size_t size,uint16_t target=65535);
@@ -60,6 +60,12 @@ public:
     size_t pendingCount() const {return pending_.size();}
     bool paused() const {return held_||peerHeld_||interrupted_||failed_||(releaseSeq_&&acked_<releaseSeq_);}
     uint16_t id() const {return id_;}
+    uint64_t localRadioEpoch() const {return localEpoch_;}
+    uint64_t peerRadioEpoch() const {return peerEpoch_;}
+    bool localRadioOn() const {return radio_;}
+    bool peerRadioOn() const {return peerRadio_;}
+    bool localHeld() const {return held_;}
+    bool peerHeld() const {return peerHeld_;}
     uint64_t receivedCount() const {return rx_;}
     uint64_t acknowledged() const {return acked_;}
     uint64_t sentCount() const {return tx_;}
@@ -73,12 +79,14 @@ private:
     Bytes encode(Kind kind,uint64_t sequence,const void *data,size_t size,uint16_t target) const;
     void fail();
     void acknowledge(uint64_t sequence);
+    bool advanceRadioEpoch();
     Nonce identity_,peer_{};
     std::array<uint8_t,32> room_{};
     std::array<char,4> code_{};
     uint8_t revision_;
     uint16_t id_=0;
     uint64_t tx_=0,rx_=0,acked_=0,duplicates_=0,rejected_=0,readySeq_=0,releaseSeq_=0;
+    uint64_t localEpoch_=1,peerEpoch_=0;
     bool bound_=false,localReady_=false,peerReady_=false,readyAcked_=false;
     bool radio_=false,peerRadio_=false,held_=false,peerHeld_=false;
     bool interrupted_=false,failed_=false,ended_=false,closeSent_=false,peerClose_=false;

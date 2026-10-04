@@ -35,6 +35,18 @@ def patch(root):
 
 bool MpState::IsReady() const noexcept {''')
     replace('src/libretro/net/mp.hpp','#include <libretro.h>','#include <libretro.h>\n#include "manic_reply_collector.hpp"')
+    replace('src/libretro/net/mp.hpp','#include "manic_reply_collector.hpp"',
+            '#include "manic_reply_collector.hpp"\n#include "manic_receive_deadline.hpp"')
+    replace('src/libretro/net/mp.hpp','std::optional<Packet> NextPacketBlock() noexcept;',
+            'std::optional<Packet> NextPacketBlock(uint32_t maximumWaitMicros = 25000) noexcept;')
+    replace('src/libretro/net/mp.cpp','std::optional<Packet> MpState::NextPacketBlock() noexcept {',
+            'std::optional<Packet> MpState::NextPacketBlock(uint32_t maximumWaitMicros) noexcept {')
+    replace('src/libretro/core/core.hpp','std::optional<Packet> MpNextPacketBlock() noexcept;',
+            'std::optional<Packet> MpNextPacketBlock(uint32_t maximumWaitMicros = 25000) noexcept;')
+    replace('src/libretro/platform/mp.cpp','std::optional<MelonDsDs::Packet> MelonDsDs::CoreState::MpNextPacketBlock() noexcept {',
+            'std::optional<MelonDsDs::Packet> MelonDsDs::CoreState::MpNextPacketBlock(uint32_t maximumWaitMicros) noexcept {')
+    replace('src/libretro/platform/mp.cpp','return _mpState.NextPacketBlock();',
+            'return _mpState.NextPacketBlock(maximumWaitMicros);')
     replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> _data;',
             '    std::vector<uint8_t> _data;\n    uint8_t _sourceAid = 0;')
     replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> ToBuf() const;',
@@ -64,10 +76,10 @@ bool MpState::IsReady() const noexcept {''')
     // belong to a command whose filtered host has already been established.
     if(p.PacketType() == Packet::Type::Reply && !p.Length() && !_hostId.has_value()) return;''')
     replace('src/libretro/net/mp.cpp','#include <ctime>',
-            '#include "manic_receive_deadline.hpp"\n#include <thread>')
+            '#include "manic_receive_deadline.hpp"\n#include <thread>\n#include <algorithm>')
     replace('src/libretro/net/mp.cpp',
             '        for(std::clock_t start = std::clock(); std::clock() < (start + (RECV_TIMEOUT_MS * CLOCKS_PER_SEC / 1000));) {',
-            '        manicds::ReceiveDeadline deadline(RECV_TIMEOUT_MS);\n        while(deadline.nextWaitMicros()) {')
+            '        manicds::ReceiveDeadline deadline(std::chrono::microseconds(std::min(maximumWaitMicros,uint32_t(RECV_TIMEOUT_MS * 1000))));\n        while(deadline.nextWaitMicros()) {')
     replace('src/libretro/net/mp.cpp',
             '''            if(!receivedPackets.empty()) {
                 return NextPacket();
@@ -126,7 +138,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 6; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 7; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;

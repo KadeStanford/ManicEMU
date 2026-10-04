@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #pragma once
 #include "Protocol.hpp"
+#include "NativeRadio.hpp"
+#include "RadioFragments.hpp"
 #include <map>
 #include <memory>
 
@@ -16,8 +18,11 @@ public:
     void remove(Nonce peer);
     bool receive(Nonce peer,const void *data,size_t size);
     bool send(const void *data,size_t size,uint16_t target=65535);
+    bool sendRadio(const void *data,size_t size,uint16_t target=65535);
+    bool receiveRadio(Nonce peer,const void *data,size_t size);
     bool pop(Received &packet);
     std::vector<Bytes> takeWire(Nonce peer);
+    std::vector<Bytes> takeRadioWire(Nonce peer);
     void radio(bool on);
     void hold(bool on);
     bool hasIncoming() const;
@@ -32,14 +37,27 @@ public:
     uint64_t acknowledged() const;
     uint64_t rejectedCount() const;
     uint64_t duplicateCount() const;
+    uint64_t radioSentCount() const;
+    uint64_t radioReceivedCount() const;
+    uint64_t radioDroppedCount() const;
+    uint64_t fragmentDroppedCount() const;
     size_t pendingCount() const;
     static MAC address(Nonce identity);
 private:
-    struct Edge { std::unique_ptr<Protocol> protocol; MAC alias; uint16_t slot; };
+    struct Edge {
+        std::unique_ptr<Protocol> protocol;
+        std::unique_ptr<NativeRadioEdge> radio;
+        RadioFragments fragments;
+        std::vector<Bytes> radioWire;
+        MAC alias;uint16_t slot;
+    };
+    void syncRadio(Edge &edge);
+    void preserveEpoch(const Protocol &protocol);
     void translate(Bytes &packet,bool outgoing) const;
     Nonce identity_; std::array<char,4> code_{};uint8_t revision_;
     MAC alias_;bool radio_=false,held_=false;
     uint16_t nextSlot_=1,cursor_=0;
+    uint64_t nextEpoch_=1;
     std::map<Nonce,Edge> peers_;
 };
 }

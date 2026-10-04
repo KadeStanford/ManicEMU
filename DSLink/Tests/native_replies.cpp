@@ -31,10 +31,11 @@ private:
 struct CoreStub {
     bool active = true; unsigned calls = 0, timeouts = 0;
     bool unrelatedTraffic = false;
+    std::vector<uint32_t> budgets;
     std::deque<Packet> queue;
     bool MpActive() const { return active; }
-    std::optional<Packet> MpNextPacketBlock() {
-        ++calls;
+    std::optional<Packet> MpNextPacketBlock(uint32_t maximumWaitMicros) {
+        ++calls;budgets.push_back(maximumWaitMicros);
         if(unrelatedTraffic) {std::this_thread::sleep_for(std::chrono::milliseconds(5));return Packet(1000,0,0,40,Packet::Cmd);}
         if (queue.empty()) { ++timeouts; return std::nullopt; }
         auto p = std::move(queue.front()); queue.pop_front(); return p;
@@ -124,5 +125,7 @@ int main() {
     const auto start=std::chrono::steady_clock::now();check(run(1000,2)==0);
     const double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     check(elapsed>=20&&elapsed<200&&Core.calls<30&&Core.timeouts==0);
+    check(Core.budgets.size()>1&&Core.budgets.front()<=25000);
+    for(size_t i=1;i<Core.budgets.size();++i)check(Core.budgets[i]<Core.budgets[i-1]&&Core.budgets[i]>0);
     std::printf("{\"checks\":%u,\"native_receive_function\":true,\"private_inputs\":false,\"physical_phone_verified\":false}\n", checks);
 }

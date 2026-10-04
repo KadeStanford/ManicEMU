@@ -1,9 +1,11 @@
 # Nintendo DS local wireless candidate
 
-The DS v0.7 candidate repairs identified iOS-path defects after the user's v0.6
-phone tests failed: both Black/White and HeartGold/SoulSilver showed Union Room
-messages without an interactable remote trainer. That physical failure takes
-precedence over earlier desktop screenshots. A corrected phone pass is pending.
+DS v0.8 addresses the latest v0.7 phone findings: Black/White and
+HeartGold/SoulSilver can display remote trainers, but entry order affects
+discovery and native interaction causes severe slowdown/instability. No
+completed physical trade, battle or save/reload is established on v0.7/v0.8.
+On one trusted USB phone, native receive waits consumed 50.7% of the measured
+interaction-to-exit interval; that measurement does not establish every cause.
 
 All nine supported title identifiers use automatic nearby discovery inside the
 native local room. No emulator player picker, Accept popup or home button is
@@ -34,9 +36,26 @@ an answer. Reassociation and radio stop erase source learning. The receive loop
 also bounds unrelated traffic and avoids unsigned timestamp underflow. Native
 AIDs and game payloads are never fabricated or rewritten.
 
-Native receive waits still use a 25ms wall deadline and notifications, with no
-CPU-clock spin. The send queue now has interactive priority and honors flush
-hints. Numeric diagnostics distinguish identity initialization, peer count,
+Discovery first advertises a ready native console identity after the local
+checkpoint. An early ready remote candidate is retained during preparation;
+one deterministic side invites automatically. This avoids caching an initial
+unready Bonjour record or dropping a peer solely because local preparation is
+incomplete. Reentry retains the same console identity.
+
+Native RF now honors the core's unsequenced/unreliable send request. Reliable
+Ready/radio/hold controls stay separate; native RF has no extra app ACK stream.
+Datagrams carry pair and bilateral radio-epoch fences and bounded <=1000-byte
+fragments. Reassembly is bounded and expires incomplete packets; a lost packet
+cannot block later packets. Nintendo's own retries remain authoritative, and
+RF payload bytes are unchanged. The datagram ceiling is a conservative chosen
+bound, not a physically validated MultipeerConnectivity capacity guarantee.
+
+Native reply collection propagates its remaining 25ms wall budget through
+every nested packet wait instead of opening another full timeout. Notification
+waits avoid CPU-clock spinning; OS scheduling can still overshoot. The send
+queue retains interactive priority and flush handling. Numeric diagnostics
+distinguish native RF/control counts, reassembly drops, SDK send failures,
+identity initialization, peer count,
 CMD/reply/other input, address-filter drops, native timeouts and send-queue delay.
 Core callbacks stay on the emulator thread; SDK delegates enqueue only. Local
 pre-link checkpoints, independent periodic battery writes and graceful radio
@@ -49,7 +68,7 @@ Transfer and four-player game completion are not implemented or established.
 See COMPATIBILITY.md for title/version, historical evidence and explicit gaps.
 
 Combined packaging preserves app identity/assets, gpSP v0.7 GBA behavior and
-R5-derived Azahar Vulkan/Vapecord. The concurrent AirPlay R8 correction replaces
+R5-derived Azahar Vulkan/Vapecord. The concurrent AirPlay R9 correction replaces
 only its injected component. Previous IPAs and real user saves remain untouched.
 Candidates are unsigned; compilation and Simulator checks do not prove iPhone
 local networking or native presentation success.
