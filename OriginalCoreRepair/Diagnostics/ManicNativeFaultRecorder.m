@@ -16,6 +16,18 @@
 static int recordFD=-1,imageFD=-1,stackFD=-1;
 static NSString *diagnosticPrefix;
 static uintptr_t azaharTextBase;
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+// Native diagnostic only: follow the original direct page table without calling
+// the core, taking locks, flushing rasterizer memory, or reading save data.
+static BOOL guestWord(uintptr_t memory,uint32_t address,uint32_t *value) {
+    uintptr_t impl=0,table=0,page=0;vm_size_t copied=0;
+    if(address&3)return NO;
+    if(vm_read_overwrite(mach_task_self(),memory,8,(vm_address_t)&impl,&copied)!=KERN_SUCCESS||copied!=8||!impl)return NO;
+    if(vm_read_overwrite(mach_task_self(),impl+0x28,8,(vm_address_t)&table,&copied)!=KERN_SUCCESS||copied!=8||!table)return NO;
+    if(vm_read_overwrite(mach_task_self(),table+8*(address>>12),8,(vm_address_t)&page,&copied)!=KERN_SUCCESS||copied!=8||!page)return NO;
+    return vm_read_overwrite(mach_task_self(),page+(address&0xfff),4,(vm_address_t)value,&copied)==KERN_SUCCESS&&copied==4;
+}
+#endif
 // Exact original ARMul_State layout, established from ARM_DynCom::Run and
 // InterpreterMainLoop. Serialize only execution metadata, never guest RAM.
 static NSDictionary *guestExecutionState(uintptr_t address) {
@@ -29,7 +41,23 @@ static NSDictionary *guestExecutionState(uintptr_t address) {
         uint32_t value;memcpy(&value,state+0x10+4*i,sizeof(value));
         [registers addObject:@(value)];
     }
-    return @{@"guest_pc":@(pc),@"guest_cpsr":@(cpsr),@"instruction_budget":@(budget),@"guest_registers":registers};
+    NSMutableDictionary *result=[@{@"guest_pc":@(pc),@"guest_cpsr":@(cpsr),@"instruction_budget":@(budget),@"guest_registers":registers} mutableCopy];
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+    if(pc>=0x12f078&&pc<=0x12f0e0){
+        uintptr_t memory;memcpy(&memory,state+8,sizeof(memory));
+        uint32_t lock=[registers[4] unsignedIntValue],sp=[registers[13] unsignedIntValue];
+        NSMutableArray *lockWords=[NSMutableArray new],*returns=[NSMutableArray new];
+        for(unsigned i=0;i<3;i++){uint32_t value;if(!guestWord(memory,lock+4*i,&value))break;[lockWords addObject:@(value)];}
+        for(unsigned i=0;i<64;i++){
+            uint32_t value;if(!guestWord(memory,sp+4*i,&value))break;
+            if(!(value&3)&&((value>=0x100000&&value<0x400000)||(value>=0x7000000&&value<0x8000000)))
+                [returns addObject:@{@"stack_word_index":@(i),@"possible_return_pc":@(value)}];
+        }
+        result[@"guest_lock_address"]=@(lock);result[@"guest_lock_words"]=lockWords;
+        result[@"possible_guest_return_addresses"]=returns;
+    }
+#endif
+    return result;
 }
 #ifdef MANIC_NATIVE_RECORDER_SELF_TEST
 int ManicVerifyGuestStateSampler(void) {

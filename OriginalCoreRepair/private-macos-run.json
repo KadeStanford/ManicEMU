@@ -1,1 +1,1 @@
-{"iteration":3,"purpose":"Capture bounded own-process guest registers during the reproduced native Vulkan plugin hang"}
+{"iteration":4,"purpose":"Native-only direct page-table sampling of the observed guest recursive lock and filtered possible return addresses"}
