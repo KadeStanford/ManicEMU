@@ -36,7 +36,7 @@ def patch(root):
 bool MpState::IsReady() const noexcept {''')
     replace('src/libretro/net/mp.hpp','#include <libretro.h>','#include <libretro.h>\n#include "manic_reply_collector.hpp"')
     replace('src/libretro/net/mp.hpp','#include "manic_reply_collector.hpp"',
-            '#include "manic_reply_collector.hpp"\n#include "manic_receive_deadline.hpp"')
+            '#include "manic_reply_collector.hpp"\n#include "manic_receive_deadline.hpp"\n#include "manic_diagnostics.hpp"')
     replace('src/libretro/net/mp.hpp','std::optional<Packet> NextPacketBlock() noexcept;',
             'std::optional<Packet> NextPacketBlock(uint32_t maximumWaitMicros = 25000) noexcept;')
     replace('src/libretro/net/mp.cpp','std::optional<Packet> MpState::NextPacketBlock() noexcept {',
@@ -48,18 +48,48 @@ bool MpState::IsReady() const noexcept {''')
     replace('src/libretro/platform/mp.cpp','return _mpState.NextPacketBlock();',
             'return _mpState.NextPacketBlock(maximumWaitMicros);')
     replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> _data;',
-            '    std::vector<uint8_t> _data;\n    uint8_t _sourceAid = 0;')
+            '    std::vector<uint8_t> _data;\n    uint8_t _sourceAid = 0;\n    uint16_t _sourceSlot = 65535;')
     replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> ToBuf() const;',
             '''    uint8_t SourceAid() const noexcept { return _sourceAid; }
     void SetSourceAid(uint8_t aid) noexcept { _sourceAid = aid; }
+    uint16_t SourceSlot() const noexcept { return _sourceSlot; }
+    void SetSourceSlot(uint16_t slot) noexcept { _sourceSlot = slot; }
     std::vector<uint8_t> ToBuf() const;''')
+    replace('src/libretro/net/mp.hpp','    bool IsReady() const noexcept;',
+            '    bool IsReady() const noexcept;\n    uint32_t QueueDepth() const noexcept { return uint32_t(receivedPackets.size()); }')
+    replace('src/libretro/net/mp.hpp','    void SendPacket(const Packet &p) noexcept;',
+            '    void SendPacket(const Packet &p, uint16_t diagnosticNativeAid = 0) noexcept;')
+    replace('src/libretro/net/mp.cpp','void MpState::SendPacket(const Packet &p) noexcept {',
+            'void MpState::SendPacket(const Packet &p, uint16_t diagnosticNativeAid) noexcept {')
+    replace('src/libretro/platform/mp.cpp','    _mpState.SendPacket(p);',
+            '''    // Read-only diagnostic metadata. Native packet AID and bytes are
+    // untouched, including intentionally unassigned/empty native replies.
+    const uint16_t diagnosticNativeAid = Console ? Console->Wifi.Read(melonDS::Wifi::W_AIDLow) : 0;
+    _mpState.SendPacket(p, diagnosticNativeAid);''')
+    replace('src/libretro/core/core.hpp','    bool MpActive() const noexcept;',
+            '    bool MpActive() const noexcept;\n    uint32_t MpQueueDepth() const noexcept { return _mpState.QueueDepth(); }')
     replace('src/libretro/net/mp.hpp','    std::queue<Packet> receivedPackets;',
             '    std::queue<Packet> receivedPackets;\n    manicds::ReplySources _replySources;')
     replace('src/libretro/net/mp.cpp','    _hostId.reset();','    _hostId.reset();\n    _replySources.reset();')
     replace('src/libretro/net/mp.cpp','    Packet p = Packet::parsePk(buf, len);',
             '''    Packet p = Packet::parsePk(buf, len);
+    p.SetSourceSlot(client_id);
     if(p.PacketType() == Packet::Type::Reply)
         p.SetSourceAid(_replySources.associate(client_id,p.Aid(),p.Timestamp(),p.Length()));''')
+    replace('src/libretro/net/mp.cpp','    receivedPackets.push(std::move(p));',
+            '''    auto trace = manicds::packetDiagnostic(manicds::DiagnosticEvent::Receive,p,client_id,QueueDepth()+1);
+    retro::environment(manicds::DiagnosticEnvironment,&trace);
+    receivedPackets.push(std::move(p));''')
+    replace('src/libretro/net/mp.cpp','        receivedPackets.pop();',
+            '''        receivedPackets.pop();
+        auto trace = manicds::packetDiagnostic(manicds::DiagnosticEvent::Dequeued,p,p.SourceSlot(),QueueDepth());
+        retro::environment(manicds::DiagnosticEnvironment,&trace);''')
+    replace('src/libretro/net/mp.cpp',
+            '    _sendFn(RETRO_NETPACKET_UNSEQUENCED | RETRO_NETPACKET_UNRELIABLE | RETRO_NETPACKET_FLUSH_HINT, p.ToBuf().data(), p.Length() + HeaderSize, dest);',
+            '''    auto trace = manicds::packetDiagnostic(manicds::DiagnosticEvent::Send,p,dest,QueueDepth());
+    trace.sourceAid = diagnosticNativeAid;
+    retro::environment(manicds::DiagnosticEnvironment,&trace);
+    _sendFn(RETRO_NETPACKET_UNSEQUENCED | RETRO_NETPACKET_UNRELIABLE | RETRO_NETPACKET_FLUSH_HINT, p.ToBuf().data(), p.Length() + HeaderSize, dest);''')
     replace('src/libretro/net/mp.cpp','    _data((unsigned char*)data, (unsigned char*)data + len),','    _data(),')
     replace('src/libretro/net/mp.cpp','    _type(type){\n}',
             '    _type(type){\n    if(data && len) _data.assign((const uint8_t*)data,(const uint8_t*)data+len);\n}')
@@ -116,7 +146,16 @@ bool MpState::IsReady() const noexcept {''')
     _mpState.PacketReceived(buf, len, client_id);''')
     replace('src/libretro/platform/mp.cpp','#include <Platform.h>','#include <Platform.h>\n#include <cstring>')
     replace('src/libretro/net/mp.cpp','    _timeoutCount++;',
-            '''    struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{4,0,nullptr};
+            '''    // A packet may have arrived during the final wait while the frontend
+    // wake-up was scheduled beyond the deadline. Check available data once,
+    // without another wait, before reporting a native timeout.
+    _sendFn(RETRO_NETPACKET_FLUSH_HINT, nullptr, 0, RETRO_NETPACKET_BROADCAST);
+    _pollFn();
+    if (!receivedPackets.empty()) return NextPacket();
+    manicds::NativeDiagnostic trace;
+    trace.event = uint32_t(manicds::DiagnosticEvent::Timeout); trace.depth = QueueDepth();
+    retro::environment(manicds::DiagnosticEnvironment,&trace);
+    struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{4,0,nullptr};
     retro::environment(0x4d445301, &event);
     _timeoutCount++;''')
     replace('src/libretro/platform/mp.cpp','    if(!_mpState.IsReady()) {\n        return false;\n    }',
@@ -138,7 +177,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 7; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 8; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;
@@ -156,6 +195,28 @@ PUBLIC_SYMBOL void retro_init(void) {''')
     original_replies='u16 Platform::MP_RecvReplies('+original_replies.split('\n}',1)[0]+'\n}'
     reply_source=(pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveReplies.inc').read_text()
     replace('src/libretro/libretro.cpp',original_replies,reply_source[reply_source.index('u16 Platform::MP_RecvReplies('):].rstrip())
+    replace('src/libretro/libretro.cpp',
+            '''int Platform::MP_RecvHostPacket(u8* data, u64 * timestamp, void*) {
+    std::optional<MelonDsDs::Packet> o_p = MelonDsDs::Core.MpNextPacketBlock();
+    return DeconstructPacket(data, timestamp, o_p);
+}''',
+            '''int Platform::MP_RecvHostPacket(u8* data, u64 * timestamp, void*) {
+    auto signal = [](uint32_t number) {
+        struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{number,0,nullptr};
+        retro::environment(0x4d445301, &event);
+    };
+    signal(20);
+    std::optional<MelonDsDs::Packet> o_p = MelonDsDs::Core.MpNextPacketBlock();
+    manicds::NativeDiagnostic trace;
+    trace.event = uint32_t(manicds::DiagnosticEvent::HostReceive);
+    trace.depth = MelonDsDs::Core.MpQueueDepth();
+    if (o_p) trace = manicds::packetDiagnostic(manicds::DiagnosticEvent::HostReceive,*o_p,o_p->SourceSlot(),trace.depth);
+    retro::environment(manicds::DiagnosticEnvironment,&trace);
+    const int length = DeconstructPacket(data, timestamp, o_p);
+    if (!length) signal(22);
+    signal(21);
+    return length;
+}''')
     replace('src/libretro/config/console.cpp',
             '''        firmware.GetHeader().MacAddr = mac;
     }
@@ -182,6 +243,7 @@ PUBLIC_SYMBOL void retro_init(void) {''')
     for p,s in changes.items():p.write_text(s,encoding='utf-8',newline='\n')
     (root/'src/libretro/net/manic_receive_deadline.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveDeadline.hpp').read_bytes())
     (root/'src/libretro/net/manic_reply_collector.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReplyCollector.hpp').read_bytes())
+    (root/'src/libretro/net/manic_diagnostics.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/Diagnostics.hpp').read_bytes())
     return list(changes)
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('checkout');a=p.parse_args()

@@ -34,6 +34,11 @@ private:
     std::map<uint16_t, Entry> learned_;
 };
 
+enum class ReplyResult : uint32_t {
+    None = 0, Payload = 40, Empty = 41, Stale = 42, Unknown = 43,
+    Unexpected = 44, Duplicate = 45, Malformed = 46
+};
+
 class ReplyCollector {
 public:
     ReplyCollector(uint64_t timestamp, uint16_t expected) noexcept
@@ -43,28 +48,34 @@ public:
     bool expired() const noexcept { return std::chrono::steady_clock::now() >= deadline_; }
     uint16_t payloads() const noexcept { return payloads_; }
     uint16_t answered() const noexcept { return answered_; }
+    ReplyResult lastResult() const noexcept { return result_; }
     bool accept(uint64_t timestamp, uint8_t aid, uint8_t sourceAid,
                 const void* data, size_t length, uint8_t* packets) noexcept {
-        if (timestamp < earliest_) return false;
+        if (timestamp < earliest_) return reject(ReplyResult::Stale);
         const bool empty = aid == 0 && length == 0;
         if (!empty && (!data || !packets || aid == 0 || aid >= 16 ||
                        length < 36 || length > 2048 || sourceAid != aid))
-            return false;
+            return reject(ReplyResult::Malformed);
         const uint8_t associated = empty ? sourceAid : aid;
-        if (!associated || associated >= 16) return false;
+        if (!associated) return reject(ReplyResult::Unknown);
+        if (associated >= 16) return reject(ReplyResult::Malformed);
         const uint16_t bit = uint16_t(1u << associated);
-        if (!(expected_ & bit) || (answered_ & bit)) return false;
+        if (!(expected_ & bit)) return reject(ReplyResult::Unexpected);
+        if (answered_ & bit) return reject(ReplyResult::Duplicate);
         if (!empty) {
             std::memcpy(packets + size_t(associated - 1) * 1024,
                         data, std::min(length, size_t(1024)));
             payloads_ |= bit;
         }
         answered_ |= bit;
+        result_ = empty ? ReplyResult::Empty : ReplyResult::Payload;
         return true;
     }
 private:
+    bool reject(ReplyResult result) noexcept { result_ = result; return false; }
     uint64_t earliest_;
     uint16_t expected_, answered_ = 0, payloads_ = 0;
+    ReplyResult result_ = ReplyResult::None;
     std::chrono::steady_clock::time_point deadline_ =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
 };

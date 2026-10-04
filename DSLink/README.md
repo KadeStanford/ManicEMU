@@ -1,11 +1,11 @@
 # Nintendo DS local wireless candidate
 
-DS v0.8 addresses the latest v0.7 phone findings: Black/White and
-HeartGold/SoulSilver can display remote trainers, but entry order affects
-discovery and native interaction causes severe slowdown/instability. No
-completed physical trade, battle or save/reload is established on v0.7/v0.8.
-On one trusted USB phone, native receive waits consumed 50.7% of the measured
-interaction-to-exit interval; that measurement does not establish every cause.
+DS v0.9 follows confirmed v0.8 phone feedback. HeartGold/SoulSilver trading and
+battling are reported working with slowdown; Black/White show trainers but
+interaction/trade fail with communication errors. Native receive waits consumed
+68% of measured active Black/White stalls on one trusted USB phone. Two proven
+receive-boundary defects are corrected; physical performance/completion remains
+pending. Compilation and historical desktop success do not prove a final fix.
 
 All nine supported title identifiers use automatic nearby discovery inside the
 native local room. No emulator player picker, Accept popup or home button is
@@ -53,6 +53,11 @@ bound, not a physically validated MultipeerConnectivity capacity guarantee.
 Native reply collection propagates its remaining 25ms wall budget through
 every nested packet wait instead of opening another full timeout. Notification
 waits avoid CPU-clock spinning; OS scheduling can still overshoot. The send
+path now polls available frontend data once after the last wait, before a
+timeout. Reply collection additionally drains at most 256 already-available
+packets without opening another wait. Timestamps, payload masks and reply
+acceptance rules stay native.
+The send
 queue retains interactive priority and flush handling. Numeric diagnostics
 distinguish native RF/control counts, reassembly drops, SDK send failures,
 identity initialization, peer count,
@@ -68,7 +73,22 @@ Transfer and four-player game completion are not implemented or established.
 See COMPATIBILITY.md for title/version, historical evidence and explicit gaps.
 
 Combined packaging preserves app identity/assets, gpSP v0.7 GBA behavior and
-R5-derived Azahar Vulkan/Vapecord. The concurrent AirPlay R9 correction replaces
+R5-derived Azahar Vulkan/Vapecord. The concurrent AirPlay R10 correction replaces
 only its injected component. Previous IPAs and real user saves remain untouched.
 Candidates are unsigned; compilation and Simulator checks do not prove iPhone
 local networking or native presentation success.
+
+The consolidated diagnostic recorder retains scoped host/reply wait times and
+timeouts, accepted/empty/stale/unknown/unexpected/duplicate/malformed replies,
+native request/arrival/payload masks, timestamps, source slots, actual sender
+AID register, queue depth and byte-exact bounded wireless packet contents.
+The frontend also records SDK RF envelopes/send outcomes, delayed wake-ups,
+frame time, AV callback counts, selected JIT/render options, CPU time, thermal
+and low-power state, and recorder overhead. It adds no network messages.
+Packet callbacks copy at most 2048 bytes into a fixed 128-record ring; disk and
+JSON work run on a serial utility queue with at most two pending jobs. Snapshots
+are limited to 512KiB each. Sixteen rotating game sessions each retain eight
+periodic snapshots plus the last incomplete exchange and slow frame; normal
+game unload requests a final snapshot. Private captures stay local, separate
+from generic code and synthetic CI evidence. The optional Azahar recorder is
+a separate packaging variant; its trace does not establish DS protocol behavior.

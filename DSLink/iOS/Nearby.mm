@@ -16,12 +16,22 @@
 #include "Room.hpp"
 #include "Batch.hpp"
 #include "PlayerName.h"
+#include "DiagnosticRecorder.h"
+#include <sys/resource.h>
+#include <unistd.h>
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
 static NSString *const WireVersion=@"ds131-room9";
 static std::mutex lock;
 static std::condition_variable packetsReady;
+struct ReceiveDiagnostics {
+    unsigned scope=0;
+    uint64_t hostCalls=0,replyCalls=0,hostWaits=0,replyWaits=0;
+    uint64_t hostTimeouts=0,replyTimeouts=0,hostEmpty=0,replyComplete=0,replyIncomplete=0;
+    uint64_t replyResults[7]{};
+    double hostWaitMilliseconds=0,replyWaitMilliseconds=0;
+};
 static struct {
     std::unique_ptr<manicds::Room> room;
     MDSCore core{};
@@ -37,6 +47,17 @@ static struct {
     uint64_t measuredFrames=0,waits=0,transportMessages=0;
     uint64_t nativeTimeouts=0,nativeCmd=0,nativeReply=0,nativeOther=0,filterBSSID=0,filterDestination=0;
     uint64_t unreliableSendFailures=0;
+    ReceiveDiagnostics receive{};
+    std::unique_ptr<DiagnosticRing> traces;
+    std::unique_ptr<DiagnosticRing> lastIncomplete,lastSlow;
+    double diagnosticStart=0,traceCopyMax=0,writerMilliseconds=0,frameMax=0,lastSlowSnapshot=0;
+    uint64_t writerFailures=0,frameOver50=0,snapshot=0;
+    unsigned diagnosticSession=0;
+    bool incompleteSinceSnapshot=false,slowSinceSnapshot=false;
+    double lastIncompleteFreeze=0,lastSlowFreeze=0,snapshotBuildMax=0;
+    NSMutableDictionary *options=nil;
+    uint64_t videoCallbacks=0,videoDuplicates=0,audioFrames=0,audioConsumed=0;
+    unsigned videoWidth=0,videoHeight=0;
     double sendQueueDelayMax=0,sendCallMax=0;
     Nonce nonce{};
     NSData *lastBattery=nil;
@@ -44,6 +65,30 @@ static struct {
     NSString *wirelessMAC=nil;
 } g;
 static std::atomic<uint64_t> epoch{0};
+void MDS_coreOption(const char *key,const char *value){
+    if(!key||!value)return;static const char *allowed[]={"melonds_console_mode","melonds_render_mode","melonds_threaded_renderer","melonds_jit_enable","melonds_jit_block_size","melonds_jit_branch_optimisations","melonds_jit_literal_optimisations","melonds_jit_fast_memory"};
+    if(!std::any_of(std::begin(allowed),std::end(allowed),[key](const char *name){return !strcmp(key,name);})||strnlen(value,65)>64)return;
+    std::lock_guard<std::mutex> guard(lock);if(!g.options)g.options=[NSMutableDictionary new];
+    NSString *text=[NSString stringWithUTF8String:value];if(text)g.options[[NSString stringWithUTF8String:key]]=text;
+}
+void MDS_video(unsigned width,unsigned height,bool duplicate){std::lock_guard<std::mutex> guard(lock);if(!g.loaded)return;g.videoCallbacks++;g.videoDuplicates+=duplicate;g.videoWidth=width;g.videoHeight=height;}
+void MDS_audio(size_t frames,size_t consumed){std::lock_guard<std::mutex> guard(lock);if(!g.loaded)return;g.audioFrames+=frames;g.audioConsumed+=consumed;}
+static void traceLocked(const NativeDiagnostic& trace){
+    if(!g.loaded||!g.traces)return;double now=CACurrentMediaTime();
+    g.traces->record(trace,uint64_t(std::max(0.0,now-g.diagnosticStart)*1000000));
+    if(trace.event==5&&trace.reason==33&&now-g.lastIncompleteFreeze>=1){
+        *g.lastIncomplete=*g.traces;g.incompleteSinceSnapshot=true;g.lastIncompleteFreeze=now;
+    }
+}
+void MDS_trace(const NativeDiagnostic& trace){
+    double begin=CACurrentMediaTime();std::lock_guard<std::mutex> guard(lock);
+    traceLocked(trace);g.traceCopyMax=std::max(g.traceCopyMax,(CACurrentMediaTime()-begin)*1000);
+}
+static dispatch_queue_t diagnosticQueue(){
+    static dispatch_queue_t queue;static dispatch_once_t once;
+    dispatch_once(&once,^{queue=dispatch_queue_create("manic.ds.diagnostics",DISPATCH_QUEUE_SERIAL);});return queue;
+}
+static std::atomic<unsigned> diagnosticJobs{0};
 static void (*originalPause)(id,SEL),(*originalResume)(id,SEL);
 static NSString *hexNonce(Nonce value){NSMutableString *s=[NSMutableString new];for(auto b:value)[s appendFormat:@"%02x",b];return s;}
 static bool readNonce(NSString *s,Nonce &n){
@@ -171,18 +216,39 @@ void MDS_waitForPackets(uint32_t microseconds){
     if(!microseconds||microseconds>1000)return;
     auto begin=std::chrono::steady_clock::now();std::unique_lock<std::mutex> guard(lock);const auto generation=g.epoch;
     packetsReady.wait_for(guard,std::chrono::microseconds(microseconds),[generation]{return g.epoch!=generation||(g.room&&g.room->hasIncoming());});
-    g.waits++;g.waitMilliseconds+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
+    double elapsed=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
+    g.waits++;g.waitMilliseconds+=elapsed;
+    if(g.receive.scope==1){g.receive.hostWaits++;g.receive.hostWaitMilliseconds+=elapsed;}
+    if(g.receive.scope==2){g.receive.replyWaits++;g.receive.replyWaitMilliseconds+=elapsed;}
+    if(elapsed*1000>double(microseconds)+2000){NativeDiagnostic t;t.event=102;t.timestamp=microseconds;
+        t.referenceTimestamp=uint64_t(elapsed*1000);t.aidmask=g.receive.scope;t.reason=g.room&&g.room->hasIncoming()?1:0;traceLocked(t);}
 }
 void MDS_netpacket(const retro_netpacket_callback *cb){if(cb){std::lock_guard<std::mutex> guard(lock);g.net=*cb;}}
 void MDS_gameLoaded(const char code[4],uint8_t revision,MDSCore core){
     MDS_gameUnloading();
-    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;g.nativeTimeouts=g.nativeCmd=g.nativeReply=g.nativeOther=g.filterBSSID=g.filterDestination=g.unreliableSendFailures=0;g.sendQueueDelayMax=g.sendCallMax=0;}
+    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;g.nativeTimeouts=g.nativeCmd=g.nativeReply=g.nativeOther=g.filterBSSID=g.filterDestination=g.unreliableSendFailures=0;g.sendQueueDelayMax=g.sendCallMax=0;g.receive={};}
     dispatch_async(dispatch_get_main_queue(),^{installPauseHooks();});
+    {std::lock_guard<std::mutex> guard(lock);if(g.loaded){
+        NSInteger next=[NSUserDefaults.standardUserDefaults integerForKey:@"ManicDSDiagnosticNextSlot"];
+        g.diagnosticSession=unsigned(next)&15;[NSUserDefaults.standardUserDefaults setInteger:NSInteger((g.diagnosticSession+1)&15) forKey:@"ManicDSDiagnosticNextSlot"];
+        g.traces=std::make_unique<DiagnosticRing>();g.lastIncomplete=std::make_unique<DiagnosticRing>();g.lastSlow=std::make_unique<DiagnosticRing>();
+        g.diagnosticStart=CACurrentMediaTime();g.traceCopyMax=g.writerMilliseconds=g.frameMax=g.lastIncompleteFreeze=g.lastSlowFreeze=g.snapshotBuildMax=0;
+        g.writerFailures=g.frameOver50=g.snapshot=0;g.incompleteSinceSnapshot=g.slowSinceSnapshot=false;
+        g.videoCallbacks=g.videoDuplicates=g.audioFrames=g.audioConsumed=0;g.videoWidth=g.videoHeight=0;
+    }}
 }
 void MDS_signal(unsigned event,const void *packet){
     uint64_t generation;bool on=false,changed=false;
     {std::lock_guard<std::mutex> guard(lock);if(!g.loaded)return;generation=g.epoch;
-        if(event==4)g.nativeTimeouts++;if(event==5)g.nativeCmd++;if(event==6)g.nativeReply++;
+        if(event==20){g.receive.scope=1;g.receive.hostCalls++;}
+        if(event==30){g.receive.scope=2;g.receive.replyCalls++;}
+        if(event==21||event==31)g.receive.scope=0;
+        if(event==22)g.receive.hostEmpty++;
+        if(event==32)g.receive.replyComplete++;
+        if(event==33)g.receive.replyIncomplete++;
+        if(event>=40&&event<=46)g.receive.replyResults[event-40]++;
+        if(event==4){g.nativeTimeouts++;if(g.receive.scope==1)g.receive.hostTimeouts++;if(g.receive.scope==2)g.receive.replyTimeouts++;}
+        if(event==5)g.nativeCmd++;if(event==6)g.nativeReply++;
         if(event==7)g.nativeOther++;if(event==8)g.filterBSSID++;if(event==9)g.filterDestination++;
         if(event>=4)return;
         if(event==1||event==2){on=event==1;changed=g.radio!=on;g.radio=on;if(g.room)g.room->radio(on);if(changed&&!on&&g.prepared)g.finishPending=true;}
@@ -211,25 +277,59 @@ bool MDS_beforeFrame(){
     if(finish&&!persist(true))warning(@"The current DS battery save could not be verified at room exit. Keep the game open and save normally; your pre-link checkpoint was retained.",generation);
     pollPackets();[[MDSNearby shared] drain];return allow;
 }
-void MDS_afterFrame(double nativeMilliseconds){
-    prepare();bool save=false;uint64_t generation;
-    NSDictionary *metrics=nil;
-    {std::lock_guard<std::mutex> guard(lock);generation=g.epoch;save=g.prepared&&g.room&&((++g.frames%60)==0);
-        if(g.room&&nativeMilliseconds>0){g.nativeMilliseconds+=nativeMilliseconds;g.measuredFrames++;}
-        if(g.loaded&&CACurrentMediaTime()-g.lastMetrics>=5){g.lastMetrics=CACurrentMediaTime();
-            metrics=@{@"format":@3,@"candidate":@"DS-v0.8",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"native_radio_sent":@(g.room?g.room->radioSentCount():0),@"native_radio_received":@(g.room?g.room->radioReceivedCount():0),@"native_radio_dropped":@(g.room?g.room->radioDroppedCount():0),@"fragment_dropped":@(g.room?g.room->fragmentDroppedCount():0),@"unreliable_send_failures":@(g.unreliableSendFailures),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
+void MDS_afterFrame(double nativeMilliseconds,bool finalSnapshot){
+    if(!finalSnapshot)prepare();bool save=false;uint64_t generation;
+    NSDictionary *metrics=nil,*incomplete=nil,*slow=nil;unsigned slot=0;uint64_t snapshot=0;
+    double buildBegin=CACurrentMediaTime();
+    {std::lock_guard<std::mutex> guard(lock);generation=g.epoch;save=!finalSnapshot&&g.prepared&&g.room&&((++g.frames%60)==0);
+        if(g.loaded&&nativeMilliseconds>0){g.nativeMilliseconds+=nativeMilliseconds;g.measuredFrames++;g.frameMax=std::max(g.frameMax,nativeMilliseconds);
+            if(nativeMilliseconds>50){g.frameOver50++;if(g.traces&&CACurrentMediaTime()-g.lastSlowFreeze>=1){*g.lastSlow=*g.traces;g.lastSlowFreeze=CACurrentMediaTime();g.slowSinceSnapshot=true;}}}
+        if(g.loaded&&(finalSnapshot||CACurrentMediaTime()-g.lastMetrics>=5)){g.lastMetrics=CACurrentMediaTime();
+            metrics=@{@"format":@5,@"candidate":@"DS-v0.9",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"native_radio_sent":@(g.room?g.room->radioSentCount():0),@"native_radio_received":@(g.room?g.room->radioReceivedCount():0),@"native_radio_dropped":@(g.room?g.room->radioDroppedCount():0),@"fragment_dropped":@(g.room?g.room->fragmentDroppedCount():0),@"unreliable_send_failures":@(g.unreliableSendFailures),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"receive_scope":@(g.receive.scope),@"host_receive_calls":@(g.receive.hostCalls),@"reply_receive_calls":@(g.receive.replyCalls),@"host_wait_calls":@(g.receive.hostWaits),@"reply_wait_calls":@(g.receive.replyWaits),@"host_wait_ms":@(g.receive.hostWaitMilliseconds),@"reply_wait_ms":@(g.receive.replyWaitMilliseconds),@"host_timeouts":@(g.receive.hostTimeouts),@"reply_timeouts":@(g.receive.replyTimeouts),@"host_empty":@(g.receive.hostEmpty),@"reply_complete":@(g.receive.replyComplete),@"reply_incomplete":@(g.receive.replyIncomplete),@"reply_payload":@(g.receive.replyResults[0]),@"reply_empty":@(g.receive.replyResults[1]),@"reply_stale":@(g.receive.replyResults[2]),@"reply_unknown_aid":@(g.receive.replyResults[3]),@"reply_unexpected_aid":@(g.receive.replyResults[4]),@"reply_duplicate_aid":@(g.receive.replyResults[5]),@"reply_malformed":@(g.receive.replyResults[6]),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
+            NSMutableDictionary *detail=[metrics mutableCopy];
+            detail[@"code"]=[[NSString alloc]initWithBytes:g.code length:4 encoding:NSASCIIStringEncoding];detail[@"revision"]=@(g.revision);
+            detail[@"session"]=[NSString stringWithFormat:@"%d-%llu",getpid(),(unsigned long long)g.epoch];
+            detail[@"thermal_state"]=@(NSProcessInfo.processInfo.thermalState);detail[@"low_power_mode"]=@(NSProcessInfo.processInfo.lowPowerModeEnabled);
+            detail[@"os_version"]=UIDevice.currentDevice.systemVersion;detail[@"device_model"]=UIDevice.currentDevice.model;
+            detail[@"core_options"]=g.options?[g.options copy]:@{};detail[@"video_callbacks"]=@(g.videoCallbacks);detail[@"video_duplicates"]=@(g.videoDuplicates);
+            detail[@"video_width"]=@(g.videoWidth);detail[@"video_height"]=@(g.videoHeight);detail[@"audio_frames"]=@(g.audioFrames);detail[@"audio_consumed"]=@(g.audioConsumed);
+            struct rusage usage{};getrusage(RUSAGE_SELF,&usage);
+            detail[@"process_cpu_ms"]=@(double(usage.ru_utime.tv_sec+usage.ru_stime.tv_sec)*1000+double(usage.ru_utime.tv_usec+usage.ru_stime.tv_usec)/1000);
+            detail[@"process_max_rss_bytes"]=@(usage.ru_maxrss);detail[@"frame_max_ms"]=@(g.frameMax);detail[@"frames_over_50_ms"]=@(g.frameOver50);
+            detail[@"diagnostic_copy_max_ms"]=@(g.traceCopyMax);detail[@"diagnostic_build_max_ms"]=@(g.snapshotBuildMax);
+            detail[@"diagnostic_write_max_ms"]=@(g.writerMilliseconds);detail[@"diagnostic_write_failures"]=@(g.writerFailures);
+            detail[@"trace_count"]=@(g.traces?g.traces->count():0);detail[@"trace_overwritten"]=@(g.traces?g.traces->overwritten():0);
+            detail[@"trace_rejected"]=@(g.traces?g.traces->rejected():0);detail[@"trace"]=g.traces?diagnosticRecords(*g.traces):@[];
+            detail[@"final_snapshot"]=@(finalSnapshot);slot=g.diagnosticSession;snapshot=g.snapshot++;
+            if(g.incompleteSinceSnapshot&&g.lastIncomplete){NSMutableDictionary *pin=[detail mutableCopy];pin[@"trace"]=diagnosticRecords(*g.lastIncomplete);pin[@"snapshot_kind"]=@"last-incomplete";incomplete=pin;g.incompleteSinceSnapshot=false;}
+            if(g.slowSinceSnapshot&&g.lastSlow){NSMutableDictionary *pin=[detail mutableCopy];pin[@"trace"]=diagnosticRecords(*g.lastSlow);pin[@"snapshot_kind"]=@"last-slow";slow=pin;g.slowSinceSnapshot=false;}
+            detail[@"snapshot_kind"]=finalSnapshot?@"final":@"periodic";metrics=detail;
+            g.snapshotBuildMax=std::max(g.snapshotBuildMax,(CACurrentMediaTime()-buildBegin)*1000);
         }
     }
-    if(metrics){dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-        if(generation!=epoch.load())return;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-        NSURL *dir=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics" isDirectory:YES];[NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        [[NSJSONSerialization dataWithJSONObject:metrics options:0 error:nil] writeToURL:[dir URLByAppendingPathComponent:@"current.json"] options:NSDataWritingAtomic error:nil];
-    });}
+    if(metrics&&diagnosticJobs.load()<2){diagnosticJobs++;dispatch_async(diagnosticQueue(),^{@autoreleasepool{
+        double begin=CACurrentMediaTime();NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        NSURL *dir=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics" isDirectory:YES];
+        [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        uint64_t failures=0;
+        auto write=[&](NSDictionary *value,NSString *name){if(!value)return;
+            NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
+            if(!data||data.length>524288||![data writeToURL:[dir URLByAppendingPathComponent:name] options:NSDataWritingAtomic error:nil])failures++;
+        };
+        write(metrics,[NSString stringWithFormat:@"capture-%02u-%u.json",slot,unsigned(snapshot%8)]);
+        write(incomplete,[NSString stringWithFormat:@"capture-%02u-incomplete.json",slot]);
+        write(slow,[NSString stringWithFormat:@"capture-%02u-slow.json",slot]);
+        if(generation==epoch.load())write(metrics,@"current.json");
+        {std::lock_guard<std::mutex> guard(lock);if(generation==g.epoch){g.writerMilliseconds=std::max(g.writerMilliseconds,(CACurrentMediaTime()-begin)*1000);g.writerFailures+=failures;}}
+        diagnosticJobs--;
+    }});}
     if(save&&!persist(false))warning(@"The current DS battery save could not be written and verified. Keep the game open and save normally; the pre-link checkpoint remains untouched.",generation);
 }
 bool MDS_allowRestore(){std::lock_guard<std::mutex> guard(lock);return !g.room||(!g.radio&&!g.room->active());}
 void MDS_gameUnloading(){
     bool flush=false;retro_netpacket_callback cb;
+    bool snapshot=false;{std::lock_guard<std::mutex> guard(lock);snapshot=g.loaded&&bool(g.traces);}
+    if(snapshot)MDS_afterFrame(0,true);
     {std::lock_guard<std::mutex> guard(lock);flush=g.loaded&&g.prepared;cb=g.net;}
     if(flush&&!persist(true))warning(@"The current DS battery save was not verified at game close. Your pre-link backup was retained.",epoch.load());
     if(g.started&&cb.stop)cb.stop();
@@ -343,7 +443,9 @@ void MDS_gameUnloading(){
             }
             if(!out.count){g.sendScheduled=false;return;}}
         for(NSArray *entry in out){NSError *error=nil;BOOL reliable=[entry[2] boolValue];double sendAt=CACurrentMediaTime();BOOL sent=[session sendData:entry[1] toPeers:@[entry[0]] withMode:reliable?MCSessionSendDataReliable:MCSessionSendDataUnreliable error:&error];
-            {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.transportMessages++;g.sendCallMax=std::max(g.sendCallMax,(CACurrentMediaTime()-sendAt)*1000);if(!sent&&!reliable)g.unreliableSendFailures++;}
+            {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.transportMessages++;if(!reliable){NSData *bytes=entry[1];Nonce peer;NativeDiagnostic trace;trace.event=101;
+                trace.sourceSlot=readNonce(self->_wirePeers[entry[0]],peer)&&g.room?g.room->slot(peer):65535;trace.reason=sent?1:0;
+                trace.length=uint32_t(std::min(bytes.length,NSUInteger(2048)));trace.payload=bytes.bytes;traceLocked(trace);}g.sendCallMax=std::max(g.sendCallMax,(CACurrentMediaTime()-sendAt)*1000);if(!sent&&!reliable)g.unreliableSendFailures++;}
             // Losing an RF datagram must not tear down reliable room control.
             // The game decides whether to retry or report communication failure.
             if(!sent&&reliable)dispatch_async(dispatch_get_main_queue(),^{if(generation==epoch.load()&&session==self.session){[self remove:entry[0]];[session cancelConnectPeer:entry[0]];}});}
@@ -404,7 +506,9 @@ void MDS_gameUnloading(){
     if(radio&&data.length>RadioFragments::MaxMessage)return;
     {std::lock_guard<std::mutex> guard(lock);if(!g.room)return;Nonce n;
         if(readNonce(_wirePeers[peer],n)){
-            if(radio)g.room->receiveRadio(n,data.bytes,data.length);
+            if(radio){bool accepted=g.room->receiveRadio(n,data.bytes,data.length);
+                NativeDiagnostic trace;trace.event=100;trace.sourceSlot=g.room->slot(n);trace.reason=accepted?1:0;
+                trace.length=uint32_t(data.length);trace.payload=data.bytes;traceLocked(trace);}
             else for(const auto &frame:frames)g.room->receive(n,frame.data(),frame.size());
         }
         else if(_early.count<Room::MaxPeers||_early[peer]){if(!_early[peer])_early[peer]=[NSMutableArray new];if(_early[peer].count<16)[_early[peer] addObject:data];}}

@@ -16,10 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
+      - name: Prepare pinned public engine for actual native boundary checks
+        run: |
+          git -c core.autocrlf=false clone --depth 1 --branch v1.3.1 https://github.com/JesseTG/melonds-ds.git ds-protocol-source
+          python3 DSLink/scripts/patch_source.py ds-protocol-source
       - name: Build independent peers with sanitizers
         run: >-
           cmake -S DSLink -B ds-protocol-build -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_BUILD_TYPE=Debug
+          -DMANIC_DS_NATIVE_SOURCE=$PWD/ds-protocol-source
           -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
           -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
       - run: cmake --build ds-protocol-build --parallel 2
@@ -32,6 +37,7 @@ jobs:
           path: |
             ds-protocol-build/protocol.json
             ds-protocol-build/Testing/Temporary/LastTest.log
+            ds-protocol-build/native_wait_functions.json
   ios-core:
     runs-on: macos-15
     timeout-minutes: 40

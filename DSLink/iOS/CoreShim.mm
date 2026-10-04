@@ -12,6 +12,9 @@
 static retro_environment_t frontend;
 static bool localPokemon=false;
 static uint32_t identityRequests=0;
+static retro_video_refresh_t videoCallback;
+static retro_audio_sample_t audioCallback;
+static retro_audio_sample_batch_t audioBatchCallback;
 #ifndef MDS_TESTING
 static void *engine;
 #endif
@@ -29,19 +32,28 @@ static void *symbol(const char *name){
 template<class F> static F original(const char *name){return reinterpret_cast<F>(symbol(name));}
 struct Event {uint32_t number,reserved;const void *packet;};
 static bool environment(unsigned command,void *data){
+    if(command==manicds::DiagnosticEnvironment){
+        if(!data)return false;const auto& trace=*static_cast<const manicds::NativeDiagnostic*>(data);
+        if(trace.version!=1||trace.event<1||trace.event>8||trace.length>2048||(trace.length&&!trace.payload))return false;
+        MDS_trace(trace);return true;
+    }
     if(command==0x4d445303){bool ok=localPokemon&&generatedConsole(static_cast<MDSGeneratedConsole*>(data));if(ok)identityRequests++;return ok;}
     if(command==0x4d445302){
         if(!data)return false;const auto *p=static_cast<const uint32_t*>(data);
         if(p[1]||p[0]>1000)return false;MDS_waitForPackets(p[0]);return true;
     }
     if(command==0x4d445301){
-        if(data){const auto *e=static_cast<const Event*>(data);if(!e->reserved&&e->number<=9)MDS_signal(e->number,e->packet);}
+        if(data){const auto *e=static_cast<const Event*>(data);
+            bool known=e->number<=9||(e->number>=20&&e->number<=22)||(e->number>=30&&e->number<=33)||(e->number>=40&&e->number<=46);
+            if(!e->reserved&&known&&(e->number<20||!e->packet))MDS_signal(e->number,e->packet);}
         return true;
     }
     if(command==RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE){
         if(!data)return false;MDS_netpacket(static_cast<const retro_netpacket_callback*>(data));return true;
     }
-    return frontend&&frontend(command,data);
+    bool ok=frontend&&frontend(command,data);
+    if(ok&&command==RETRO_ENVIRONMENT_GET_VARIABLE&&data){const auto *v=static_cast<const retro_variable*>(data);MDS_coreOption(v->key,v->value);}
+    return ok;
 }
 extern "C" void retro_set_environment(retro_environment_t cb){
     frontend=cb;auto f=original<decltype(&retro_set_environment)>("retro_set_environment");if(f)f(environment);
@@ -66,7 +78,7 @@ extern "C" bool retro_load_game(const retro_game_info *info){
     // A reset-capable engine is mandatory. The diagnostic binary patch lacks
     // queue reset; it cannot enable a feature IPA merely by having event hooks.
     using Revision=unsigned(*)();auto revisionFn=original<Revision>("manic_ds_protocol_revision");
-    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==7?code:disabled,revision,core);return true;
+    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==8?code:disabled,revision,core);return true;
 }
 extern "C" void retro_run(){
     if(!MDS_beforeFrame())return;
@@ -82,9 +94,14 @@ extern "C" void retro_reset(){if(MDS_allowRestore()){auto f=original<decltype(&r
 #define VOID_FORWARD(name,args,call) extern "C" void name args {auto f=original<decltype(&name)>(#name);if(f)f call;}
 #define VALUE_FORWARD(type,name,args,call,fallback) extern "C" type name args {auto f=original<decltype(&name)>(#name);return f?f call:fallback;}
 VOID_FORWARD(retro_init,(),())
-VOID_FORWARD(retro_set_video_refresh,(retro_video_refresh_t cb),(cb))
-VOID_FORWARD(retro_set_audio_sample,(retro_audio_sample_t cb),(cb))
-VOID_FORWARD(retro_set_audio_sample_batch,(retro_audio_sample_batch_t cb),(cb))
+static void videoBridge(const void *data,unsigned width,unsigned height,size_t pitch){
+    MDS_video(width,height,data==nullptr);if(videoCallback)videoCallback(data,width,height,pitch);
+}
+static void audioBridge(int16_t left,int16_t right){MDS_audio(1,audioCallback?1:0);if(audioCallback)audioCallback(left,right);}
+static size_t audioBatchBridge(const int16_t *data,size_t frames){size_t consumed=audioBatchCallback?audioBatchCallback(data,frames):0;MDS_audio(frames,consumed);return consumed;}
+extern "C" void retro_set_video_refresh(retro_video_refresh_t cb){videoCallback=cb;auto f=original<decltype(&retro_set_video_refresh)>("retro_set_video_refresh");if(f)f(cb?videoBridge:nullptr);}
+extern "C" void retro_set_audio_sample(retro_audio_sample_t cb){audioCallback=cb;auto f=original<decltype(&retro_set_audio_sample)>("retro_set_audio_sample");if(f)f(cb?audioBridge:nullptr);}
+extern "C" void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb){audioBatchCallback=cb;auto f=original<decltype(&retro_set_audio_sample_batch)>("retro_set_audio_sample_batch");if(f)f(cb?audioBatchBridge:nullptr);}
 VOID_FORWARD(retro_set_input_poll,(retro_input_poll_t cb),(cb))
 VOID_FORWARD(retro_set_input_state,(retro_input_state_t cb),(cb))
 VOID_FORWARD(retro_get_system_info,(retro_system_info *info),(info))

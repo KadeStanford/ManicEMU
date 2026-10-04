@@ -9,6 +9,10 @@ static unsigned pauseCalls=0,resumeCalls=0,starts=0,stops=0,received=0;
 static bool wrongThread=false,hasPath=true;
 static unsigned nativeDatagrams=0,reliableMessages=0;
 static bool wrongDeliveryMode=false;
+static unsigned forwardedVideo=0,forwardedAudio=0;
+static const void *forwardedVideoData;
+static void testVideo(const void *data,unsigned width,unsigned height,size_t pitch){forwardedVideo++;forwardedVideoData=data;wrongDeliveryMode|=width!=10||height!=4||pitch!=20;}
+static size_t testAudio(const int16_t *data,size_t frames){forwardedAudio++;wrongDeliveryMode|=!data||frames!=32;return 17;}
 static Bytes coreReceived,peerReceived;
 static uint8_t testBattery[512],testState[64];
 static MTSaveEntry testEntry{};static MTSaveList testFiles{};
@@ -37,7 +41,7 @@ static bool mockLoad(const retro_game_info *info){
 }
 static bool mockIdentity(uint8_t *out){memcpy(out,mockBootIdentity,6);return true;}
 static bool mockMatches(){return true;}
-static unsigned mockRevision(){return 7;}
+static unsigned mockRevision(){return 8;}
 static void mockUnload(){}
 static bool mockFrontend(unsigned command,void *data){(void)command;(void)data;return false;}
 static void *MDS_testEngineSymbol(const char *name){
@@ -250,13 +254,53 @@ static void tests(){@autoreleasepool{
         for(const char *code:{"ADAE","APAE","CPUE","IPKE","IPGE","IRBO","IRAO","IREO","IRDO"}){
             uint8_t header[32]{};memcpy(header+12,code,4);retro_game_info info{};info.data=header;info.size=sizeof(header);
             check([NSString stringWithFormat:@"iOS shim identity before engine load %.4s",code],retro_load_game(&info)&&requests()==1&&localMatches());
+            if(!memcmp(code,"IRBO",4)){
+                Event e{20,0,nullptr};engineEnvironment(0x4d445301,&e);
+                uint32_t wait[2]{1000,0};engineEnvironment(0x4d445302,wait);
+                e.number=4;engineEnvironment(0x4d445301,&e);
+                check(@"host receive diagnostics separate waits and timeouts",g.receive.scope==1&&g.receive.hostCalls==1&&g.receive.hostWaits==1&&g.receive.hostTimeouts==1&&g.receive.hostWaitMilliseconds>0);
+                e.number=22;engineEnvironment(0x4d445301,&e);e.number=21;engineEnvironment(0x4d445301,&e);
+                check(@"host receive scope ends after no native bytes",g.receive.scope==0&&g.receive.hostEmpty==1);
+                e.number=30;engineEnvironment(0x4d445301,&e);engineEnvironment(0x4d445302,wait);
+                e.number=4;engineEnvironment(0x4d445301,&e);
+                check(@"reply waits and timeouts remain independent",g.receive.scope==2&&g.receive.replyCalls==1&&g.receive.replyWaits==1&&g.receive.replyTimeouts==1&&g.receive.hostWaits==1&&g.receive.replyWaitMilliseconds>0);
+                for(unsigned i=40;i<=46;i++){e.number=i;engineEnvironment(0x4d445301,&e);}
+                check(@"numeric reply outcomes count without packet input",std::all_of(std::begin(g.receive.replyResults),std::end(g.receive.replyResults),[](uint64_t value){return value==1;}));
+                e.number=32;engineEnvironment(0x4d445301,&e);e.number=33;engineEnvironment(0x4d445301,&e);e.number=31;engineEnvironment(0x4d445301,&e);
+                check(@"batch completion and timeout scopes close",g.receive.scope==0&&g.receive.replyComplete==1&&g.receive.replyIncomplete==1);
+                e.number=40;e.packet=header;engineEnvironment(0x4d445301,&e);e.packet=nullptr;e.reserved=1;engineEnvironment(0x4d445301,&e);
+                check(@"diagnostic events reject packet pointers and reserved fields",g.receive.replyResults[0]==1);
+                uint8_t synthetic[40];memset(synthetic,0x61,sizeof(synthetic));NativeDiagnostic trace;
+                trace.event=2;trace.length=sizeof(synthetic);trace.payload=synthetic;trace.sourceAid=2;trace.aid=2;trace.timestamp=1000;
+                check(@"native trace callback copies payload immediately",engineEnvironment(DiagnosticEnvironment,&trace)&&g.traces->size()==1);
+                synthetic[0]=0x72;check(@"capture owns bytes after source changes",g.traces->at(0).payload[0]==0x61&&g.traces->at(0).native.payload==nullptr);
+                trace.length=2049;trace.payload=reinterpret_cast<const void*>(uintptr_t(1));
+                check(@"trace rejects excessive length before reading pointer",!engineEnvironment(DiagnosticEnvironment,&trace)&&g.traces->size()==1);
+                trace.length=0;trace.payload=nullptr;trace.event=5;trace.reason=33;trace.aidmask=4;
+                waitUntil([]{return diagnosticJobs.load()==0;});engineEnvironment(DiagnosticEnvironment,&trace);MDS_afterFrame(60);
+                waitUntil([]{return diagnosticJobs.load()==0;});
+                NSURL *capture=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics/current.json"];
+                NSDictionary *record=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:capture] options:0 error:nil];
+                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==5&&[record[@"candidate"] isEqual:@"DS-v0.9"]&&[record[@"trace"] count]==2);
+                NSString *pinned=[NSString stringWithFormat:@"ManicDSDiagnostics/capture-%02u-incomplete.json",g.diagnosticSession];
+                check(@"incomplete exchange remains pinned after room recovery",[NSData dataWithContentsOfURL:[docs URLByAppendingPathComponent:pinned]]!=nil&&g.lastIncomplete->size()==2);
+                check(@"slow frame snapshot and recorder cost recorded",g.lastSlow->size()==2&&g.frameOver50==1&&g.writerFailures==0);
+                MDS_coreOption("melonds_jit_enable","enabled");MDS_coreOption("private_rom_path","not-recorded");
+                check(@"diagnostics record selected runtime options only",[g.options[@"melonds_jit_enable"] isEqual:@"enabled"]&&g.options[@"private_rom_path"]==nil);
+                retro_set_video_refresh(testVideo);videoBridge(synthetic,10,4,20);int16_t samples[64]{};
+                retro_set_audio_sample_batch(testAudio);size_t consumed=audioBatchBridge(samples,32);
+                check(@"AV diagnostics forward original frame pointer and audio return",forwardedVideo==1&&forwardedVideoData==synthetic&&forwardedAudio==1&&consumed==17&&!wrongDeliveryMode);
+                check(@"AV stutter diagnostics retain truthful counters",g.videoCallbacks==1&&g.videoWidth==10&&g.videoHeight==4&&g.audioFrames==32&&g.audioConsumed==17);
+                retro_set_video_refresh(nullptr);retro_set_audio_sample_batch(nullptr);
+            }
             retro_unload_game();
         }
         uint8_t header[32]{};memcpy(header+12,"IPGE",4);
         NSString *headerPath=[[docs URLByAppendingPathComponent:@"synthetic-header.nds"] path];
         [[NSData dataWithBytes:header length:sizeof(header)] writeToFile:headerPath atomically:YES];
         retro_game_info pathInfo{};pathInfo.path=headerPath.fileSystemRepresentation;
-        check(@"iOS shim path loading also installs native identity before load",retro_load_game(&pathInfo)&&requests()==1&&localMatches());retro_unload_game();
+        check(@"iOS shim path loading also installs native identity before load",retro_load_game(&pathInfo)&&requests()==1&&localMatches());
+        check(@"fresh game load clears scoped diagnostics",g.receive.scope==0&&g.receive.hostCalls==0&&g.receive.replyCalls==0&&g.receive.replyResults[0]==0);retro_unload_game();
         memcpy(header+12,"TEST",4);retro_game_info other{};other.data=header;other.size=sizeof(header);
         check(@"iOS shim leaves unrecognized games on original identity path",retro_load_game(&other)&&requests()==0&&!g.loaded);retro_unload_game();
     }catch(const std::exception &e){errorText=[NSString stringWithUTF8String:e.what()];}

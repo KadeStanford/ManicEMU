@@ -2,6 +2,7 @@
 // small queue stub. No ROM, firmware, save, network or simulator is used.
 #include "ReplyCollector.hpp"
 #include "Protocol.hpp"
+#include "Diagnostics.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,7 @@ public:
     uint64_t Timestamp() const { return timestamp_; }
     uint8_t Aid() const { return aid_; }
     uint8_t SourceAid() const { return sourceAid_; }
+    uint16_t SourceSlot() const { return 1; }
     Type PacketType() const { return type_; }
     const void* Data() const { return data_.empty() ? nullptr : data_.data(); }
     size_t Length() const { return data_.size(); }
@@ -29,20 +31,51 @@ private:
     std::vector<uint8_t> data_;
 };
 struct CoreStub {
-    bool active = true; unsigned calls = 0, timeouts = 0;
+    bool active = true; unsigned calls = 0, timeouts = 0, nonblockingCalls = 0;
     bool unrelatedTraffic = false;
+    bool lastWaitHasOther = false;
     std::vector<uint32_t> budgets;
     std::deque<Packet> queue;
     bool MpActive() const { return active; }
+    uint32_t MpQueueDepth() const { return uint32_t(queue.size()); }
     std::optional<Packet> MpNextPacketBlock(uint32_t maximumWaitMicros) {
         ++calls;budgets.push_back(maximumWaitMicros);
+        if(lastWaitHasOther) {lastWaitHasOther=false;std::this_thread::sleep_for(std::chrono::milliseconds(30));return Packet(1000,0,0,40,Packet::Cmd);}
         if(unrelatedTraffic) {std::this_thread::sleep_for(std::chrono::milliseconds(5));return Packet(1000,0,0,40,Packet::Cmd);}
         if (queue.empty()) { ++timeouts; return std::nullopt; }
+        auto p = std::move(queue.front()); queue.pop_front(); return p;
+    }
+    std::optional<Packet> MpNextPacket() {
+        ++nonblockingCalls;
+        if (queue.empty()) return std::nullopt;
         auto p = std::move(queue.front()); queue.pop_front(); return p;
     }
 } Core;
 }
 namespace Platform { u16 MP_RecvReplies(u8*, u64, u16, void*); }
+static void check(bool value);
+namespace retro {
+std::array<unsigned, 47> events{};
+struct Captured { manicds::NativeDiagnostic metadata; std::vector<uint8_t> payload; };
+std::vector<Captured> traces;
+bool environment(unsigned cmd, void* data) {
+    if (cmd == manicds::DiagnosticEnvironment) {
+        auto value = *static_cast<manicds::NativeDiagnostic*>(data);
+        check(value.version==1&&value.length<=2048&&(!value.length||value.payload));
+        Captured captured{value,{}};
+        if(value.length) {
+            const auto* p=static_cast<const uint8_t*>(value.payload);
+            captured.payload.assign(p,p+value.length);
+        }
+        captured.metadata.payload=nullptr;traces.push_back(std::move(captured));return true;
+    }
+    check(cmd == 0x4d445301 && data);
+    struct Event { uint32_t event; uint32_t reserved; const void* packet; } value{};
+    std::memcpy(&value, data, sizeof(value));
+    check(value.event < events.size() && value.reserved == 0 && !value.packet);
+    ++events[value.event]; return true;
+}
+}
 #include "../Core/ReceiveReplies.inc"
 static unsigned checks = 0;
 static void check(bool value) {
@@ -51,7 +84,7 @@ static void check(bool value) {
 int main() {
     using MelonDsDs::Packet; using MelonDsDs::Core;
     std::array<u8, 15 * 1024 + 32> storage;
-    auto reset = [&] { Core = {}; storage.fill(0xa5); };
+    auto reset = [&] { Core = {}; storage.fill(0xa5); retro::events.fill(0); retro::traces.clear(); };
     auto run = [&](u64 timestamp, u16 mask) {
         return Platform::MP_RecvReplies(storage.data() + 16, timestamp, mask, nullptr);
     };
@@ -61,6 +94,10 @@ int main() {
     };
     reset(); Core.queue.emplace_back(1000, 0, 1, 0);
     check(run(1000, 2) == 0); check(Core.calls == 1 && Core.timeouts == 0);
+    check(retro::events[30]==1&&retro::events[31]==1&&retro::events[32]==1&&retro::events[33]==0&&retro::events[41]==1);
+    check(retro::traces.size()==3&&retro::traces[0].metadata.event==3&&retro::traces[0].metadata.timestamp==1000&&retro::traces[0].metadata.aidmask==2);
+    check(retro::traces[1].metadata.event==4&&retro::traces[1].metadata.reason==41&&retro::traces[1].metadata.sourceAid==1&&retro::traces[1].metadata.sourceSlot==1&&retro::traces[1].payload.empty());
+    check(retro::traces[2].metadata.event==5&&retro::traces[2].metadata.reason==32&&retro::traces[2].metadata.answeredmask==2&&retro::traces[2].metadata.payloadmask==0);
     for (auto b : storage) check(b == 0xa5); // No fabricated payload or negative index.
 
     reset(); Core.queue.emplace_back(1000, 0, 0, 0); // Unknown source cannot count.
@@ -72,12 +109,14 @@ int main() {
     Core.queue.emplace_back(1000, 0, 1, 0); // Duplicate cannot answer twice.
     Core.queue.emplace_back(1000, 2, 2, 40, Packet::Reply, uint8_t(0x72));
     check(run(1000, 6) == 4); check(Core.calls == 4 && Core.timeouts == 0);
+    check(retro::events[44]==1&&retro::events[45]==1&&retro::events[41]==1&&retro::events[40]==1);
     check(storage[16] == 0xa5 && storage[16 + 1024] == 0x72); guard();
 
     reset(); Core.queue.emplace_back(967, 1, 1, 40); // timestamp - 32 boundary.
     Core.queue.emplace_back(967, 0, 1, 0);
     Core.queue.emplace_back(968, 1, 1, 40);
     check(run(1000, 2) == 2); check(Core.calls == 3); guard();
+    check(retro::events[42]==2&&retro::events[40]==1);
 
     reset(); Core.queue.emplace_back(5, 1, 1, 40);
     check(run(10, 2) == 2); check(Core.timeouts == 0); // No unsigned underflow.
@@ -89,6 +128,7 @@ int main() {
     Core.queue.emplace_back(1000, 1, 2, 40);
     Core.queue.emplace_back(1000, 1, 1, 2049);
     check(run(1000, 2) == 0); check(Core.calls == 6 && Core.timeouts == 1);
+    check(retro::events[46]==5&&retro::events[33]==1);
     for (auto b : storage) check(b == 0xa5);
 
     reset(); Core.queue.emplace_back(1000, 1, 1, 40, Packet::Cmd);
@@ -127,5 +167,31 @@ int main() {
     check(elapsed>=20&&elapsed<200&&Core.calls<30&&Core.timeouts==0);
     check(Core.budgets.size()>1&&Core.budgets.front()<=25000);
     for(size_t i=1;i<Core.budgets.size();++i)check(Core.budgets[i]<Core.budgets[i-1]&&Core.budgets[i]>0);
+
+    // An unrelated packet returns after the final wait; queued replies still
+    // receive their native timestamp/AID checks without another blocking call.
+    reset(); Core.lastWaitHasOther=true;
+    Core.queue.emplace_back(967, 1, 1, 40); // Stale, cannot count.
+    Core.queue.emplace_back(1000, 0, 0, 0); // Unknown blank, cannot count.
+    Core.queue.emplace_back(1000, 1, 1, 40);
+    check(run(1000,2)==2);
+    check(Core.calls==1&&Core.nonblockingCalls==3&&Core.timeouts==0); guard();
+    check(retro::events[42]==1&&retro::events[43]==1&&retro::events[40]==1&&retro::events[32]==1&&retro::events[31]==1);
+    check(retro::traces.size()==5&&retro::traces[1].metadata.timestamp==967&&retro::traces[1].metadata.referenceTimestamp==1000&&retro::traces[1].metadata.reason==42);
+    check(retro::traces[3].metadata.reason==40&&retro::traces[3].metadata.aid==1&&retro::traces[3].metadata.packetType==1&&retro::traces[3].metadata.length==40&&retro::traces[3].payload==std::vector<uint8_t>(40,0x51));
+    check(retro::traces.back().metadata.reason==32&&retro::traces.back().metadata.answeredmask==2&&retro::traces.back().metadata.payloadmask==2);
+
+    reset(); Core.lastWaitHasOther=true; Core.queue.emplace_back(1000,0,1,0);
+    check(run(1000,2)==0&&Core.calls==1&&Core.nonblockingCalls==1);
+    for(auto b:storage)check(b==0xa5); // A known blank answers without payload.
+
+    reset(); Core.lastWaitHasOther=true;
+    for(unsigned i=0;i<300;++i)Core.queue.emplace_back(1000,0,0,40,Packet::Cmd);
+    Core.queue.emplace_back(1000,1,1,40);
+    check(run(1000,2)==0&&Core.calls==1&&Core.nonblockingCalls==256);
+    check(retro::events[33]==1&&retro::events[32]==0&&retro::events[31]==1);
+    check(retro::traces.back().metadata.event==5&&retro::traces.back().metadata.reason==33&&retro::traces.back().metadata.depth==45&&retro::traces.back().metadata.payloadmask==0);
+    check(Core.queue.size()==45); // The fixed drain preserves undispatched data.
+    check(run(1000,2)==2); guard();
     std::printf("{\"checks\":%u,\"native_receive_function\":true,\"private_inputs\":false,\"physical_phone_verified\":false}\n", checks);
 }
