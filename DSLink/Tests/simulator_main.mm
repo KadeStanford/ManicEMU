@@ -113,7 +113,8 @@ static void tests(){@autoreleasepool{
         waitUntil([]{std::lock_guard<std::mutex> guard(peerLock);return other&&other->receivedCount()>0;});
         {std::lock_guard<std::mutex> guard(peerLock);other->close();}injectOther(session);waitUntil(ended);MDS_beforeFrame();
         check(@"clean stop flushes save before lifecycle reset",stops==1&&g.finishSaved);
-        dispatch_sync(dispatch_get_main_queue(),^{[[MDSNearby shared] tick:nil];});check(@"bounded bilateral room exit clears transport",!g.protocol);
+        dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *manager=[MDSNearby shared];[manager setValue:[NSMutableDictionary dictionaryWithObject:@{@"nonce":hexNonce(peerNonce)} forKey:manager.partner] forKey:@"peers"];[manager tick:nil];});check(@"bounded bilateral room exit clears transport",!g.protocol);
+        dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *manager=[MDSNearby shared];check(@"fresh session discards stale peer nonce while retaining same-runtime consent",[[manager valueForKey:@"peers"] count]==0&&[[manager valueForKey:@"approvedRuntime"] isEqual:@"synthetic-B"]);});
         check(@"exit checkpoint kept original prelink battery",[[NSData dataWithContentsOfURL:[backups.firstObject URLByAppendingPathComponent:@"before.srm"]] isEqual:before]);
         check(@"fresh radio creates new room nonce",g.nonce!=oldRoomNonce);
         MDS_gameUnloading();check(@"game close clears transport and gates",!g.loaded&&!g.prepared&&!g.protocol);

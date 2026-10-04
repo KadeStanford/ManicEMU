@@ -286,6 +286,9 @@ void MDS_gameUnloading(){
         // next radio start creates a fresh room nonce; only the same approved
         // runtime may silently rejoin. Discovery resumes for other peers.
         [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_inviting=NO;_parkedAt=_offAt=0;_prepared=NO;_meta=nil;
+        // Retain consent for this running peer, but never invite using its old
+        // room nonce. The browser must provide a freshly ready advertisement.
+        [_peers removeAllObjects];
         {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.addresses={};g.prepared=g.requested=g.failedPrepare=g.intent=g.finishSaved=false;g.nonce=newNonce();}
         [_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     }
