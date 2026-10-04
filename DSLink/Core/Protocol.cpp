@@ -9,6 +9,27 @@ static uint16_t get16(const uint8_t *p){return uint16_t((unsigned(p[0])<<8)|p[1]
 static uint64_t get64(const uint8_t *p){uint64_t v=0;for(unsigned i=0;i<8;i++)v=(v<<8)|p[i];return v;}
 static void put16(uint8_t *p,uint16_t v){p[0]=uint8_t(v>>8);p[1]=uint8_t(v);}
 static void put64(uint8_t *p,uint64_t v){for(unsigned i=0;i<8;i++)p[7-i]=uint8_t(v>>(8*i));}
+bool FrameAddressMap::configure(MAC native,MAC peer,uint16_t id){
+    enabled_=false;
+    auto valid=[](const MAC &m){return !(m[0]&1)&&std::any_of(m.begin(),m.end(),[](uint8_t b){return b!=0;});};
+    if(id>1||!valid(native)||!valid(peer))return false;
+    native_=native;if(native!=peer)return true;
+    MAC a{0,9,191,250,0,1},b{0,9,191,250,0,2};
+    if(native==a||native==b){a[5]=3;b[5]=4;}
+    alias_=id?b:a;enabled_=true;return true;
+}
+void FrameAddressMap::replace(Bytes &p,const MAC &from,const MAC &to)const{
+    if(!enabled_||p.size()<46||p.size()>MaxPacket)return;
+    // Ten-byte melonDS envelope, twelve-byte hardware header, IEEE header.
+    // Management/data frames have three addresses. Control frames can be
+    // shorter and must never have their payload mistaken for address three.
+    unsigned fc=p[22]|(unsigned(p[23])<<8),type=(fc>>2)&3;
+    if(type!=0&&type!=2)return;
+    for(size_t offset:{size_t(26),size_t(32),size_t(38)})
+        if(std::equal(from.begin(),from.end(),p.begin()+offset))std::copy(to.begin(),to.end(),p.begin()+offset);
+}
+void FrameAddressMap::outgoing(Bytes &p)const{replace(p,native_,alias_);}
+void FrameAddressMap::incoming(Bytes &p)const{replace(p,alias_,native_);}
 int title(const char c[4]){
     static const char codes[][4]={"ADA","APA","CPU","IPK","IPG","IRB","IRA","IRE","IRD"};
     if(!c||c[3]<'A'||c[3]>'Z')return 0;
@@ -28,10 +49,13 @@ bool localFrame(const void *data,size_t size,unsigned type){
     auto p=static_cast<const uint8_t*>(data);
     // Raw melonDS frames have a 12-byte hardware header, then IEEE 802.11.
     unsigned fc=p[12]|(unsigned(p[13])<<8);
-    if(fc&0x300)return false; // Infrastructure/WFC: ToDS or FromDS
-    if(type==1||type==2)return true; // Nintendo CMD/reply transport
+    // Nintendo multiplayer CMD/reply uses ToDS/FromDS too (native default
+    // reply 0x0158, ACK 0x0218). Its dedicated engine transport identifies it;
+    // those bits alone cannot distinguish Nintendo WFC from local wireless.
+    if(type==1||type==2)return true;
     const uint8_t nintendo[]{3,9,191,0,0,0};
     if(!std::memcmp(p+16,nintendo,5)&&(p[21]==0||p[21]==3||p[21]==16))return true;
+    if(fc&0x300)return false; // Ordinary infrastructure data, no local marker
     // A Nintendo vendor IE in a beacon/probe response identifies a local host.
     unsigned subtype=fc&0xfc;
     if(subtype!=0x80&&subtype!=0x50)return false;

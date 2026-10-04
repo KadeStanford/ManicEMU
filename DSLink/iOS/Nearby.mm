@@ -6,6 +6,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <atomic>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include "Bridge.h"
@@ -13,10 +14,11 @@
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
-static NSString *const WireVersion=@"ds131-mds2";
+static NSString *const WireVersion=@"ds131-mds3";
 static std::mutex lock;
 static struct {
     std::unique_ptr<manicds::Protocol> protocol;
+    FrameAddressMap addresses;
     MDSCore core{};
     retro_netpacket_callback net{};
     char code[4]{};
@@ -36,6 +38,12 @@ static bool readNonce(NSString *s,Nonce &n){
     if(![s isKindOfClass:NSString.class]||s.length!=32)return false;
     const char *p=s.UTF8String;static const char digits[]="0123456789abcdef";
     for(unsigned i=0;i<16;i++){char a=p[2*i],b=p[2*i+1];const char *x=strchr(digits,a),*y=strchr(digits,b);if(!x||!y||!a||!b)return false;n[i]=uint8_t((x-digits)*16+(y-digits));}return true;
+}
+static bool readMAC(NSString *s,MAC &m){
+    if(![s isKindOfClass:NSString.class]||s.length!=12)return false;
+    const char *p=s.UTF8String;static const char digits[]="0123456789abcdef";
+    for(unsigned i=0;i<6;i++){char a=p[2*i],b=p[2*i+1];const char *x=strchr(digits,a),*y=strchr(digits,b);if(!x||!y||!a||!b)return false;m[i]=uint8_t((x-digits)*16+(y-digits));}
+    return !(m[0]&1)&&std::any_of(m.begin(),m.end(),[](uint8_t b){return b!=0;});
 }
 static Nonce newNonce(){Nonce n;[NSUUID.UUID getUUIDBytes:n.data()];return n;}
 static UIViewController *presenter(){
@@ -129,7 +137,9 @@ static void prepare(){
 }
 static void sendPacket(int flags,const void *data,size_t size,uint16_t target){
     (void)flags;if(!size)return; // A flush hint has no game payload.
-    {std::lock_guard<std::mutex> guard(lock);if(g.protocol)g.protocol->send(data,size,target);}
+    if(!validPacket(data,size))return;
+    Bytes copy(static_cast<const uint8_t*>(data),static_cast<const uint8_t*>(data)+size);
+    {std::lock_guard<std::mutex> guard(lock);if(g.protocol){g.addresses.outgoing(copy);g.protocol->send(copy.data(),copy.size(),target);}}
     [[MDSNearby shared] drain];
 }
 static void pollPackets(){
@@ -137,7 +147,7 @@ static void pollPackets(){
     // delegates enqueue only; all melonDS receive callbacks run on this thread.
     for(size_t i=0;i<MaxQueue;i++){
         Received p;retro_netpacket_receive_t receive=nullptr;
-        {std::lock_guard<std::mutex> guard(lock);if(!g.started||!g.protocol||!g.protocol->pop(p))break;receive=g.net.receive;}
+        {std::lock_guard<std::mutex> guard(lock);if(!g.started||!g.protocol||!g.protocol->pop(p))break;g.addresses.incoming(p.data);receive=g.net.receive;}
         if(receive)receive(p.data.data(),p.data.size(),p.source);
     }
 }
@@ -188,7 +198,7 @@ void MDS_gameUnloading(){
     {std::lock_guard<std::mutex> guard(lock);flush=g.loaded&&g.prepared;cb=g.net;}
     if(flush&&!persist(true))warning(@"The current DS battery save was not verified at game close. Your pre-link backup was retained.",epoch.load());
     if(g.started&&cb.stop)cb.stop();
-    {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.loaded=g.radio=g.intent=g.requested=g.prepared=g.preparing=g.failedPrepare=g.started=g.held=false;g.warned=false;g.lastBattery=nil;g.savePath=nil;g.wirelessMAC=nil;g.epoch=++epoch;}
+    {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.addresses={};g.loaded=g.radio=g.intent=g.requested=g.prepared=g.preparing=g.failedPrepare=g.started=g.held=false;g.warned=false;g.lastBattery=nil;g.savePath=nil;g.wirelessMAC=nil;g.epoch=++epoch;}
     uint64_t generation=epoch.load();dispatch_async(dispatch_get_main_queue(),^{if(generation==epoch.load())[[MDSNearby shared] cleanup];});
 }
 @implementation MDSNearby {
@@ -202,8 +212,8 @@ void MDS_gameUnloading(){
 +(instancetype)shared{static MDSNearby *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
 -(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.packets",DISPATCH_QUEUE_SERIAL);[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
 -(BOOL)valid:(NSDictionary*)info{
-    Nonce parsed;
-    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||!readNonce(info[@"nonce"],parsed)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||![info[@"mac"] isKindOfClass:NSString.class]||[info[@"mac"] length]!=12)return NO;
+    Nonce parsed;MAC mac;
+    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||!readNonce(info[@"nonce"],parsed)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||!readMAC(info[@"mac"],mac))return NO;
     NSData *a=[_meta[@"code"] dataUsingEncoding:NSASCIIStringEncoding],*b=[info[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
     return a.length==4&&b.length==4&&compatible((const char*)a.bytes,(const char*)b.bytes)&&![info[@"runtime"] isEqual:_runtime];
 }
@@ -241,7 +251,6 @@ void MDS_gameUnloading(){
 }
 -(void)invite:(MCPeerID*)peer info:(NSDictionary*)info{
     if(!_prepared||![self valid:info])return;
-    if([info[@"mac"] isEqual:_meta[@"mac"]]){[self warning:@"Both emulated consoles have the same wireless identity. This pair cannot use local wireless. Existing firmware and saves were preserved; changing an identity can affect Pokémon saves." generation:_generation];return;}
     _inviting=YES;self.partner=peer;_partnerMeta=info;
     NSData *context=[NSJSONSerialization dataWithJSONObject:_meta options:0 error:nil];[_browser invitePeer:peer toSession:self.session withContext:context timeout:20];
 }
@@ -277,7 +286,7 @@ void MDS_gameUnloading(){
         // next radio start creates a fresh room nonce; only the same approved
         // runtime may silently rejoin. Discovery resumes for other peers.
         [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_inviting=NO;_parkedAt=_offAt=0;_prepared=NO;_meta=nil;
-        {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.prepared=g.requested=g.failedPrepare=g.intent=g.finishSaved=false;g.nonce=newNonce();}
+        {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.addresses={};g.prepared=g.requested=g.failedPrepare=g.intent=g.finishSaved=false;g.nonce=newNonce();}
         [_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     }
     if(phase==Phase::Interrupted||phase==Phase::Failed)[self warning:@"Local wireless was interrupted. The current game remains in memory; no checkpoint was restored. Leave the room in both games and save normally before starting another session." generation:_generation];
@@ -305,7 +314,6 @@ void MDS_gameUnloading(){
 -(void)advertiser:(MCNearbyServiceAdvertiser*)advertiser didReceiveInvitationFromPeer:(MCPeerID*)peer withContext:(NSData*)context invitationHandler:(void(^)(BOOL,MCSession*))handler{
     dispatch_async(dispatch_get_main_queue(),^{NSDictionary *info=context.length<=1024?[NSJSONSerialization JSONObjectWithData:context options:0 error:nil]:nil;
         if(advertiser!=self->_advertiser||!self->_prepared||![self valid:info]||(self.partner&&![self.partner isEqual:peer])){handler(NO,nil);return;}
-        if([info[@"mac"] isEqual:self->_meta[@"mac"]]){handler(NO,nil);[self warning:@"Both emulated consoles have the same wireless identity. Existing firmware and saves were preserved. This needs an identity-preserving emulator solution before this pair can connect." generation:self->_generation];return;}
         auto accept=^{self.partner=peer;self->_partnerMeta=info;self->_approvedPeer=peer;self->_approvedRuntime=info[@"runtime"];[self dismiss];handler(YES,self.session);};
         if([peer isEqual:self->_approvedPeer]&&[info[@"runtime"] isEqual:self->_approvedRuntime]){accept();return;}
         UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby player" message:[NSString stringWithFormat:@"Connect to %@ playing %@?",peer.displayName,titleName(info[@"code"])] preferredStyle:UIAlertControllerStyleAlert];
@@ -317,9 +325,9 @@ void MDS_gameUnloading(){
 }
 -(void)session:(MCSession*)session peer:(MCPeerID*)peer didChangeState:(MCSessionState)state{
     dispatch_async(dispatch_get_main_queue(),^{if(session!=self.session||![peer isEqual:self.partner])return;
-        if(state==MCSessionStateConnected){Nonce other;NSData *code=[self->_partnerMeta[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
-            if(!readNonce(self->_partnerMeta[@"nonce"],other)||code.length!=4)return;
-            {std::lock_guard<std::mutex> guard(lock);if(!g.prepared||g.protocol)return;g.finishSaved=false;g.protocol=std::make_unique<manicds::Protocol>(g.nonce,g.code,g.revision);g.protocol->radio(g.radio);if(!g.protocol->bind(other,(const char*)code.bytes,uint8_t([self->_partnerMeta[@"rev"] intValue]))){g.protocol.reset();return;}}
+        if(state==MCSessionStateConnected){Nonce other;MAC local,remote;NSData *code=[self->_partnerMeta[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
+            if(!readNonce(self->_partnerMeta[@"nonce"],other)||code.length!=4||!readMAC(self->_partnerMeta[@"mac"],remote))return;
+            {std::lock_guard<std::mutex> guard(lock);if(!g.prepared||g.protocol||!readMAC(g.wirelessMAC,local))return;g.finishSaved=false;g.protocol=std::make_unique<manicds::Protocol>(g.nonce,g.code,g.revision);g.protocol->radio(g.radio);if(!g.protocol->bind(other,(const char*)code.bytes,uint8_t([self->_partnerMeta[@"rev"] intValue]))||!g.addresses.configure(local,remote,g.protocol->id())){g.protocol.reset();g.addresses={};return;}}
             self->_approvedPeer=peer;self->_approvedRuntime=self->_partnerMeta[@"runtime"];self->_inviting=NO;[self dismiss];[self->_advertiser stopAdvertisingPeer];[self->_browser stopBrowsingForPeers];[self drain];
         }else if(state==MCSessionStateNotConnected){
             {std::lock_guard<std::mutex> guard(lock);if(g.protocol)g.protocol->disconnect();}

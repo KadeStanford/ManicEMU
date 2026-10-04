@@ -55,9 +55,13 @@ The successful discovery retest used disposable public-derived saves with distin
 trainer IDs (checksums verified) and distinct test firmware MAC values. It must
 not be treated as testing two real user saves. Because the original parties were
 clones, exchanging different slots leaves duplicate Pokemon in the fixtures;
-this proves the exchange and persistence, not Pokemon legality. The production bridge never edits
-firmware identity: identical existing MACs block pairing. Solving that collision
-while preserving existing Pokemon saves remains an implementation gap.
+this proves the exchange and persistence, not Pokemon legality. A further native
+Platinum test used the identical default firmware MAC on both consoles and
+translated only the peer transport's 802.11 addresses. Both players appeared,
+connected and traded back the selected Pokemon. The production map retains the
+native firmware/WFC identity and save payload, with distinct peer aliases only
+when identities collide. Production-map game testing and physical phone
+verification must be recorded separately from the private prototype result.
 
 The actual desktop harness uses two native core processes and a local TCP channel
 around the unchanged production C++ protocol; it does not exercise iOS Multipeer
@@ -75,8 +79,11 @@ fenced teardown, automatic same-peer rejoin and prompt behavior still require
 physical verification.
 
 Nintendo WFC/GTS/friend-code service access is a separate path. The transport's
-local detector rejects infrastructure ToDS/FromDS frames and recognizes Nintendo
-CMD/reply frames or local host vendor beacons. Passive-scanner activation and
+local detector recognizes native Nintendo CMD/reply packets, Nintendo local
+destination addresses and host vendor beacons. Ordinary infrastructure frames
+without those markers do not start discovery. Nintendo multiplayer itself uses
+ToDS/FromDS flags (native reply 0x0158 and ACK 0x0218), so those flags alone cannot
+identify WFC. Passive-scanner activation and
 avoiding false discovery in WFC flows still need real game verification.
 
 Relevant primary emulator sources:

@@ -95,8 +95,11 @@ a=Peer(5,'ADAE')
 try:
  local=bytearray(48);local[16:22]=bytes([3,9,191,0,0,16])
  check('Nintendo local destination starts detector',a.cmd('LOCAL 0 '+local.hex())['ok'])
- infra=bytearray(local);infra[13]=1
- for kind in range(3):check('infrastructure WFC excluded from local discovery',not a.cmd(f'LOCAL {kind} '+infra.hex())['ok'])
+ infra=bytearray(48);infra[12]=8;infra[13]=1
+ check('ordinary infrastructure WFC excluded from local discovery',not a.cmd('LOCAL 0 '+infra.hex())['ok'])
+ for kind in (1,2):check('native Nintendo multiplayer flags recognized',a.cmd(f'LOCAL {kind} '+infra.hex())['ok'])
+ ack=bytearray(local);ack[12]=0x18;ack[13]=2
+ check('Nintendo ACK FromDS flag is local wireless',a.cmd('LOCAL 0 '+ack.hex())['ok'])
  beacon=bytearray(53);beacon[12]=0x80;beacon[48:]=bytes([221,3,0,9,191])
  check('local Nintendo host beacon detected',a.cmd('LOCAL 0 '+beacon.hex())['ok'])
  beacon[49]=8;check('truncated vendor beacon rejected',not a.cmd('LOCAL 0 '+beacon.hex())['ok'])

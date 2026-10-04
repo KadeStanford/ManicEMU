@@ -12,6 +12,21 @@ constexpr size_t MaxQueue = 256;
 constexpr size_t WireHeader = 56;
 using Nonce = std::array<uint8_t,16>;
 using Bytes = std::vector<uint8_t>;
+using MAC = std::array<uint8_t,6>;
+// Local wireless addresses can collide when both cores generate the same
+// firmware. Translate only the 802.11 header on the peer transport. The core's
+// firmware, WiFi registers, WFC identity and game/save payload stay untouched.
+class FrameAddressMap {
+public:
+    bool configure(MAC native,MAC peer,uint16_t id);
+    void outgoing(Bytes &packet) const;
+    void incoming(Bytes &packet) const;
+    bool enabled() const {return enabled_;}
+private:
+    void replace(Bytes &packet,const MAC &from,const MAC &to) const;
+    MAC native_{},alias_{};
+    bool enabled_=false;
+};
 enum class Phase { Ready, Pairing, Active, Parked, Interrupted, Failed, Ended };
 enum class Kind : uint8_t { Ready=1, Data=2, Ack=3, Radio=4, Hold=5, Close=6 };
 struct Received { Bytes data; uint16_t source; };

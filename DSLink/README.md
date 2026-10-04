@@ -16,6 +16,15 @@ radio/pause controls in order with game traffic. Pausing chains the existing
 frontend methods; a release must be acknowledged before the core advances.
 The games choose their own trade/battle modes and enforce their own restrictions.
 
+Generated firmware uses the same default MAC on independent cores. The bridge
+assigns distinct addresses only on the local peer transport when those MACs
+collide, restoring each receiver's destination before its native WiFi handles
+the frame. It changes only the three management/data 802.11 header addresses.
+It never changes firmware, WiFi registers, WFC identity or game/save payload.
+Distinct native MACs pass through unchanged. Same-MAC Platinum discovery and
+trading passed in the private desktop translation experiment; the production
+map and actual iPhone path have separate verification requirements.
+
 Radio shutdown parks a session temporarily. After five seconds with both radios
 off and all game traffic acknowledged, CLOSE fences end the transport. The next
 session uses new room nonces and discovery. Consent to the same peer runtime can
