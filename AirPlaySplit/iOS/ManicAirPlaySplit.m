@@ -360,6 +360,7 @@ static NSString *effectiveLayout(MASManager *m) {
     if(!isfinite(renderScale)||renderScale<=0)renderScale=UIScreen.mainScreen.scale?:1;
     CGSize producerSize=CGSizeMake(composite.width/renderScale,composite.height/renderScale);
     if(!CGSizeEqualToSize(view.bounds.size,producerSize))view.frame=(CGRect){CGPointZero,producerSize};
+    [view setNeedsLayout];[view layoutIfNeeded];
     self.lastProducerBounds=view.bounds;
     if(!CGSizeEqualToSize(source.drawableSize,composite))source.drawableSize=composite;
     CGSize bounds=self.phoneParent.bounds.size;

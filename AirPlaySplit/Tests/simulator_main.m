@@ -26,7 +26,16 @@ static void check(NSString *key,BOOL passed);
 @end
 @implementation LibretroCore
 + (instancetype)sharedInstance {static id v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
-- (UIViewController *)startWithCustomSaveDir:(NSString *)save {self.vc=[UIViewController new];self.vc.view=[MASSurface new];return self.vc;}
+- (UIViewController *)startWithCustomSaveDir:(NSString *)save {
+    self.vc=[UIViewController new];self.vc.view=[UIView new];
+    MASSurface *render=[MASSurface new];render.translatesAutoresizingMaskIntoConstraints=NO;
+    [self.vc.view addSubview:render];
+    [NSLayoutConstraint activateConstraints:@[[render.topAnchor constraintEqualToAnchor:self.vc.view.topAnchor],
+        [render.bottomAnchor constraintEqualToAnchor:self.vc.view.bottomAnchor],
+        [render.leadingAnchor constraintEqualToAnchor:self.vc.view.leadingAnchor],
+        [render.trailingAnchor constraintEqualToAnchor:self.vc.view.trailingAnchor]]];
+    return self.vc;
+}
 - (BOOL)loadGame:(NSString *)path corePath:(NSString *)core completion:(id)completion {loads++;return YES;}
 - (void)stop {stops++;}
 - (void)setNDSCustomLayout:(NSString *)layout {lastLayout=[layout copy];}
@@ -230,7 +239,7 @@ static void gpu(void) {
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
         check(@"producer_stays_on_phone_screen_while_tv_sink_is_external",vc.view.window==self.window&&m.externalSurface.window==self.external&&vc.view.superview==m.producerHost);
-        check(@"producer_geometry_preserves_requested_composite_pixels",CGSizeEqualToSize(((CAMetalLayer *)vc.view.layer).drawableSize,CGSizeMake(1024,1536))&&
+        check(@"producer_geometry_preserves_requested_composite_pixels",CGSizeEqualToSize(findLayer(vc.view.layer).drawableSize,CGSizeMake(1024,1536))&&
             fabs(vc.view.bounds.size.width*cocoa_screen_get_native_scale()-1024)<0.001&&fabs(vc.view.bounds.size.height*cocoa_screen_get_native_scale()-1536)<0.001);
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
         for(NSUInteger factor=1;factor<=4;factor*=2) {
@@ -238,6 +247,9 @@ static void gpu(void) {
             [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@(factor).stringValue} flush:NO];
             check([NSString stringWithFormat:@"%lux_option_reaches_composite_dimensions",factor],[lastLayout isEqual:canonicalScaled(YES,factor)]);
             check([NSString stringWithFormat:@"%lux_reaches_actual_producer_drawable_pixels",factor],CGSizeEqualToSize(m.plan.source.drawableSize,CGSizeMake(400*factor,480*factor)));
+            check([NSString stringWithFormat:@"%lux_nested_render_view_matches_vulkan_viewport",factor],
+                fabs(vc.view.subviews.firstObject.bounds.size.width*cocoa_screen_get_native_scale()-400*factor)<0.001&&
+                fabs(vc.view.subviews.firstObject.bounds.size.height*cocoa_screen_get_native_scale()-480*factor)<0.001);
         }
         [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@"1"} flush:NO];
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
@@ -326,7 +338,7 @@ static void gpu(void) {
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_removes_producer_host_without_reparenting_host_phone_view",!m.producerHost&&vc.view.superview==root.view);
         check(@"disconnect_restores_original_producer_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
-        check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
+        check(@"disconnect_restores_original_framebuffer_mode",findLayer(vc.view.layer).framebufferOnly);
         [self.external.rootViewController.view addSubview:vc.view];[m refresh];
         check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
         check(@"reconnect_keeps_producer_on_phone_again",vc.view.window==self.window&&m.externalTarget==self.external);
