@@ -1,1 +1,1 @@
-{"iteration":1,"purpose":"Native host comparison of Software, R4 Vulkan, R5 Vulkan and loader-off control; no simulator capability overrides"}
+{"iteration":2,"purpose":"Native host comparison of Software, R4 Vulkan, R5 Vulkan and loader-off control; exact shared core hash guard"}

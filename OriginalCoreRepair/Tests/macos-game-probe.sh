@@ -23,9 +23,9 @@ python3 - "$build/original-core-download.dylib" "$resource/game-probe-core.dylib
 import hashlib,os,pathlib,struct,sys
 sys.path.insert(0,str(pathlib.Path('..').resolve()))
 from enable_3gx import PATCHES
-from repair_vulkan_fill import patch_core
+from repair_vulkan_fill import patch_core,PUBLIC_SHA256
 b=pathlib.Path(sys.argv[1]).read_bytes()
-assert hashlib.sha256(b).hexdigest()=='183159290d777d42a68c17f5f4d90d8b88f7aa0281e4788bad4e595a6df940c'
+assert hashlib.sha256(b).hexdigest().upper()==PUBLIC_SHA256
 out=bytearray(b)
 if os.environ['MANIC_PROBE_PLUGIN_ENABLED']=='1':
     for offset,before,after,_ in PATCHES:
