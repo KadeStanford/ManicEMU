@@ -9,6 +9,8 @@
 static NSString *lastLayout;
 static unsigned loads,stops,ends,touches,releases;
 static CGPoint touchPoint;
+float cocoa_screen_get_native_scale(void){return UIScreen.mainScreen.nativeScale;}
+const char *video_driver_get_ident(void){return "vulkan";}
 static void check(NSString *key,BOOL passed);
 @interface LibretroCore : NSObject
 @property(strong) UIViewController *vc;
@@ -78,25 +80,43 @@ static void check(NSString *key,BOOL passed);
 
 // Exercise MoltenVK's public presentation pattern without calling Context end.
 static void presentWithoutContext(CAMetalLayer *layer) {
-    layer.device=MTLCreateSystemDefaultDevice();layer.drawableSize=CGSizeMake(256,384);
+    layer.device=MTLCreateSystemDefaultDevice();
+    unsigned width=(unsigned)layer.drawableSize.width,height=(unsigned)layer.drawableSize.height;
     id<CAMetalDrawable> drawable=[layer nextDrawable];
     check(@"swapchain_drawable_available",drawable!=nil);
     id<MTLCommandBuffer> buffer=[[layer.device newCommandQueue] commandBuffer];
-    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:256 height:384 mipmapped:NO];
+    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:width height:height mipmapped:NO];
     desc.usage=MTLTextureUsageShaderRead;desc.storageMode=MTLStorageModeShared;
     id<MTLTexture> pattern=[layer.device newTextureWithDescriptor:desc];
-    NSMutableData *pixels=[NSMutableData dataWithLength:256*384*4];uint8_t *b=pixels.mutableBytes;
-    for(unsigned y=0;y<384;y++)for(unsigned x=0;x<256;x++) {
-        unsigned i=(y*256+x)*4;b[i]=y<192?255:0;b[i+1]=y<192?0:255;b[i+3]=255;
+    NSMutableData *pixels=[NSMutableData dataWithLength:width*height*4];uint8_t *b=pixels.mutableBytes;
+    for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++) {
+        unsigned i=(y*width+x)*4;b[i]=y<height/2?255:0;b[i+1]=y<height/2?0:255;b[i+3]=255;
     }
-    [pattern replaceRegion:MTLRegionMake2D(0,0,256,384) mipmapLevel:0 withBytes:b bytesPerRow:1024];
-    check(@"swapchain_test_pattern_encoded",MASDrawCrop(buffer,pattern,drawable.texture,CGRectMake(0,0,1,1),CGSizeMake(256,384)));
+    [pattern replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:b bytesPerRow:width*4];
+    check(@"swapchain_test_pattern_encoded",MASDrawCrop(buffer,pattern,drawable.texture,CGRectMake(0,0,1,1),CGSizeMake(width,height)));
     [buffer addScheduledHandler:^(id<MTLCommandBuffer> _) {[drawable present];}];
     [buffer commit];
 }
 
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
+static void slowTVCheck(MASManager *manager,dispatch_block_t completion) {
+    MASPlan *plan=manager.plan;unsigned phoneBefore=plan.phoneSink.presentations,tvBefore=plan.tvSink.presentations;
+    dispatch_semaphore_t entered=dispatch_semaphore_create(0),resume=dispatch_semaphore_create(0);
+    dispatch_async(plan.tvSink.queue,^{dispatch_semaphore_signal(entered);dispatch_semaphore_wait(resume,DISPATCH_TIME_FOREVER);});
+    dispatch_semaphore_wait(entered,DISPATCH_TIME_FOREVER);
+    for(unsigned i=0;i<3;i++)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,i*NSEC_PER_SEC/10),dispatch_get_main_queue(),^{presentWithoutContext(plan.source);});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
+        check(@"blocked_tv_does_not_stall_phone_crop",plan.phoneSink.presentations>=phoneBefore+2&&plan.tvSink.presentations==tvBefore);
+        check(@"blocked_tv_keeps_newest_completed_capture_only",plan.tvSink.pending.sequence==plan.sequence&&plan.tvSink.superseded>=2);
+        check(@"independent_sinks_keep_shared_capture_pool_bounded",plan.peakInflight<=3&&plan.inflight<=3);
+        dispatch_semaphore_signal(resume);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
+            check(@"tv_resumes_with_latest_sequence_without_replaying_old_frames",plan.tvSink.lastSequence==plan.sequence&&plan.tvSink.presentations==tvBefore+1);
+            completion();
+        });
+    });
+}
 static NSDictionary *pressureProfile(MASManager *manager,BOOL threeDS,NSUInteger factor) {
     MASPlan *previous=manager.plan,*plan=[MASPlan new];plan.source=previous.source;
     plan.displayQueue=dispatch_queue_create("org.manicemu.airplay.pressure-test",DISPATCH_QUEUE_SERIAL);
@@ -126,7 +146,8 @@ static NSDictionary *pressureProfile(MASManager *manager,BOOL threeDS,NSUInteger
     }
     NSString *label=[NSString stringWithFormat:@"%@_%lux_120_frames",threeDS?@"3ds":@"ds",factor];
     check([label stringByAppendingString:@"_producer_completes_under_blocked_sink"],times[1]<MAX(3.0,times[0]*5));
-    check([label stringByAppendingString:@"_capture_memory_bounded"],plan.peakInflight==3&&plan.allocations==3&&plan.dropped==117);
+    check([label stringByAppendingString:@"_capture_memory_bounded"],plan.peakInflight<=3&&plan.allocations<=3&&plan.snapshots+plan.dropped==120);
+    check([label stringByAppendingString:@"_tv_mailbox_retains_latest_capture"],plan.tvSink.pending.sequence==plan.sequence);
     NSMutableDictionary *metrics=[performanceMetrics(plan) mutableCopy];metrics[@"system"]=threeDS?@"3ds":@"ds";
     metrics[@"factor"]=@(factor);metrics[@"producer_frames"]=@120;
     metrics[@"casting_off_ms"]=@(times[0]*1000);metrics[@"blocked_sink_ms"]=@(times[1]*1000);
@@ -209,12 +230,14 @@ static void gpu(void) {
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
         check(@"producer_stays_on_phone_screen_while_tv_sink_is_external",vc.view.window==self.window&&m.externalSurface.window==self.external&&vc.view.superview==m.producerHost);
-        check(@"producer_relocation_keeps_original_render_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
+        check(@"producer_geometry_preserves_requested_composite_pixels",CGSizeEqualToSize(((CAMetalLayer *)vc.view.layer).drawableSize,CGSizeMake(1024,1536))&&
+            fabs(vc.view.bounds.size.width*cocoa_screen_get_native_scale()-1024)<0.001&&fabs(vc.view.bounds.size.height*cocoa_screen_get_native_scale()-1536)<0.001);
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
         for(NSUInteger factor=1;factor<=4;factor*=2) {
             [core set3DSCustomLayout:@"0,0,400,240,0,0,0,0,400,240"];
             [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@(factor).stringValue} flush:NO];
             check([NSString stringWithFormat:@"%lux_option_reaches_composite_dimensions",factor],[lastLayout isEqual:canonicalScaled(YES,factor)]);
+            check([NSString stringWithFormat:@"%lux_reaches_actual_producer_drawable_pixels",factor],CGSizeEqualToSize(m.plan.source.drawableSize,CGSizeMake(400*factor,480*factor)));
         }
         [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@"1"} flush:NO];
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
@@ -255,6 +278,7 @@ static void gpu(void) {
         check(@"vulkan_style_swap_keeps_presenting_without_context",masPresentedFrames>firstPresent&&ends==1&&loads==1&&stops==0);
         check(@"vulkan_style_swap_reverses_actual_output_pixels",masPresentedPhonePixel==0xFFFF0000&&masPresentedTVPixel==0xFF00FF00);
         check(@"sink_drawable_acquisition_runs_off_emulation_thread",masSinkAcquisitionsOnMain==0);
+        slowTVCheck(m,^{
         // Simulate a blocked external presentation queue. Matched producer
         // buffers continue to complete; the three-slot pool bounds capture work.
         MASPlan *perfPlan=m.plan;
@@ -282,9 +306,9 @@ static void gpu(void) {
         }
         m.plan=perfPlan;
         NSLog(@"Matched synthetic producer GPU timings: AirPlay off %.3f ms; blocked AirPlay on %.3f ms (20 frames)",timings[0]*1000,timings[1]*1000);
-        check(@"blocked_sink_cannot_block_producer_gpu_completion",timings[1]<1.0&&masSnapshotsSkipped>=17);
-        check(@"capture_pool_bounded_under_sink_backpressure",dispatch_semaphore_wait(perfPlan.snapshotSlots,DISPATCH_TIME_NOW)!=0);
-        check(@"capture_accounting_records_three_inflight_snapshots",perfPlan.inflight==3&&perfPlan.peakInflight==3&&perfPlan.dropped>=17);
+        check(@"blocked_sink_cannot_block_producer_gpu_completion",timings[1]<1.0);
+        check(@"capture_pool_bounded_under_sink_backpressure",perfPlan.peakInflight<=3);
+        check(@"capture_accounting_retains_latest_instead_of_oldest_frames",perfPlan.tvSink.pending.sequence==perfPlan.sequence);
         NSDictionary *metrics=performanceMetrics(perfPlan);
         NSString *metricsDir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSMutableDictionary *timed=[metrics mutableCopy];
@@ -301,6 +325,7 @@ static void gpu(void) {
         [root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_removes_producer_host_without_reparenting_host_phone_view",!m.producerHost&&vc.view.superview==root.view);
+        check(@"disconnect_restores_original_producer_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
         check(@"disconnect_restores_original_framebuffer_mode",((CAMetalLayer *)vc.view.layer).framebufferOnly);
         [self.external.rootViewController.view addSubview:vc.view];[m refresh];
         check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
@@ -311,6 +336,7 @@ static void gpu(void) {
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         [data writeToFile:[dir stringByAppendingPathComponent:@"smoke.json"] atomically:YES];
+        });
         });
         });
     });return YES;

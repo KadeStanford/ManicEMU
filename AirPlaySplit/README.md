@@ -3,8 +3,9 @@
 This optional injected framework uses the original Manic `LibretroCore` and Metal
 `Context` renderer. It does not replace the app or any existing emulator framework.
 When Manic moves its game view to an external screen, the core renders both DS or
-3DS screens into one canonical frame. Two crop passes on that same command buffer
-present the top screen on TV and the touchscreen on the phone. The phone's **Swap
+3DS screens into one canonical frame. A shared GPU snapshot feeds independent
+phone and TV crop queues. Each queue keeps only the newest completed frame, so a
+waiting TV drawable cannot stall the phone crop. The phone's **Swap
 screens** button reverses the outputs; when the bottom screen is on TV, the phone
 surface acts as its touchpad.
 
@@ -41,3 +42,22 @@ render-dimension preservation and disconnect/reconnect ownership. Physical
 AirPlay speed and quality still require testing. The private R3 IPA also retains
 all working GBA v0.7 framework entries and app hooks, verified against the
 baseline; the existing GBA regression workflow passed both jobs.
+
+The sender investigation verified the shipped Vulkan viewport code against the
+pinned RetroArch source: its output size comes from the producer view bounds
+multiplied by the cached native screen scale. Increasing the core's internal
+resolution alone does not guarantee that its final drawable retains those pixels.
+The new producer geometry follows the canonical composite pixel dimensions
+before rendering; disconnect restores the original view dimensions. DeSmuME's
+running resolution option also updates the composite factor. Crop filtering
+remains nearest, and this does not create additional detail in native-resolution
+sprites, text, or CPU-drawn plugin graphics.
+
+When `MASAirPlayDiagnostics` is enabled, bounded numeric evidence is written once
+per second to `Documents/ManicAirPlayDiagnostics/metrics.json`. It reports actual
+source and viewport pixels, requested composite pixels, each crop's pixels,
+phone/TV drawable pixels, the external screen mode, superseded frames, separate
+drawable waits and capture-to-sink-submit frame ages. These ages measure the
+sender pipeline, not AirPlay encoding, network or receiver latency. No screenshots,
+game paths, input history, keys or save contents are recorded. Physical source
+dimensions, quality and latency still require a coordinated device test.
