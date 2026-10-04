@@ -83,15 +83,37 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 4; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 5; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;
     std::memcpy(out, console->Wifi.GetMAC(), 6);
     return true;
 }
+extern "C" RETRO_API bool manic_ds_firmware_identity_matches(void) {
+    const auto* console = MelonDsDs::Core.GetConsole();
+    return console && !std::memcmp(console->Wifi.GetMAC(), console->SPI.GetFirmware().GetHeader().MacAddr.data(), 6);
+}
 
 PUBLIC_SYMBOL void retro_init(void) {''')
+    replace('src/libretro/config/console.cpp',
+            '''        firmware.GetHeader().MacAddr = mac;
+    }
+
+    // fix touchscreen coords''',
+            '''        firmware.GetHeader().MacAddr = mac;
+    } else if (firmware.GetHeader().Identifier == melonDS::GENERATED_FIRMWARE_IDENTIFIER) {
+        // Only a generated console with no explicit MAC uses the frontend's
+        // persistent local identity. Native firmware files remain read-only.
+        struct Generated { uint32_t version; uint8_t mac[6]; uint8_t reserved[2]; } request{1,{},{}};
+        if (retro::environment(0x4d445303, &request) && request.version == 1 &&
+            !request.reserved[0] && !request.reserved[1] && !(request.mac[0] & 1)) {
+            bool nonzero = false; for (auto b : request.mac) nonzero |= b != 0;
+            if (nonzero) std::memcpy(firmware.GetHeader().MacAddr.data(), request.mac, 6);
+        }
+    }
+
+    // fix touchscreen coords''')
     for p,s in changes.items():p.write_text(s,encoding='utf-8',newline='\n')
     (root/'src/libretro/net/manic_receive_deadline.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveDeadline.hpp').read_bytes())
     return list(changes)

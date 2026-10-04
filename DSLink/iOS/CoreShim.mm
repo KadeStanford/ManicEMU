@@ -7,7 +7,10 @@
 #include <cstring>
 #include <chrono>
 #include "Bridge.h"
+#include "../Core/Protocol.hpp"
+#include "GeneratedConsole.h"
 static retro_environment_t frontend;
+static bool generatedGen5=false;
 static void *engine;
 static void *symbol(const char *name){
     if(!engine){
@@ -19,6 +22,7 @@ static void *symbol(const char *name){
 template<class F> static F original(const char *name){return reinterpret_cast<F>(symbol(name));}
 struct Event {uint32_t number,reserved;const void *packet;};
 static bool environment(unsigned command,void *data){
+    if(command==0x4d445303)return generatedGen5&&generatedConsole(static_cast<MDSGeneratedConsole*>(data));
     if(command==0x4d445302){
         if(!data)return false;const auto *p=static_cast<const uint32_t*>(data);
         if(p[1]||p[0]>1000)return false;MDS_waitForPackets(p[0]);return true;
@@ -36,25 +40,27 @@ extern "C" void retro_set_environment(retro_environment_t cb){
     frontend=cb;auto f=original<decltype(&retro_set_environment)>("retro_set_environment");if(f)f(environment);
 }
 extern "C" bool retro_load_game(const retro_game_info *info){
-    auto f=original<decltype(&retro_load_game)>("retro_load_game");if(!f||!f(info))return false;
     char code[4]{};uint8_t revision=0;
     // Read only the authorized game's standard 32-byte cartridge header.
     if(info&&info->data&&info->size>=32){std::memcpy(code,static_cast<const uint8_t*>(info->data)+12,4);revision=static_cast<const uint8_t*>(info->data)[30];}
     else if(info&&info->path){FILE *file=std::fopen(info->path,"rb");if(file){uint8_t header[32];if(std::fread(header,1,32,file)==32){std::memcpy(code,header+12,4);revision=header[30];}std::fclose(file);}}
+    generatedGen5=manicds::title(code)>=6;
+    auto f=original<decltype(&retro_load_game)>("retro_load_game");if(!f||!f(info)){generatedGen5=false;return false;}
     using Identity=bool(*)(uint8_t*);
-    MDSCore core{original<decltype(&retro_get_memory_data)>("retro_get_memory_data"),original<decltype(&retro_get_memory_size)>("retro_get_memory_size"),original<decltype(&retro_serialize_size)>("retro_serialize_size"),original<decltype(&retro_serialize)>("retro_serialize"),original<Identity>("manic_ds_wireless_identity")};
+    using Matches=bool(*)();
+    MDSCore core{original<decltype(&retro_get_memory_data)>("retro_get_memory_data"),original<decltype(&retro_get_memory_size)>("retro_get_memory_size"),original<decltype(&retro_serialize_size)>("retro_serialize_size"),original<decltype(&retro_serialize)>("retro_serialize"),original<Identity>("manic_ds_wireless_identity"),original<Matches>("manic_ds_firmware_identity_matches")};
     // A reset-capable engine is mandatory. The diagnostic binary patch lacks
     // queue reset; it cannot enable a feature IPA merely by having event hooks.
     using Revision=unsigned(*)();auto revisionFn=original<Revision>("manic_ds_protocol_revision");
-    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==4?code:disabled,revision,core);return true;
+    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==5?code:disabled,revision,core);return true;
 }
 extern "C" void retro_run(){
     if(!MDS_beforeFrame())return;
     auto begin=std::chrono::steady_clock::now();auto f=original<decltype(&retro_run)>("retro_run");if(f)f();
     MDS_afterFrame(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
 }
-extern "C" void retro_unload_game(){MDS_gameUnloading();auto f=original<decltype(&retro_unload_game)>("retro_unload_game");if(f)f();}
-extern "C" void retro_deinit(){MDS_gameUnloading();auto f=original<decltype(&retro_deinit)>("retro_deinit");if(f)f();}
+extern "C" void retro_unload_game(){MDS_gameUnloading();generatedGen5=false;auto f=original<decltype(&retro_unload_game)>("retro_unload_game");if(f)f();}
+extern "C" void retro_deinit(){MDS_gameUnloading();generatedGen5=false;auto f=original<decltype(&retro_deinit)>("retro_deinit");if(f)f();}
 extern "C" bool retro_unserialize(const void *data,size_t size){
     if(!MDS_allowRestore())return false;auto f=original<decltype(&retro_unserialize)>("retro_unserialize");return f&&f(data,size);
 }

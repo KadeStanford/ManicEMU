@@ -1,5 +1,6 @@
 // Synthetic UIKit/frontend boundary test. No game, firmware or real save input.
 #include "../iOS/Nearby.mm"
+#include "../iOS/GeneratedConsole.h"
 #include <stdexcept>
 #include <thread>
 #include <chrono>
@@ -94,6 +95,12 @@ static NSDictionary *metadata(unsigned i,NSString *runtime){MAC alias=Room::addr
 static void tests(){@autoreleasepool{
     results=[NSMutableDictionary new];NSString *errorText=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     try{
+        MDSGeneratedConsole first{1,{},{}},second{1,{},{}};
+        check(@"generated console identity provided",generatedConsole(&first));
+        check(@"generated console identity stable across calls",generatedConsole(&second)&&!memcmp(first.mac,second.mac,6));
+        check(@"generated console uses native unicast identity",first.mac[0]==0&&first.mac[1]==9&&first.mac[2]==191&&memcmp(first.mac,"\x00\x09\xbf\x11\x22\x33",6));
+        MDSGeneratedConsole invalid{2,{},{}};check(@"unsupported identity request rejected",!generatedConsole(&invalid));
+        invalid.version=1;invalid.reserved[0]=1;check(@"reserved identity request rejected",!generatedConsole(&invalid));
         check(@"Manic nickname preferred",[boundedPlayerName(@"Kade",@"iPhone") isEqual:@"Kade"]);
         check(@"device name fallback",[boundedPlayerName(nil,@"My iPhone") isEqual:@"My iPhone"]);
         check(@"name byte limit",[boundedPlayerName([@"abcdefgh" stringByPaddingToLength:100 withString:@"abcdefgh" startingAtIndex:0],nil) lengthOfBytesUsingEncoding:NSUTF8StringEncoding]<=63);
@@ -105,7 +112,7 @@ static void tests(){@autoreleasepool{
         memset(testBattery,0x51,sizeof(testBattery));memset(testState,0x73,sizeof(testState));
         NSString *path=[[docs URLByAppendingPathComponent:@"synthetic.srm"] path];NSData *before=[NSData dataWithBytes:testBattery length:sizeof(testBattery)];[before writeToFile:path atomically:YES];
         static std::string storage;storage=path.UTF8String;testEntry.data=storage.data();testEntry.attr.i=RETRO_MEMORY_SAVE_RAM;testFiles={&testEntry,1,1};
-        MDSCore core{memory,memorySize,stateSize,serialize,wirelessIdentity};MDS_gameLoaded("ADAE",5,core);retro_netpacket_callback callbacks{};callbacks.start=startCore;callbacks.receive=receiveCore;callbacks.stop=stopCore;MDS_netpacket(&callbacks);
+        MDSCore core{memory,memorySize,stateSize,serialize,wirelessIdentity,nullptr};MDS_gameLoaded("ADAE",5,core);retro_netpacket_callback callbacks{};callbacks.start=startCore;callbacks.receive=receiveCore;callbacks.stop=stopCore;MDS_netpacket(&callbacks);
         uint8_t infra[48]{};infra[13]=1;check(@"WFC excluded",!localFrame(infra,sizeof(infra),0));
         uint8_t local[48]{};local[16]=3;local[17]=9;local[18]=191;check(@"Nintendo local radio recognized",localFrame(local,sizeof(local),0));
         {std::lock_guard<std::mutex> guard(lock);g.radio=true;g.requested=true;}hasPath=false;MDS_afterFrame();check(@"save path verification blocks preparation",g.failedPrepare&&!g.prepared);check(@"failed preparation leaves battery intact",[[NSData dataWithContentsOfFile:path] isEqual:before]);

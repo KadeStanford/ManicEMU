@@ -19,7 +19,7 @@
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
-static NSString *const WireVersion=@"ds131-room6";
+static NSString *const WireVersion=@"ds131-room7";
 static std::mutex lock;
 static std::condition_variable packetsReady;
 static struct {
@@ -117,11 +117,15 @@ static bool persist(bool backup){
 static void prepare(){
     uint64_t generation;
     {std::lock_guard<std::mutex> guard(lock);if(!g.requested||g.preparing||g.prepared||g.failedPrepare||!g.loaded||!g.radio)return;g.preparing=true;generation=g.epoch;}
+    if(title(g.code)>=6&&g.core.firmwareIdentityMatches&&!g.core.firmwareIdentityMatches()){
+        {std::lock_guard<std::mutex> guard(lock);g.preparing=false;g.failedPrepare=true;}
+        warning(@"This DS state has an older console identity. Save in the game, then restart from the game's normal save before nearby play. Your state and save files have been kept.",generation);return;
+    }
     // Original serialization functions execute here, between original frames.
     NSData *data=battery();NSString *path=activePath();size_t size=g.core.stateSize?g.core.stateSize():0;
     uint8_t mac[6]{};bool identity=g.core.wirelessIdentity&&g.core.wirelessIdentity(mac)&&!(mac[0]&1);bool nonzero=false;for(auto b:mac)nonzero|=b!=0;
-    // Do not alter an existing firmware/WFC identity to make a pair appear to
-    // work. Games using MAC-dependent save checks must retain that identity.
+    // This is the console's actual identity, including a restored state's
+    // registers. Real firmware and explicitly configured identities stay native.
     if(!identity||!nonzero){std::lock_guard<std::mutex> guard(lock);g.preparing=false;return;}
     NSMutableString *macText=[NSMutableString new];for(auto b:mac)[macText appendFormat:@"%02x",b];
     NSMutableData *state=size&&size<=128*1024*1024?[NSMutableData dataWithLength:size]:nil;
@@ -234,9 +238,12 @@ void MDS_gameUnloading(){
 -(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.room",DISPATCH_QUEUE_SERIAL);[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
 -(BOOL)valid:(NSDictionary*)info{
     Nonce n;MAC mac,alias;
-    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||![info[@"local"] isEqual:@"1"]||!readNonce(info[@"nonce"],n)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||!readMAC(info[@"mac"],mac)||!readMAC(info[@"alias"],alias)||alias!=Room::address(n))return NO;
+    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||![info[@"local"] isEqual:@"1"]||!readNonce(info[@"nonce"],n)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||!readMAC(info[@"mac"],mac)||!readMAC(info[@"alias"],alias))return NO;
     NSData *a=[_meta[@"code"] dataUsingEncoding:NSASCIIStringEncoding],*b=[info[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
-    return a.length==4&&b.length==4&&compatible((const char*)a.bytes,(const char*)b.bytes)&&![info[@"runtime"] isEqual:_runtime];
+    if(a.length!=4||b.length!=4||!compatible((const char*)a.bytes,(const char*)b.bytes)||[info[@"runtime"] isEqual:_runtime])return NO;
+    if(title((const char*)a.bytes)>=6){MAC local;
+        return alias==mac&&!(mac[0]&1)&&readMAC(_meta[@"mac"],local)&&mac!=local;}
+    return alias==Room::address(n);
 }
 -(void)advertise{
     [_advertiser stopAdvertisingPeer];if(!_identity||!_meta)return;
