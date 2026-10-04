@@ -21,8 +21,10 @@ cmake -S "$source" -B "$build/engine" -DCMAKE_SYSTEM_NAME=iOS \
 cmake --build "$build/engine" --parallel 3
 for name in DSOriginal melondsds.libretro; do mkdir -p "$build/$name.framework"; done
 cp "$build/engine/src/libretro/melondsds.libretro.framework/melondsds.libretro" "$build/DSOriginal.framework/DSOriginal"
-codesign --remove-signature "$build/DSOriginal.framework/DSOriginal"
+# Rewrite while the complete signed LINKEDIT layout is still present. Removing
+# the signature first can leave padding that older install_name_tool rejects.
 install_name_tool -id '@rpath/DSOriginal.framework/DSOriginal' "$build/DSOriginal.framework/DSOriginal"
+codesign --remove-signature "$build/DSOriginal.framework/DSOriginal"
 xcrun --sdk "$sdk_name" clang++ -target "$target" -isysroot "$sdk" -std=c++17 -fobjc-arc \
   -O2 -Wall -Wextra -Werror -Wno-unused-parameter -dynamiclib \
   -I "$root/Core" -I "$root/../OriginalCoreRepair/Tests/vendor" \
