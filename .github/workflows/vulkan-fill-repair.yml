@@ -1,8 +1,8 @@
-name: Original Vulkan screen-fill repair verification
+name: Original Vulkan screen-fill and plugin presentation verification
 on:
   push:
     branches: [recovery/dual-airplay-azahar]
-    paths: ['OriginalCoreRepair/repair_vulkan_fill*', 'OriginalCoreRepair/Tests/test_vulkan_fill_repair.py', '.github/workflows/vulkan-fill-repair.yml']
+    paths: ['OriginalCoreRepair/repair_vulkan_fill*', 'OriginalCoreRepair/repair_vulkan_plugin_present*', 'OriginalCoreRepair/Tests/test_vulkan_fill_repair.py', 'OriginalCoreRepair/Tests/test_vulkan_plugin_present.py', '.github/workflows/vulkan-fill-repair.yml']
 permissions:
   contents: read
 jobs:
@@ -17,3 +17,4 @@ jobs:
           curl --fail --location --retry 3 --silent --show-error https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro -o "$RUNNER_TEMP/original-core.dylib"
           python3 -m pip install --target "$RUNNER_TEMP/repair-test-deps" unicorn==2.1.4
           PYTHONPATH="$RUNNER_TEMP/repair-test-deps" python3 OriginalCoreRepair/Tests/test_vulkan_fill_repair.py "$RUNNER_TEMP/original-core.dylib"
+          PYTHONPATH="$RUNNER_TEMP/repair-test-deps" python3 OriginalCoreRepair/Tests/test_vulkan_plugin_present.py "$RUNNER_TEMP/original-core.dylib"

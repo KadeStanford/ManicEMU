@@ -24,6 +24,7 @@ import hashlib,os,pathlib,struct,sys
 sys.path.insert(0,str(pathlib.Path('..').resolve()))
 from enable_3gx import PATCHES
 from repair_vulkan_fill import patch_core,PUBLIC_SHA256
+from repair_vulkan_plugin_present import patch_core as patch_plugin_present
 b=pathlib.Path(sys.argv[1]).read_bytes()
 assert hashlib.sha256(b).hexdigest().upper()==PUBLIC_SHA256
 out=bytearray(b)
@@ -34,6 +35,8 @@ if os.environ['MANIC_PROBE_PLUGIN_ENABLED']=='1':
 repair=os.environ.get('MANIC_PROBE_FILL_REPAIR','0')
 if repair in ('4','5'):
     out=bytearray(patch_core(bytes(out),refresh_sampled_view=repair=='5'))
+elif repair=='6':
+    out=bytearray(patch_plugin_present(bytes(out)))
 pos=32;found=False
 for _ in range(struct.unpack_from('<I',b,16)[0]):
     cmd,size=struct.unpack_from('<II',b,pos)

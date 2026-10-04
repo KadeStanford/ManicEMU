@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - {label: Software-loader-on, plugin_enabled: '1', renderer: Software, fill_repair: '0'}
-          - {label: Vulkan-R5-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5'}
+          - {label: Vulkan-R6-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '6', duplicate_frames: enabled}
+          - {label: Vulkan-R6-loader-off, plugin_enabled: '0', renderer: Vulkan, fill_repair: '6', duplicate_frames: enabled}
           - {label: Vulkan-R5-duplicates-off, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5', duplicate_frames: disabled}
-          - {label: Vulkan-R5-gpu-timings-off, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5', gpu_timings: disabled}
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false, ref: recovery/dual-airplay-azahar}
@@ -165,4 +165,16 @@ jobs:
               p.unlink()
           for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-native-*'):
               p.unlink()
+          PY
+      - name: Require the repaired Vulkan runtime to finish and unload cleanly
+        if: always() && matrix.fill_repair == '6'
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          r=json.loads(pathlib.Path('OriginalCoreRepair/Tests/build-probe/private-game-summary.json').read_text())
+          assert r.get('native_process_exit_status')==0 and r.get('stage')=='completed', 'Repaired runtime did not unload cleanly'
+          assert r.get('run_calls')==3600 and r.get('frames',0)>=3250, 'Repaired runtime did not complete the repeated menu input sequence'
+          assert r.get('real_vulkan_device_created') and r.get('vulkan_context_reset_returned'), 'Vulkan was not exercised'
+          assert 'fatal_signal' not in r, 'Native runtime fault'
+          print('PASS: repaired Vulkan completed 3,600 calls and clean unload; inspect encrypted frames for menu behavior.')
           PY

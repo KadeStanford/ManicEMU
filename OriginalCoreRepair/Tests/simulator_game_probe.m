@@ -109,7 +109,7 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
             if((((const uint32_t *)((const uint8_t *)pixels+y*pitch))[x]&0xffffff)!=0){visible=true;break;}
     if(visible)nonblackFrames++;
     report[@"last_frame_dimensions"]=@[@(width),@(height)];
-    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000)?
+    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000||runCalls==3250)?
         [NSString stringWithFormat:@"private-frame-%d.png",runCalls]:nil;
     if(snapshot){
         CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
@@ -129,9 +129,10 @@ static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     // A short Select press after execution has started; no save interaction.
     if(port!=0||device!=1)return 0;
     // Vapecord displays its own first-run notice before entering the menu loop.
-    // Acknowledge it in this disposable sandbox, then make one Select press.
+    // Acknowledge it, then open, close and reopen the menu without selecting codes.
     if(id==8)return runCalls>=1200&&runCalls<1206;
-    return id==2&&runCalls>=2000&&runCalls<2006;
+    return id==2&&((runCalls>=2000&&runCalls<2006)||
+        (runCalls>=2500&&runCalls<2506)||(runCalls>=3200&&runCalls<3206));
 }
 static void runProbe(void) {
 #ifdef MANIC_GAME_MACOS

@@ -47,3 +47,26 @@ was introduced. The added diagnostic copy is disabled pending a controlled test.
 
 Private inputs and detailed runtime evidence are absent from the source branch.
 Public diagnostic artifacts contain a sanitized summary and encrypted evidence.
+
+The October 4 Vulkan investigation identified two separate presentation defects.
+Phone Trace2 passed an uninitialized image to an early `FillScreen` clear. R4
+allocates that texture through the existing framebuffer initializer; R5 also
+refreshes the sampled view that `SwapBuffers` cached before allocation.
+
+With R5, native ARM64 Vulkan run `37170555912` stalled with duplicate-frame
+skipping enabled, while disabling only that option completed 3,600 calls and
+visibly opened the supplied Vapecord menu. The user independently confirmed the
+same workaround on the phone: Vulkan runs, Select opens and closes the menu, and
+the game continues. CPU-drawn plugin frames can change while the original GPU
+frame-change marker stays clear, starving the frontend frame/input cycle.
+
+`repair_vulkan_plugin_present.py` retains the original duplicate-frame policy
+when no plugin framebuffer is mapped. When the original loader's framebuffer
+address is nonzero, its 40-byte wrapper resumes the existing presentation path.
+The address comes from the original `Plugin3GXLoader::Map` store and is cleared
+by the original teardown. The wrapper initializes the original frame-marker
+pointer, changes no user setting, and makes no function calls. Exact original/R5
+hash and instruction guards reject unknown binaries. The ARM64 execution test
+covers mapped/unmapped state, both setting types, and register/flag preservation.
+R6's native game/menu comparison and physical phone verification are separate
+from the confirmed R5 workaround; a passing build alone does not establish them.

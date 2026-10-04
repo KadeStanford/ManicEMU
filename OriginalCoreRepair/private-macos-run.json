@@ -1,1 +1,1 @@
-{"iteration":5,"purpose":"Capture the active interpreter state independently of host PC; compare one frame-skipping and GPU-timing option at a time"}
+{"iteration":6,"purpose":"Verify the guarded plugin presentation repair with duplicate skipping enabled, plugin inactive control, and Vulkan menu open/close/reopen"}
