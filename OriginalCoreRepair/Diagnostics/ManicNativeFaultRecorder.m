@@ -15,6 +15,25 @@
 
 static int recordFD=-1,imageFD=-1,stackFD=-1;
 static NSString *diagnosticPrefix;
+static uintptr_t azaharTextBase;
+// Exact original ARMul_State layout, established from ARM_DynCom::Run and
+// InterpreterMainLoop. Serialize only execution metadata, never guest RAM.
+static NSDictionary *guestExecutionState(uintptr_t address) {
+    uint8_t state[0x380];vm_size_t copied=0;
+    if(!address||vm_read_overwrite(mach_task_self(),address,sizeof(state),(vm_address_t)state,&copied)!=KERN_SUCCESS||copied!=sizeof(state))return nil;
+    uint32_t pc,cpsr;uint64_t budget;
+    memcpy(&pc,state+0x4c,sizeof(pc));memcpy(&cpsr,state+0x320,sizeof(cpsr));
+    memcpy(&budget,state+0x358,sizeof(budget));
+    return @{@"guest_pc":@(pc),@"guest_cpsr":@(cpsr),@"instruction_budget":@(budget)};
+}
+#ifdef MANIC_NATIVE_RECORDER_SELF_TEST
+int ManicVerifyGuestStateSampler(void) {
+    uint8_t state[0x380]={0};uint32_t pc=0x07001234,cpsr=0x60000010;uint64_t budget=10000;
+    memcpy(state+0x4c,&pc,sizeof(pc));memcpy(state+0x320,&cpsr,sizeof(cpsr));memcpy(state+0x358,&budget,sizeof(budget));
+    NSDictionary *result=guestExecutionState((uintptr_t)state);
+    return [result[@"guest_pc"] unsignedIntValue]==pc&&[result[@"guest_cpsr"] unsignedIntValue]==cpsr&&[result[@"instruction_budget"] unsignedLongLongValue]==budget&&guestExecutionState(1)==nil;
+}
+#endif
 _Static_assert(sizeof(vm_address_t)>=sizeof(uintptr_t),"VM sampling must preserve native pointer width");
 // Own-process, read-only sampling. No thread suspension, signals or debugger.
 // Four bounded snapshots distinguish stable waits from progressing CPU work.
@@ -41,6 +60,19 @@ void ManicCaptureHangSnapshot(unsigned index) {
                     if(stateResult==KERN_SUCCESS){
                         row[@"pc"]=@(registers.__pc);row[@"lr"]=@(registers.__lr);
                         row[@"sp"]=@(registers.__sp);row[@"fp"]=@(registers.__fp);
+                        uintptr_t base=__atomic_load_n(&azaharTextBase,__ATOMIC_ACQUIRE);
+                        uintptr_t pc=registers.__pc&0x0000ffffffffffffULL;
+                        uintptr_t lr=registers.__lr&0x0000ffffffffffffULL;
+                        // X20 holds ARMul_State throughout this interpreter,
+                        // including its condition helper and memory-read calls.
+                        if(base&&((pc>=base+0x501d64&&pc<base+0x50fa34)||
+                            (pc>=base+0x50fe94&&pc<base+0x50ffdc)||
+                            (pc>=base+0x91c874&&pc<base+0x91ca00&&lr>=base+0x501d64&&lr<base+0x50fa34))){
+                            NSDictionary *guest=guestExecutionState(registers.__x[20]);
+                            if(guest)row[@"guest_execution"]=guest;
+                            row[@"interpreter_instruction_count"]=@(registers.__x[19]&0xffffffff);
+                            row[@"interpreter_state_pointer"]=@(registers.__x[20]);
+                        }
                         uint8_t memory[8192];vm_size_t copied=0;
                         kern_return_t readResult=KERN_SUCCESS;
                         while(copied<sizeof(memory)){
@@ -82,6 +114,7 @@ static void imageAdded(const struct mach_header *header,intptr_t slide) {
     for(uint32_t i=0;i<_dyld_image_count();i++)if(_dyld_get_image_header(i)==header){
         const char *path=_dyld_get_image_name(i),*slash=strrchr(path,'/');name=slash?slash+1:path;break;
     }
+    if(!strcmp(name,"azahar.libretro"))__atomic_store_n(&azaharTextBase,(uintptr_t)header,__ATOMIC_RELEASE);
     char line[512];int n=snprintf(line,sizeof(line),"%llx %llx %s\n",
         (unsigned long long)(uintptr_t)header,(unsigned long long)textSize,name);
     if(n>0){write(imageFD,line,MIN((size_t)n,sizeof(line)-1));fsync(imageFD);}

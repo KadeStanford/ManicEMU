@@ -28,10 +28,12 @@ cat > "$testdir/main.c" <<'C'
 #include <stdlib.h>
 #include <stdint.h>
 extern void ManicCaptureHangSnapshot(unsigned);
+extern int ManicVerifyGuestStateSampler(void);
 static pthread_mutex_t mutex=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t condition=PTHREAD_COND_INITIALIZER;
 static void *waiting(void *unused){pthread_mutex_lock(&mutex);pthread_cond_wait(&condition,&mutex);return 0;}
 int main(void){
+    if(!ManicVerifyGuestStateSampler())return 3;
     pthread_t worker;pthread_create(&worker,0,waiting,0);usleep(50000);
     uint64_t identifier=0;pthread_threadid_np(worker,&identifier);
     char path[4096];snprintf(path,sizeof(path),"%s/waiting-thread-id.txt",getenv("MANIC_NATIVE_RECORDER_DIRECTORY"));
@@ -62,6 +64,6 @@ assert sample['task_threads_result']==0 and sample['thread_suspension_performed'
 identifier=int((root/'waiting-thread-id.txt').read_text())
 waiting=[t for t in sample['threads'] if t['thread_id']==identifier and t['run_state']==3 and t['state_result']==0 and t.get('stack_b64')]
 assert waiting, 'Known waiting thread was not sampled with native state and stack'
-report={'signal_verified':11,'native_pc_lr_sp_recorded':True,'loaded_image_ranges_recorded':True,'bounded_native_stack_recorded':True,'read_only_waiting_thread_sample_verified':True,'device_framework_separate_from_self_test':True}
+report={'signal_verified':11,'native_pc_lr_sp_recorded':True,'loaded_image_ranges_recorded':True,'bounded_native_stack_recorded':True,'read_only_waiting_thread_sample_verified':True,'guest_execution_metadata_and_invalid_address_test_passed':True,'device_framework_separate_from_self_test':True}
 (root/'self-test.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
 PY
