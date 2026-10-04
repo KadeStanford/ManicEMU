@@ -139,6 +139,8 @@ static void logPerformance(MASPlan *p) {
 @property CGRect externalSourceFrame;
 @property CGRect originalProducerBounds,lastProducerBounds;
 @property UIViewAutoresizing originalProducerAutoresizing;
+@property BOOL originalProducerTranslates;
+@property(copy) NSArray<NSLayoutConstraint *> *suspendedProducerConstraints;
 @property CGAffineTransform originalProducerTransform;
 @property(strong) MASSurface *phoneSurface,*externalSurface;
 @property(strong) UIButton *swapButton;
@@ -170,6 +172,17 @@ static CAMetalLayer *findLayer(CALayer *layer) {
     if([layer isKindOfClass:CAMetalLayer.class]) return (CAMetalLayer *)layer;
     for(CALayer *child in layer.sublayers) {CAMetalLayer *found=findLayer(child); if(found) return found;}
     return nil;
+}
+static NSArray<NSLayoutConstraint *> *producerSizeConstraints(UIView *view) {
+    NSMutableArray *constraints=[NSMutableArray new];
+    for(NSLayoutConstraint *constraint in view.constraints) {
+        // Removing a view drops constraints to its former parent, but its own
+        // width/height/aspect constraints survive. Keep child renderer anchors.
+        if(constraint.active&&constraint.firstItem==view&&
+           (constraint.firstAttribute==NSLayoutAttributeWidth||constraint.firstAttribute==NSLayoutAttributeHeight)&&
+           (!constraint.secondItem||constraint.secondItem==view)) [constraints addObject:constraint];
+    }
+    return constraints;
 }
 static UIView *findTouchArea(UIView *view) {
     if(view.hidden||view.alpha==0)return nil;
@@ -278,13 +291,19 @@ static NSString *effectiveLayout(MASManager *m) {
     self.liveViewport=CGRectZero;self.liveSourceSize=CGSizeZero;
     self.liveViewportSource=nil;self.liveViewportSequence=0;
     UIView *source=self.coreView;
+    BOOL owned=source.superview==self.producerHost;
     if(old)source.transform=self.originalProducerTransform;
     if(source.superview==self.producerHost&&self.externalSourceParent) {
         [self.externalSourceParent addSubview:source];source.frame=self.externalSourceFrame;
     } else if(old&&CGRectEqualToRect(source.bounds,self.lastProducerBounds)) {
         CGRect frame=source.frame;frame.size=self.originalProducerBounds.size;source.frame=frame;
     }
-    if(old)source.autoresizingMask=self.originalProducerAutoresizing;
+    if(old){source.autoresizingMask=self.originalProducerAutoresizing;
+        source.translatesAutoresizingMaskIntoConstraints=self.originalProducerTranslates;
+        // A frontend which already took the view back may have remade its skin
+        // constraints. Do not reactivate old constraints over that new layout.
+        if(owned&&self.suspendedProducerConstraints.count)[NSLayoutConstraint activateConstraints:self.suspendedProducerConstraints];}
+    self.suspendedProducerConstraints=nil;
     [self.producerHost removeFromSuperview];self.producerHost=nil;
     self.externalSourceParent=nil;self.externalTarget=nil;
     if(hadSurfaces)[self releaseTouch];
@@ -415,10 +434,13 @@ static NSString *effectiveLayout(MASManager *m) {
         // even when the snapshot queue drops frames. Keep the producer on the
         // phone screen; only our independent crop sink remains on AirPlay.
         self.externalSourceParent=view.superview;self.externalSourceFrame=view.frame;
-        self.originalProducerBounds=view.bounds;self.originalProducerAutoresizing=view.autoresizingMask;
-        self.originalProducerTransform=view.transform;
+        if(self.plan.source!=source) {
+            self.originalProducerBounds=view.bounds;self.originalProducerAutoresizing=view.autoresizingMask;
+            self.originalProducerTransform=view.transform;
+            self.originalProducerTranslates=view.translatesAutoresizingMaskIntoConstraints;
+        }
         self.externalTarget=external;
-        self.producerHost=[UIView new];
+        [self.producerHost removeFromSuperview];self.producerHost=[UIView new];
         self.producerHost.userInteractionEnabled=NO;self.producerHost.clipsToBounds=YES;
         [self.phoneParent addSubview:self.producerHost];
         CGSize sourceSize=view.bounds.size;
@@ -426,6 +448,20 @@ static NSString *effectiveLayout(MASManager *m) {
         [self.producerHost addSubview:view];view.frame=(CGRect){CGPointZero,sourceSize};
         view.autoresizingMask=UIViewAutoresizingNone;
     }
+    // The original frontend uses SnapKit with explicit phone width/height and
+    // translatesAutoresizingMaskIntoConstraints=NO. Those self constraints can
+    // remain active after reparenting, and a later host layout would replace
+    // our native composite bounds/center after the crop was calculated.
+    // Temporarily own only the producer root's outer geometry; its internal
+    // render-view constraints remain active. Restore frontend ownership on exit.
+    NSArray *activeSizes=producerSizeConstraints(view);
+    if(activeSizes.count) {
+        NSMutableArray *suspended=[self.suspendedProducerConstraints mutableCopy]?:[NSMutableArray new];
+        for(NSLayoutConstraint *constraint in activeSizes)if(![suspended containsObject:constraint])[suspended addObject:constraint];
+        self.suspendedProducerConstraints=suspended;
+        [NSLayoutConstraint deactivateConstraints:activeSizes];
+    }
+    view.translatesAutoresizingMaskIntoConstraints=YES;
     if(!self.phoneSurface) {
         self.phoneSurface=[self surface];self.phoneSurface.touchSurface=YES;
         [self.phoneParent addSubview:self.phoneSurface];

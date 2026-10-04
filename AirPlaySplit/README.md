@@ -108,3 +108,22 @@ Existing lower portrait, rotation, already-connected launch, bounded capture,
 blocked TV and pre-presentation texture retention checks remain in the suite.
 Physical portrait crop, touch alignment, continuing video, reconnect behavior
 and wired/wireless receiver latency require testing on the R9 candidate.
+
+R9 passed 112 synthetic checks but failed the subsequent confirmed physical
+portrait layout check. A focused frontend audit found a condition absent from
+that simulator: the shipped phone frontend gives the producer root explicit
+SnapKit width/height constraints with autoresizing-mask translation disabled.
+Reparenting removes constraints to the former parent, while the root's own
+size constraints can remain active. A later Auto Layout pass can then replace
+the native composite bounds or crop center after the crop was calculated.
+This is a concrete ownership defect; attributing the physical images to it
+remains an inference until the next phone test.
+
+R10 temporarily suspends only the root's own width/height/aspect constraints
+and enables manual root geometry while the split host owns it. The nested
+renderer anchors stay active. An owned release restores the suspended
+constraints and original autoresizing flag; if the frontend already took the
+view back, its newly installed layout takes precedence. The regression includes
+a control showing UIKit overwriting manual bounds under active self-size
+constraints, then exercises the production host with the actual constrained
+root setup through a later parent layout, reconnect and owned release.

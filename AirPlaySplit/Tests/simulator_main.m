@@ -129,6 +129,18 @@ static BOOL closeRect(CGRect a,CGRect b) {
     return fabs(a.origin.x-b.origin.x)<0.001&&fabs(a.origin.y-b.origin.y)<0.001&&
         fabs(a.size.width-b.size.width)<0.001&&fabs(a.size.height-b.size.height)<0.001;
 }
+static void constrainedRootControl(void) {
+    UIView *parent=[[UIView alloc] initWithFrame:CGRectMake(0,0,500,600)];
+    UIView *producer=[[UIView alloc] initWithFrame:CGRectMake(0,0,320,480)];
+    producer.translatesAutoresizingMaskIntoConstraints=NO;[parent addSubview:producer];
+    NSArray *sizes=@[[producer.widthAnchor constraintEqualToConstant:320],[producer.heightAnchor constraintEqualToConstant:480]];
+    [NSLayoutConstraint activateConstraints:sizes];
+    producer.bounds=CGRectMake(0,0,400.0/3,480.0/3);producer.center=CGPointMake(120,0);
+    [parent setNeedsLayout];[parent layoutIfNeeded];
+    check(@"control_active_root_size_constraints_replace_manual_composite_bounds",CGSizeEqualToSize(producer.bounds.size,CGSizeMake(320,480)));
+    [producer removeFromSuperview];
+    check(@"control_reparent_keeps_root_self_size_constraints_active",((NSLayoutConstraint *)sizes[0]).active&&((NSLayoutConstraint *)sizes[1]).active);
+}
 static void checkViewportGeometry(MASManager *m,NSString *prefix) {
     CAMetalLayer *layer=m.plan.source;CGSize pixels=m.liveSourceSize;CGRect vp=m.liveViewport;
     CGRect selected=vp;selected.size.height*=0.5;
@@ -331,8 +343,13 @@ static void gpu(void) {
     report=[NSMutableDictionary new];self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UIViewController *root=[UIViewController new];self.window.rootViewController=root;[self.window makeKeyAndVisible];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        constrainedRootControl();
         LibretroCore *core=LibretroCore.sharedInstance;UIViewController *vc=[core startWithCustomSaveDir:nil];
         vc.view.frame=CGRectMake(20,100,320,480);[root.view addSubview:vc.view];
+        // Match the shipped SnapKit frontend root, not just its nested renderer.
+        vc.view.translatesAutoresizingMaskIntoConstraints=NO;
+        NSArray *rootSizes=@[[vc.view.widthAnchor constraintEqualToConstant:320],[vc.view.heightAnchor constraintEqualToConstant:480]];
+        [NSLayoutConstraint activateConstraints:rootSizes];
         check(@"load_return_and_original_call_preserved",[core loadGame:@"synthetic.nds" corePath:@"melonds" completion:nil]&&loads==1);
         [core setNDSCustomLayout:@"0,0,256,192,0,192,256,192,256,384"];
         check(@"phone_only_has_no_overlay",MASManager.shared.plan==nil&&root.view.subviews.count==1);
@@ -342,6 +359,8 @@ static void gpu(void) {
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
+        check(@"host_temporarily_owns_root_layout_without_self_size_constraints",
+            vc.view.translatesAutoresizingMaskIntoConstraints&& !((NSLayoutConstraint *)rootSizes[0]).active&& !((NSLayoutConstraint *)rootSizes[1]).active);
         check(@"producer_stays_on_phone_screen_while_tv_sink_is_external",vc.view.window==self.window&&m.externalSurface.window==self.external&&vc.view.superview==m.producerHost);
         check(@"native_producer_has_visible_phone_crop_not_clipped_1x1_host",m.producerHost.bounds.size.width>100&&m.producerHost.bounds.size.height>100&&m.plan.producerVisibleArea>10000);
         check(@"native_producer_stays_above_snapshot_surface_for_presented_callbacks",
@@ -376,6 +395,11 @@ static void gpu(void) {
         CGRect nativeBottom=CGRectMake(0,vc.view.bounds.size.height/2,vc.view.bounds.size.width,vc.view.bounds.size.height/2);
         CGRect shown=[vc.view convertRect:nativeBottom toView:m.producerHost];
         CGRect fitted=MASFit(CGSizeMake(256,192),m.producerHost.bounds.size);
+        CGSize nativeBounds=vc.view.bounds.size;CGPoint cropCenter=vc.view.center;
+        [m.producerHost setNeedsLayout];[m.producerHost layoutIfNeeded];
+        [root.view setNeedsLayout];[root.view layoutIfNeeded];
+        check(@"constrained_frontend_layout_cannot_replace_native_bounds_or_crop_center",
+            CGSizeEqualToSize(vc.view.bounds.size,nativeBounds)&&CGPointEqualToPoint(vc.view.center,cropCenter));
         check(@"lower_portrait_slot_keeps_native_producer_visible",m.plan.producerVisibleArea>10000&&
             closeRect(m.producerHost.frame,CGRectOffset(MASFit(CGSizeMake(256,192),m.phoneSurface.bounds.size),m.phoneSurface.frame.origin.x,m.phoneSurface.frame.origin.y)));
         check(@"phone_display_crops_native_bottom_without_changing_render_bounds",
@@ -491,10 +515,21 @@ static void gpu(void) {
         check(@"disconnect_restores_original_producer_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
         check(@"disconnect_restores_original_framebuffer_mode",findLayer(vc.view.layer).framebufferOnly);
         check(@"disconnect_restores_source_transform",CGAffineTransformIsIdentity(vc.view.transform));
+        check(@"disconnect_restores_frontend_auto_layout_flag",!vc.view.translatesAutoresizingMaskIntoConstraints);
         self.external.hidden=NO;
         [self.external.rootViewController.view addSubview:vc.view];[m refresh];
         check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
         check(@"reconnect_keeps_producer_on_phone_again",vc.view.window==self.window&&m.externalTarget==self.external);
+        NSArray *newRootSizes=@[[vc.view.widthAnchor constraintEqualToConstant:320],[vc.view.heightAnchor constraintEqualToConstant:480]];
+        [NSLayoutConstraint activateConstraints:newRootSizes];[m refresh];
+        check(@"repeated_session_suspends_new_frontend_self_size_constraints",
+            !((NSLayoutConstraint *)newRootSizes[0]).active&&!((NSLayoutConstraint *)newRootSizes[1]).active);
+        // Overlay-owned release must restore precisely the constraints it
+        // suspended, before the original frontend takes ownership again.
+        [m removeSurfaces];
+        check(@"owned_release_restores_suspended_frontend_size_constraints",
+            !vc.view.translatesAutoresizingMaskIntoConstraints&&((NSLayoutConstraint *)newRootSizes[0]).active&&((NSLayoutConstraint *)newRootSizes[1]).active);
+        [NSLayoutConstraint deactivateConstraints:newRootSizes];[m refresh];
         self.external.hidden=YES;[root.view addSubview:vc.view];[m refresh];
         [core stop];check(@"stop_cleans_up_without_save_or_core_reload",stops==1&&loads==1&&!m.dual);
         // Cast remains connected while a new game starts directly on external
