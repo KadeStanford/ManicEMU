@@ -42,9 +42,15 @@ void ManicCaptureHangSnapshot(unsigned index) {
                         row[@"pc"]=@(registers.__pc);row[@"lr"]=@(registers.__lr);
                         row[@"sp"]=@(registers.__sp);row[@"fp"]=@(registers.__fp);
                         uint8_t memory[8192];mach_vm_size_t copied=0;
-                        kern_return_t readResult=mach_vm_read_overwrite(mach_task_self(),registers.__sp,sizeof(memory),(mach_vm_address_t)memory,&copied);
+                        kern_return_t readResult=KERN_SUCCESS;
+                        while(copied<sizeof(memory)){
+                            mach_vm_size_t chunk=0;
+                            readResult=mach_vm_read_overwrite(mach_task_self(),registers.__sp+copied,256,(mach_vm_address_t)(memory+copied),&chunk);
+                            if(readResult!=KERN_SUCCESS||chunk!=256)break;
+                            copied+=chunk;
+                        }
                         row[@"stack_read_result"]=@(readResult);
-                        if(readResult==KERN_SUCCESS&&copied<=sizeof(memory)){
+                        if(copied>0&&copied<=sizeof(memory)){
                             row[@"stack_b64"]=[[NSData dataWithBytes:memory length:(NSUInteger)copied] base64EncodedStringWithOptions:0];
                         }
                     }
