@@ -9,13 +9,13 @@
 #include <unistd.h>
 #include <string.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <mach/thread_info.h>
 #include <mach/arm/thread_status.h>
 #include <dispatch/dispatch.h>
 
 static int recordFD=-1,imageFD=-1,stackFD=-1;
 static NSString *diagnosticPrefix;
+_Static_assert(sizeof(vm_address_t)>=sizeof(uintptr_t),"VM sampling must preserve native pointer width");
 // Own-process, read-only sampling. No thread suspension, signals or debugger.
 // Four bounded snapshots distinguish stable waits from progressing CPU work.
 void ManicCaptureHangSnapshot(unsigned index) {
@@ -41,11 +41,11 @@ void ManicCaptureHangSnapshot(unsigned index) {
                     if(stateResult==KERN_SUCCESS){
                         row[@"pc"]=@(registers.__pc);row[@"lr"]=@(registers.__lr);
                         row[@"sp"]=@(registers.__sp);row[@"fp"]=@(registers.__fp);
-                        uint8_t memory[8192];mach_vm_size_t copied=0;
+                        uint8_t memory[8192];vm_size_t copied=0;
                         kern_return_t readResult=KERN_SUCCESS;
                         while(copied<sizeof(memory)){
-                            mach_vm_size_t chunk=0;
-                            readResult=mach_vm_read_overwrite(mach_task_self(),registers.__sp+copied,256,(mach_vm_address_t)(memory+copied),&chunk);
+                            vm_size_t chunk=0;
+                            readResult=vm_read_overwrite(mach_task_self(),registers.__sp+copied,256,(vm_address_t)(memory+copied),&chunk);
                             if(readResult!=KERN_SUCCESS||chunk!=256)break;
                             copied+=chunk;
                         }
