@@ -91,6 +91,7 @@ jobs:
           python3 - <<'PY'
           import json,pathlib,struct,re
           root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
+          root.mkdir(parents=True,exist_ok=True)
           state=root/'private-game-probe.json'
           result=json.loads(state.read_text()) if state.exists() else {'game_state_unavailable':True}
           log=root/'private-core-runtime.log'
