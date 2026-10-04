@@ -12,7 +12,9 @@ def patch(root):
     commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
     if commit!=COMMIT:raise ValueError('Pinned melonDS DS v1.3.1 required')
     compat=pathlib.Path(__file__).resolve().parents[1]/'patches/manic-v131-compat.patch'
-    if hashlib.sha256(compat.read_bytes()).hexdigest()!=COMPAT_SHA256:raise ValueError('Manic compatibility patch checksum mismatch')
+    # Git on Windows may materialize text patches with CRLF. Normalize only
+    # line endings before the exact public-source checksum guard.
+    if hashlib.sha256(compat.read_bytes().replace(b'\r\n',b'\n')).hexdigest()!=COMPAT_SHA256:raise ValueError('Manic compatibility patch checksum mismatch')
     subprocess.check_call(['git','-C',str(root),'apply','--check',str(compat)])
     subprocess.check_call(['git','-C',str(root),'apply',str(compat)])
     changes={}
