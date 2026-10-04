@@ -212,7 +212,7 @@ static NSArray<UIWindow *> *displayWindows(void) {
 static UIView *phoneGameRoot(UIViewController *controller) {
     if(!controller)return nil;
     UIView *presented=phoneGameRoot(controller.presentedViewController);if(presented)return presented;
-    for(UIViewController *child in controller.children) {
+    for(UIViewController *child in controller.childViewControllers) {
         UIView *found=phoneGameRoot(child);if(found)return found;
     }
     if([NSStringFromClass(controller.class) hasSuffix:@"PlayViewController"] &&
@@ -622,6 +622,11 @@ static void publishFrame(MASFrame *frame,MASSink *sink) {
 static void captureFrameTexture(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTLCommandBuffer> producer,id<MTLTexture> acquiredTexture) {
     MASPlan *plan=MASManager.shared.plan;
     if(plan.source!=layer)return;
+    id<MTLTexture> source=acquiredTexture?:drawable.texture;
+    // A connection can arrive while a drawable acquired with the previous
+    // framebuffer-only setting is still in flight. It may present normally,
+    // but cannot be sampled or copied. Capture the next readable drawable.
+    if(!source||source.framebufferOnly){@synchronized(plan){plan.dropped++;}return;}
     if(dispatch_semaphore_wait(plan.snapshotSlots,DISPATCH_TIME_NOW)!=0) {
         @synchronized(plan){plan.dropped++;}
 #ifdef MAS_TESTING
@@ -631,7 +636,7 @@ static void captureFrameTexture(id<CAMetalDrawable> drawable,CAMetalLayer *layer
     }
     double copyStart=CACurrentMediaTime();
     @synchronized(plan){plan.snapshots++;plan.inflight++;plan.peakInflight=MAX(plan.peakInflight,plan.inflight);}
-    id<MTLTexture> source=acquiredTexture?:drawable.texture,snapshot=nil;
+    id<MTLTexture> snapshot=nil;
     @synchronized(plan.freeSnapshots){snapshot=plan.freeSnapshots.lastObject;if(snapshot)[plan.freeSnapshots removeLastObject];}
     if(snapshot.width!=source.width||snapshot.height!=source.height||snapshot.pixelFormat!=source.pixelFormat) {
         MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:source.width height:source.height mipmapped:NO];

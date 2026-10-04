@@ -313,6 +313,18 @@ static void gpu(void) {
         [nativeFallback commit];[nativeFallback waitUntilCompleted];
         check(@"device_presented_fallback_uses_texture_retained_before_present",
             presented.forbiddenTextureReads==0&&nativeFallback.status==MTLCommandBufferStatusCompleted);
+        CAMetalLayer *transitionLayer=m.plan.source;
+        transitionLayer.framebufferOnly=YES;
+        id<CAMetalDrawable> transition=originalLayerDrawable(transitionLayer,@selector(nextDrawable));
+        unsigned capturesBefore=m.plan.snapshots,dropsBefore=m.plan.dropped;
+        if(transition)captureFrame(transition,transitionLayer,nil);
+        check(@"connection_skips_existing_framebuffer_only_drawable_without_copying",
+            transition&&transition.texture.framebufferOnly&&m.plan.snapshots==capturesBefore&&m.plan.dropped==dropsBefore+1);
+        if(transition) {
+            id<MTLCommandBuffer> transitionPresent=[[transitionLayer.device newCommandQueue] commandBuffer];
+            [transitionPresent presentDrawable:transition];[transitionPresent commit];[transitionPresent waitUntilCompleted];
+        }
+        transitionLayer.framebufferOnly=NO;
         m.liveViewport=CGRectMake(20,30,400,480);[m touch:CGPointMake(0.25,0.75)];
         check(@"touch_maps_to_ds_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-120)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-450)<0.001);
         [m swap];check(@"swap_does_not_reload_or_stop",m.plan.swapped&&loads==1&&stops==0);
