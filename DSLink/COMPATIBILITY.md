@@ -23,8 +23,8 @@ and game-specific rules must be recorded with each real test.
 
 | Title | Exact authorized cartridge | Local trade/battle route | Current desktop game evidence |
 |---|---|---|---|
-| Diamond | ADAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; first-session normal exits passed; post-trade exit and battle pending |
-| Pearl | APAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; first-session normal exits passed; post-trade exit and battle pending |
+| Diamond | ADAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; post-trade Union exits; trade-to-Colosseum transition; matching turn damage; two completed forfeit battles in the same group |
+| Pearl | APAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; post-trade Union exits; trade-to-Colosseum transition; matching turn damage; two completed forfeit battles in the same group |
 | Platinum | CPUE revision 1 | Union Room; Colosseum battles | CPUE/CPUE trade and bilateral cold reload; Union Room exit; trade-to-Colosseum transition; two battles with turn exchange and completed forfeit exits; faint/replacement passed |
 | HeartGold | IPKE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
 | SoulSilver | IPGE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
@@ -66,8 +66,8 @@ unchanged at 00:09:BF:11:22:33. Both newer native save blocks and exchanged PK4
 checksums passed, and separate fresh emulator processes loaded each battery save
 without a state file and retained the exchanged identities. A separate fresh
 same-MAC production session passed normal Union Room pad exits on both consoles.
-These are desktop results; default-MAC battle completion and physical phone
-verification remain pending. The initial production trade series checked only
+These are desktop results; default-MAC Platinum battle completion and physical
+phone verification remain pending. The initial production trade series checked only
 Down for its second player's exit while it was on the entry mat. Stepping away
 and re-entering the pad passed in the separate exit test, so the earlier attempt
 does not establish an emulator exit bug.
@@ -84,12 +84,22 @@ Room discovery, contact through a Trainer Case offer, and normal room exits on
 both consoles with identical default MACs. A later state-assisted fresh session
 timed out during contact and displayed the game's cancellation message. A fresh
 battery-only session subsequently completed the cross-title trade: Diamond's
-Torterra and Pearl's Infernape exchanged selected slots. Both games returned to
+Torterra "Nick" (PID 2984372571, species 389) and Pearl's Empoleon "Nigel"
+(PID 379005264, species 395) exchanged selected slots. Both games returned to
 party selection with the received Pokemon, both wrote newer valid native saves,
 all party checksums passed, and both independent fresh processes loaded the
 traded batteries without state input and retained the exchanged identities.
-Post-trade exit and battle remain pending for this pair. Several harness timing
-details also changed, so the earlier contact timeout cause is not established.
+Both players completed the normal trade Quit confirmations, returned to the Union
+activity flow and left the room normally. The same running cores and desktop
+transport then entered the Colosseum, using Single Battle / No Restrictions.
+Both reflected the matching BubbleBeam / Crunch turn: Empoleon's HP changed from
+203 to 176 and Torterra's from 251 to 203. Diamond forfeited the first battle;
+Pearl forfeited the second battle in the same group. Both returned to the arena
+after each battle and subsequently completed both normal Colosseum exit
+confirmations, returned to the Pokemon Center and shut their radios down.
+The final native saves retained the traded party identities and valid checksums.
+All-party knockout completion has not been tested. Several harness timing details
+also changed during the earlier contact retest, so its timeout cause is not established.
 This does not establish all-pair or physical phone success.
 
 The actual Union Room battle attempt displayed the game's requirement for two

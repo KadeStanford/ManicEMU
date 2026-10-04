@@ -26,6 +26,13 @@ bilateral native save checks and fresh-process cold reload passed with the exact
 production C++ map on desktop. A separate fresh native session passed normal
 Union Room pad exits on both consoles. The actual iPhone path remains unverified.
 
+The authorized Diamond ADAE revision 5 / Pearl APAE revision 5 pair also passed
+native same-MAC trade, bilateral save checks and battery-only cold reload. The
+same running consoles transitioned into Colosseum Single Battle / No Restrictions,
+exchanged a turn with matching damage, completed two normal forfeit battles and
+left both rooms normally. This desktop TCP harness does not establish physical
+iPhone discovery, frontend save-path integration or fenced Multipeer rejoin.
+
 Radio shutdown parks a session temporarily. After five seconds with both radios
 off and all game traffic acknowledged, CLOSE fences end the transport. The next
 session uses new room nonces and discovery. Consent to the same peer runtime can
