@@ -7,8 +7,8 @@ static unsigned checks=0;
 static void check(bool value){if(!value)throw std::runtime_error("Gen 5 native identity regression");++checks;}
 int main(){
     MAC leftMAC{0,9,191,1,2,3},rightMAC{0,9,191,1,2,4};
-    for(const char *code:{"IRBO","IREO"}){
-        const char *peer=code[2]=='B'?"IRAO":"IRDO";
+    for(const char *code:{"ADAE","APAE","CPUE","IPKE","IPGE","IRBO","IRAO","IREO","IRDO"}){
+        const char *peer=title(code)<=5?"CPUE":"IRDO";
         Nonce left{},right{},extra{};left[0]=7;right[0]=8;extra[0]=9;
         Room a(left,code,0,leftMAC),b(right,peer,0,rightMAC);a.radio(true);b.radio(true);
         check(!a.add(extra,peer,0,leftMAC));check(!a.add(extra,peer,0,MAC{}));

@@ -1,54 +1,55 @@
 # Nintendo DS local wireless candidate
 
-v0.5 introduced automatic shared DS discovery for all nine detected titles:
-Diamond, Pearl, Platinum, HeartGold, SoulSilver, Black, White, Black 2 and
-White 2. There is no emulator player picker, Accept prompt or main-home link
-button. Enter the game's legitimate local room on each independent console.
-The native game selects activities, opponents and player limits. Supported
-transport admission is not proof of playable compatibility for every pairing.
-GBA's existing connection behavior is unchanged.
+The DS v0.7 candidate repairs identified iOS-path defects after the user's v0.6
+phone tests failed: both Black/White and HeartGold/SoulSilver showed Union Room
+messages without an interactable remote trainer. That physical failure takes
+precedence over earlier desktop screenshots. A corrected phone pass is pending.
 
-v0.6 addresses the physically reported Black/White v0.5 missing avatar. Gen 5
-uses console addresses inside Nintendo application messages as well as wireless
-headers. Header translation alone produced welcome messages but no avatar;
-partial advertisement translation produced avatars but failed association.
-Gen 5 now receives a stable, randomly generated local console MAC at boot only
-when using generated firmware without an explicit configured MAC. No device
-hardware identifier is read. Native firmware files and explicit MAC settings
-are preserved. Gen 5 wireless frames then pass byte-for-byte in both directions.
-Gen 4 retains its existing header identity handling and the SAME automatic
-shared discovery flow. The per-install generated Gen 5 identity is stored in
-local app preferences. No game, state or save payload is rewritten to fake it.
+All nine supported title identifiers use automatic nearby discovery inside the
+native local room. No emulator player picker, Accept popup or home button is
+added. Native games select opponents, activities and player limits. Manic's
+nickname is preferred, with the device name available from iOS as fallback.
 
-A legacy Gen 5 state can contain older wireless registers and cached game
-identities. It remains usable for ordinary emulation; if registers disagree
-with the boot firmware identity, nearby play stops once with instructions to
-save in-game and restart from the normal game save. Files are retained. The
-bridge does not silently replace the state or discard unsaved progress.
-Two externally configured consoles with the same native Gen 5 MAC cannot form
-an independent native wireless session; a distinct valid identity is required.
+Every recognized Pokemon title receives the same stable per-install virtual DS
+identity before boot, including generated/imported firmware and configured MAC
+paths. This intentionally owns the emulated console's in-memory identity for
+these titles; firmware files and saves are not rewritten by this initialization.
+Gen 4 and Gen 5 radio/application frames pass unchanged. v0.6's generated-only
+Gen 5 initialization and Gen 4 header-only translation were insufficient paths.
+No physical hardware identifier is read or transmitted. The existing v0.6 local
+identity preference is retained, so updating does not rotate that identity.
 
-The shared carrier supports up to eight independent consoles and separates
-reliable per-peer sequencing and Ready fences. This does not increase a game's
-native room, battle or trade limits. Nintendo WFC, cartridge infrared and
-Download Play transfer are not claimed. Each instance keeps its own cartridge,
-inputs, battery and state. No serialized state or save enters the transport.
+Legacy states can retain an older console identity in registers and game caches.
+They remain retained and usable for ordinary play. Nearby play checks both boot
+firmware and local identity; a mismatch produces one instruction to save in-game
+and restart through normal Continue. The bridge does not patch arbitrary RAM,
+replace states or discard unsaved progress. Native battery files remain separate.
 
-The receive loop uses a 25ms wall-clock deadline and packet-notified waits.
-Already queued frames batch without a collection delay; cumulative ACKs are
-coalesced. Core callbacks run only on the emulator thread. Before advertising,
-the bridge verifies a local battery/state checkpoint and current save path.
-Changed battery data is persisted independently. Radio shutdown resets native
-packet queues; reentry retains the carrier without a new app pairing prompt.
-Manic's existing nickname is preferred, with the iOS device name as fallback.
+melonDS emits a zero-payload reply when a client has no payload ready. The former
+bridge rejected it and the libretro receive loop lacked safe arrival handling.
+The new collector counts a blank only for a source with a previously learned,
+address-filtered native AID in the current association. Actual payload bits and
+arrival bits are separate. Unknown/stale/duplicate/bystander blanks cannot fake
+an answer. Reassociation and radio stop erase source learning. The receive loop
+also bounds unrelated traffic and avoids unsigned timestamp underflow. Native
+AIDs and game payloads are never fabricated or rewritten.
 
-Desktop gameplay, synthetic protocol tests and simulator tests are recorded
-separately from phone verification in COMPATIBILITY.md and local evidence.
-The two-instance distinct-identity Black/White experiment reached visible
-trainers, the activity menu and a completed native trade. Final source-built
-engine regression, bilateral cold reload, battles and physical iPhone testing
-remain required; compilation alone is not an all-game fix.
+Native receive waits still use a 25ms wall deadline and notifications, with no
+CPU-clock spin. The send queue now has interactive priority and honors flush
+hints. Numeric diagnostics distinguish identity initialization, peer count,
+CMD/reply/other input, address-filter drops, native timeouts and send-queue delay.
+Core callbacks stay on the emulator thread; SDK delegates enqueue only. Local
+pre-link checkpoints, independent periodic battery writes and graceful radio
+exit behavior are retained. Save/state data never enters the transport.
 
-Packaging preserves R7 app identity, executable, assets, gpSP v0.7 GBA link,
-Azahar R5 Vulkan/Vapecord, MoltenVK and existing AirPlay bytes. Candidates are
-unsigned and separately named; original IPAs and real user saves are retained.
+The reliable neighborhood can contain eight independent consoles; this does
+not increase native battle/trade limits. Gen4-to-Gen5 direct trade/battle is not
+admitted. Nintendo WFC is separate. Cartridge infrared, Download Play/Poke
+Transfer and four-player game completion are not implemented or established.
+See COMPATIBILITY.md for title/version, historical evidence and explicit gaps.
+
+Combined packaging preserves app identity/assets, gpSP v0.7 GBA behavior and
+R5-derived Azahar Vulkan/Vapecord. The concurrent AirPlay R8 correction replaces
+only its injected component. Previous IPAs and real user saves remain untouched.
+Candidates are unsigned; compilation and Simulator checks do not prove iPhone
+local networking or native presentation success.

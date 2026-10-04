@@ -10,6 +10,8 @@ struct MDSCore {
     bool (*serialize)(void *,size_t);
     bool (*wirelessIdentity)(uint8_t *);
     bool (*firmwareIdentityMatches)();
+    bool (*localIdentityMatches)();
+    uint32_t (*identityRequests)();
 };
 void MDS_gameLoaded(const char code[4],uint8_t revision,MDSCore core);
 void MDS_gameUnloading();

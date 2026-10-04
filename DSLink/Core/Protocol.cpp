@@ -42,7 +42,8 @@ bool compatible(const char a[4],const char b[4]){
 bool validPacket(const void *data,size_t size){
     if(!data||size<10||size>MaxPacket)return false;
     auto p=static_cast<const uint8_t*>(data);
-    return p[9]<=2&&p[8]<16&&(p[9]!=1||p[8]>0);
+    return p[9]<=2&&p[8]<16&&(p[9]!=1||
+        (p[8]==0&&size==10)||(p[8]>0&&size>=46));
 }
 bool localFrame(const void *data,size_t size,unsigned type){
     if(!data||size<36||size>2048||type>2)return false;

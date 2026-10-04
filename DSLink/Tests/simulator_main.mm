@@ -22,6 +22,37 @@ static size_t memorySize(unsigned n){return n==RETRO_MEMORY_SAVE_RAM?sizeof(test
 static size_t stateSize(){return sizeof(testState);}
 static bool serialize(void *p,size_t n){if(n!=sizeof(testState))return false;memcpy(p,testState,n);return true;}
 static bool wirelessIdentity(uint8_t *out){const uint8_t mac[]{0,9,191,1,2,3};memcpy(out,mac,6);return true;}
+static bool identityValid=true;
+static bool identityMatches(){return identityValid;}
+static retro_environment_t engineEnvironment;
+static uint8_t mockBootIdentity[6]{};
+static void mockSetEnvironment(retro_environment_t value){engineEnvironment=value;}
+static bool mockLoad(const retro_game_info *info){
+    (void)info;MDSGeneratedConsole request{1,{},{}};
+    if(engineEnvironment&&engineEnvironment(0x4d445303,&request))memcpy(mockBootIdentity,request.mac,6);
+    else memset(mockBootIdentity,0,6);
+    return true;
+}
+static bool mockIdentity(uint8_t *out){memcpy(out,mockBootIdentity,6);return true;}
+static bool mockMatches(){return true;}
+static unsigned mockRevision(){return 6;}
+static void mockUnload(){}
+static bool mockFrontend(unsigned command,void *data){(void)command;(void)data;return false;}
+static void *MDS_testEngineSymbol(const char *name){
+    if(!strcmp(name,"retro_set_environment"))return reinterpret_cast<void*>(mockSetEnvironment);
+    if(!strcmp(name,"retro_load_game"))return reinterpret_cast<void*>(mockLoad);
+    if(!strcmp(name,"retro_get_memory_data"))return reinterpret_cast<void*>(memory);
+    if(!strcmp(name,"retro_get_memory_size"))return reinterpret_cast<void*>(memorySize);
+    if(!strcmp(name,"retro_serialize_size"))return reinterpret_cast<void*>(stateSize);
+    if(!strcmp(name,"retro_serialize"))return reinterpret_cast<void*>(serialize);
+    if(!strcmp(name,"manic_ds_wireless_identity"))return reinterpret_cast<void*>(mockIdentity);
+    if(!strcmp(name,"manic_ds_firmware_identity_matches"))return reinterpret_cast<void*>(mockMatches);
+    if(!strcmp(name,"manic_ds_protocol_revision"))return reinterpret_cast<void*>(mockRevision);
+    if(!strcmp(name,"retro_unload_game"))return reinterpret_cast<void*>(mockUnload);
+    return nullptr;
+}
+#define MDS_TESTING 1
+#include "../iOS/CoreShim.mm"
 static void startCore(uint16_t id,retro_netpacket_send_t send,retro_netpacket_poll_receive_t poll){(void)id;(void)send;(void)poll;starts++;wrongThread|=NSThread.isMainThread;}
 static void receiveCore(const void *p,size_t n,uint16_t id){(void)id;coreReceived.assign(static_cast<const uint8_t*>(p),static_cast<const uint8_t*>(p)+n);received++;wrongThread|=NSThread.isMainThread;}
 static void stopCore(){stops++;wrongThread|=NSThread.isMainThread;}
@@ -89,8 +120,9 @@ static void inject(TestSession *session,unsigned index){std::vector<Bytes> frame
     for(const auto &b:batchWire(frames))[[MDSNearby shared] session:session didReceiveData:[NSData dataWithBytes:b.data() length:b.size()] fromPeer:peers[index]];
 }
 static bool settled(){std::lock_guard<std::mutex> guard(lock);return g.room&&g.room->pendingCount()==0;}
-static NSDictionary *metadata(unsigned i,NSString *runtime){MAC alias=Room::address(identities[i]);NSMutableString *text=[NSMutableString new];for(auto b:alias)[text appendFormat:@"%02x",b];
-    return @{@"v":WireVersion,@"ready":@"1",@"local":@"1",@"code":@"CPUE",@"rev":@"1",@"nonce":hexNonce(identities[i]),@"runtime":runtime,@"mac":@"0009bf010203",@"alias":text};
+static MAC peerMAC(unsigned i){return MAC{0,9,191,1,2,uint8_t(i+4)};}
+static NSDictionary *metadata(unsigned i,NSString *runtime){MAC alias=peerMAC(i);NSMutableString *text=[NSMutableString new];for(auto b:alias)[text appendFormat:@"%02x",b];
+    return @{@"v":WireVersion,@"ready":@"1",@"local":@"1",@"code":@"CPUE",@"rev":@"1",@"nonce":hexNonce(identities[i]),@"runtime":runtime,@"mac":text,@"alias":text};
 }
 static void tests(){@autoreleasepool{
     results=[NSMutableDictionary new];NSString *errorText=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -112,17 +144,17 @@ static void tests(){@autoreleasepool{
         memset(testBattery,0x51,sizeof(testBattery));memset(testState,0x73,sizeof(testState));
         NSString *path=[[docs URLByAppendingPathComponent:@"synthetic.srm"] path];NSData *before=[NSData dataWithBytes:testBattery length:sizeof(testBattery)];[before writeToFile:path atomically:YES];
         static std::string storage;storage=path.UTF8String;testEntry.data=storage.data();testEntry.attr.i=RETRO_MEMORY_SAVE_RAM;testFiles={&testEntry,1,1};
-        MDSCore core{memory,memorySize,stateSize,serialize,wirelessIdentity,nullptr};MDS_gameLoaded("ADAE",5,core);retro_netpacket_callback callbacks{};callbacks.start=startCore;callbacks.receive=receiveCore;callbacks.stop=stopCore;MDS_netpacket(&callbacks);
+        MDSCore core{memory,memorySize,stateSize,serialize,wirelessIdentity,identityMatches,identityMatches,nullptr};MDS_gameLoaded("ADAE",5,core);retro_netpacket_callback callbacks{};callbacks.start=startCore;callbacks.receive=receiveCore;callbacks.stop=stopCore;MDS_netpacket(&callbacks);
         uint8_t infra[48]{};infra[13]=1;check(@"WFC excluded",!localFrame(infra,sizeof(infra),0));
         uint8_t local[48]{};local[16]=3;local[17]=9;local[18]=191;check(@"Nintendo local radio recognized",localFrame(local,sizeof(local),0));
         {std::lock_guard<std::mutex> guard(lock);g.radio=true;g.requested=true;}hasPath=false;MDS_afterFrame();check(@"save path verification blocks preparation",g.failedPrepare&&!g.prepared);check(@"failed preparation leaves battery intact",[[NSData dataWithContentsOfFile:path] isEqual:before]);
         MDS_gameLoaded("ADAE",5,core);hasPath=true;{std::lock_guard<std::mutex> guard(lock);g.radio=true;g.intent=true;g.requested=true;}MDS_afterFrame();check(@"independent save checkpoint prepared",g.prepared&&[g.savePath isEqual:path]);
-        MAC native{0,9,191,1,2,3};for(unsigned i=0;i<3;i++){Nonce n{};n[0]=uint8_t(i+10);n[15]=uint8_t(i+20);identities.push_back(n);owned.push_back(std::make_unique<Room>(n,"CPUE",1,native));owned.back()->radio(true);check(@"independent peer accepts local room",owned.back()->add(g.nonce,"ADAE",5,Room::address(g.nonce)));}
+        MAC native{0,9,191,1,2,3};for(unsigned i=0;i<3;i++){Nonce n{};n[0]=uint8_t(i+10);n[15]=uint8_t(i+20);identities.push_back(n);owned.push_back(std::make_unique<Room>(n,"CPUE",1,peerMAC(i)));owned.back()->radio(true);check(@"independent peer accepts local room",owned.back()->add(g.nonce,"ADAE",5,native));}
         __block TestSession *session;__block TestBrowser *browser;__block MCNearbyServiceAdvertiser *advertiser;
         dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *m=[MDSNearby shared];[m cleanup];[m setValue:@(g.epoch) forKey:@"generation"];[m setValue:@YES forKey:@"prepared"];[m setValue:@"A" forKey:@"runtime"];
             MCPeerID *identity=[[MCPeerID alloc]initWithDisplayName:@"Kade"];session=[[TestSession alloc]initWithPeer:identity securityIdentity:nil encryptionPreference:MCEncryptionRequired];m.session=session;
             browser=[[TestBrowser alloc]initWithPeer:identity serviceType:Service];advertiser=[[MCNearbyServiceAdvertiser alloc]initWithPeer:identity discoveryInfo:nil serviceType:Service];[m setValue:browser forKey:@"browser"];[m setValue:advertiser forKey:@"advertiser"];
-            [m setValue:@{@"code":@"ADAE"} forKey:@"meta"];[m setValue:[NSMutableDictionary new] forKey:@"peers"];[m setValue:[NSMutableDictionary new] forKey:@"attempts"];[m setValue:[NSMutableDictionary new] forKey:@"retryAt"];
+            [m setValue:@{@"code":@"ADAE",@"mac":@"0009bf010203"} forKey:@"meta"];[m setValue:[NSMutableDictionary new] forKey:@"peers"];[m setValue:[NSMutableDictionary new] forKey:@"attempts"];[m setValue:[NSMutableDictionary new] forKey:@"retryAt"];
             {std::lock_guard<std::mutex> guard(lock);g.room=std::make_unique<Room>(g.nonce,g.code,g.revision,native);g.room->radio(true);[m setValue:[NSMutableDictionary new] forKey:@"wirePeers"];[m setValue:[NSMutableDictionary new] forKey:@"early"];}
             mockRooms=[NSMutableDictionary new];for(unsigned i=0;i<3;i++){peers[i]=[[MCPeerID alloc]initWithDisplayName:[NSString stringWithFormat:@"Player %u",i]];mockRooms[peers[i]]=[NSValue valueWithPointer:owned[i].get()];}
             NSMutableDictionary *known=[m valueForKey:@"peers"];known[peers[0]]=metadata(0,@"B");[m connectReadyPeers];[m connectReadyPeers];check(@"discovered peer invited automatically once",browser.invitations==1);
@@ -149,6 +181,23 @@ static void tests(){@autoreleasepool{
         MDS_signal(1,nullptr);MDS_beforeFrame();check(@"native reentry starts existing room without pairing dialog",starts==2&&g.started);
         uint8_t original[6]{};wirelessIdentity(original);check(@"firmware identity untouched",std::equal(native.begin(),native.end(),original));
         MDS_gameUnloading();check(@"game unload clears all room state",!g.room&&!g.loaded&&!g.prepared);check(@"native callbacks stay on emulator thread",!wrongThread);
+        identityValid=false;MDS_gameLoaded("IPKE",0,core);
+        {std::lock_guard<std::mutex> guard(lock);g.radio=g.requested=true;}
+        MDS_afterFrame();check(@"legacy Gen4 state identity mismatch prevents nearby without discarding game",g.failedPrepare&&!g.prepared&&MDS_beforeFrame());
+        MDS_afterFrame();check(@"legacy mismatch stays bounded across repeated frames",g.failedPrepare&&!g.preparing);identityValid=true;MDS_gameUnloading();
+        retro_set_environment(mockFrontend);
+        for(const char *code:{"ADAE","APAE","CPUE","IPKE","IPGE","IRBO","IRAO","IREO","IRDO"}){
+            uint8_t header[32]{};memcpy(header+12,code,4);retro_game_info info{};info.data=header;info.size=sizeof(header);
+            check([NSString stringWithFormat:@"iOS shim identity before engine load %.4s",code],retro_load_game(&info)&&requests()==1&&localMatches());
+            retro_unload_game();
+        }
+        uint8_t header[32]{};memcpy(header+12,"IPGE",4);
+        NSString *headerPath=[[docs URLByAppendingPathComponent:@"synthetic-header.nds"] path];
+        [[NSData dataWithBytes:header length:sizeof(header)] writeToFile:headerPath atomically:YES];
+        retro_game_info pathInfo{};pathInfo.path=headerPath.fileSystemRepresentation;
+        check(@"iOS shim path loading also installs native identity before load",retro_load_game(&pathInfo)&&requests()==1&&localMatches());retro_unload_game();
+        memcpy(header+12,"TEST",4);retro_game_info other{};other.data=header;other.size=sizeof(header);
+        check(@"iOS shim leaves unrecognized games on original identity path",retro_load_game(&other)&&requests()==0&&!g.loaded);retro_unload_game();
     }catch(const std::exception &e){errorText=[NSString stringWithUTF8String:e.what()];}
     NSDictionary *report=@{@"checks":results,@"error":errorText?:NSNull.null,@"synthetic_save_only":@YES,@"actual_game_trade_verified":@NO,@"physical_iPhone_verified":@NO};
     [[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[docs URLByAppendingPathComponent:@"smoke.json"] atomically:YES];

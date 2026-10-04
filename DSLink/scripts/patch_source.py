@@ -34,6 +34,35 @@ def patch(root):
 }
 
 bool MpState::IsReady() const noexcept {''')
+    replace('src/libretro/net/mp.hpp','#include <libretro.h>','#include <libretro.h>\n#include "manic_reply_collector.hpp"')
+    replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> _data;',
+            '    std::vector<uint8_t> _data;\n    uint8_t _sourceAid = 0;')
+    replace('src/libretro/net/mp.hpp','    std::vector<uint8_t> ToBuf() const;',
+            '''    uint8_t SourceAid() const noexcept { return _sourceAid; }
+    void SetSourceAid(uint8_t aid) noexcept { _sourceAid = aid; }
+    std::vector<uint8_t> ToBuf() const;''')
+    replace('src/libretro/net/mp.hpp','    std::queue<Packet> receivedPackets;',
+            '    std::queue<Packet> receivedPackets;\n    manicds::ReplySources _replySources;')
+    replace('src/libretro/net/mp.cpp','    _hostId.reset();','    _hostId.reset();\n    _replySources.reset();')
+    replace('src/libretro/net/mp.cpp','    Packet p = Packet::parsePk(buf, len);',
+            '''    Packet p = Packet::parsePk(buf, len);
+    if(p.PacketType() == Packet::Type::Reply)
+        p.SetSourceAid(_replySources.associate(client_id,p.Aid(),p.Timestamp(),p.Length()));''')
+    replace('src/libretro/net/mp.cpp','    _data((unsigned char*)data, (unsigned char*)data + len),','    _data(),')
+    replace('src/libretro/net/mp.cpp','    _type(type){\n}',
+            '    _type(type){\n    if(data && len) _data.assign((const uint8_t*)data,(const uint8_t*)data+len);\n}')
+    replace('src/libretro/net/mp.cpp','    uint16_t dest = RETRO_NETPACKET_BROADCAST;',
+            '''    uint16_t dest = RETRO_NETPACKET_BROADCAST;
+    // Native association changes may reuse an AID within the same carrier.
+    // A prior source/AID must never count an empty response for the new group.
+    if(p.PacketType() == Packet::Type::Other && p.Length() >= 36) {
+        const auto* frame = static_cast<const uint8_t*>(p.Data());
+        unsigned subtype=frame[12] & 0xfc;
+        if(subtype == 0x10 || subtype == 0xa0 || subtype == 0xc0) _replySources.reset();
+    }
+    // No radio header exists on this native no-payload response. It can only
+    // belong to a command whose filtered host has already been established.
+    if(p.PacketType() == Packet::Type::Reply && !p.Length() && !_hostId.has_value()) return;''')
     replace('src/libretro/net/mp.cpp','#include <ctime>',
             '#include "manic_receive_deadline.hpp"\n#include <thread>')
     replace('src/libretro/net/mp.cpp',
@@ -57,13 +86,27 @@ bool MpState::IsReady() const noexcept {''')
             '    _mpState.PacketReceived(buf, len, client_id);',
             '''    // Filter before MpState chooses a reply host. Unrelated native
     // conversations may share a neighbourhood and reuse the same AID.
-    if (!Console || !buf || len < HeaderSize + 36 || len > HeaderSize + 2048) return;
+    if (!Console || !buf || len < HeaderSize || len > HeaderSize + 2048) return;
     const auto* wire = static_cast<const uint8_t*>(buf);
+    if(wire[9] > 2 || wire[8] >= 16 || (wire[9] == 1 && !wire[8] && len != HeaderSize)) return;
+    auto signal = [](uint32_t number) {
+        struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{number,0,nullptr};
+        retro::environment(0x4d445301, &event);
+    };
+    if (len == HeaderSize && wire[9] == 1 && wire[8] == 0) {
+        signal(6);_mpState.PacketReceived(buf,len,client_id);return;
+    }
+    if (len < HeaderSize + 36) return;
     const auto* frame = wire + HeaderSize;
-    if (wire[9] == 2 && std::memcmp(frame + 22, Console->Wifi.GetBSSID(), 6)) return;
-    if (wire[9] == 1 && std::memcmp(frame + 16, Console->Wifi.GetMAC(), 6)) return;
+    if (wire[9] == 2 && std::memcmp(frame + 22, Console->Wifi.GetBSSID(), 6)) {signal(8);return;}
+    if (wire[9] == 1 && std::memcmp(frame + 16, Console->Wifi.GetMAC(), 6)) {signal(9);return;}
+    signal(wire[9] == 2 ? 5 : wire[9] == 1 ? 6 : 7);
     _mpState.PacketReceived(buf, len, client_id);''')
     replace('src/libretro/platform/mp.cpp','#include <Platform.h>','#include <Platform.h>\n#include <cstring>')
+    replace('src/libretro/net/mp.cpp','    _timeoutCount++;',
+            '''    struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{4,0,nullptr};
+    retro::environment(0x4d445301, &event);
+    _timeoutCount++;''')
     replace('src/libretro/platform/mp.cpp','    if(!_mpState.IsReady()) {\n        return false;\n    }',
             '''    if(!_mpState.IsReady()) {
         struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{3,0,&p};
@@ -83,7 +126,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 5; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 6; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;
@@ -96,15 +139,25 @@ extern "C" RETRO_API bool manic_ds_firmware_identity_matches(void) {
 }
 
 PUBLIC_SYMBOL void retro_init(void) {''')
+    libretro_path=root/'src/libretro/libretro.cpp'
+    original_replies=libretro_path.read_text().split('u16 Platform::MP_RecvReplies(',1)[1]
+    original_replies='u16 Platform::MP_RecvReplies('+original_replies.split('\n}',1)[0]+'\n}'
+    reply_source=(pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveReplies.inc').read_text()
+    replace('src/libretro/libretro.cpp',original_replies,reply_source[reply_source.index('u16 Platform::MP_RecvReplies('):].rstrip())
     replace('src/libretro/config/console.cpp',
             '''        firmware.GetHeader().MacAddr = mac;
     }
 
     // fix touchscreen coords''',
             '''        firmware.GetHeader().MacAddr = mac;
-    } else if (firmware.GetHeader().Identifier == melonDS::GENERATED_FIRMWARE_IDENTIFIER) {
-        // Only a generated console with no explicit MAC uses the frontend's
-        // persistent local identity. Native firmware files remain read-only.
+    }
+    {
+        // The frontend may own independent virtual hardware for local play.
+        // Apply before boot for every firmware/configuration path so wireless
+        // headers, Nintendo payloads and SDK caches see the same identity.
+        // This custom request is supplied only for the nine local Pokemon
+        // titles; other frontends/games retain the original MAC behavior.
+        // The imported firmware file is not written here.
         struct Generated { uint32_t version; uint8_t mac[6]; uint8_t reserved[2]; } request{1,{},{}};
         if (retro::environment(0x4d445303, &request) && request.version == 1 &&
             !request.reserved[0] && !request.reserved[1] && !(request.mac[0] & 1)) {
@@ -116,6 +169,7 @@ PUBLIC_SYMBOL void retro_init(void) {''')
     // fix touchscreen coords''')
     for p,s in changes.items():p.write_text(s,encoding='utf-8',newline='\n')
     (root/'src/libretro/net/manic_receive_deadline.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveDeadline.hpp').read_bytes())
+    (root/'src/libretro/net/manic_reply_collector.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReplyCollector.hpp').read_bytes())
     return list(changes)
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('checkout');a=p.parse_args()

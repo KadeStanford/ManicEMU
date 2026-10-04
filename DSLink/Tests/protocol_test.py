@@ -22,7 +22,7 @@ def pump(a,b):
    for f in frames:check('ordered wire accepted',y.cmd('IN '+f)['ok'])
   if not count:return
  raise AssertionError('unbounded control exchange')
-def packet(tag,type=0):return (123456789).to_bytes(8,'big')+bytes([1 if type==1 else 0,type])+tag
+def packet(tag,type=0):return (123456789).to_bytes(8,'big')+bytes([1 if type==1 else 0,type])+(tag.ljust(36,b'\0') if type==1 else tag)
 codes=['ADAE','APAE','CPUE','IPKE','IPGE','IRBO','IRAO','IREO','IRDO']
 start=time.monotonic()
 for i,x in enumerate(codes):

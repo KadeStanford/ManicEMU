@@ -4,14 +4,13 @@
 #include <cstring>
 namespace manicds {
 MAC Room::address(Nonce n){return MAC{2,n[0],n[1],n[2],n[3],n[4]};}
-Room::Room(Nonce n,const char code[4],uint8_t r,MAC native):identity_(n),revision_(r),native_(native),alias_(title(code)>=6?native:address(n)){
+Room::Room(Nonce n,const char code[4],uint8_t r,MAC native):identity_(n),revision_(r),native_(native),alias_(native){
     if(code)std::memcpy(code_.data(),code,4);
 }
 bool Room::add(Nonce n,const char code[4],uint8_t revision,MAC alias){
     if(n==identity_||contains(n)||peers_.size()>=MaxPeers||nextSlot_==65535||
-       !compatible(code_.data(),code)||alias==alias_||
-       (title(code_.data())<6&&(alias!=address(n)||alias==native_)))return false;
-    if(title(code_.data())>=6){
+       !compatible(code_.data(),code)||alias==alias_)return false;
+    {
         bool nonzero=false;for(auto b:alias)nonzero|=b!=0;
         if(!nonzero||(alias[0]&1))return false;
     }
@@ -23,15 +22,10 @@ bool Room::add(Nonce n,const char code[4],uint8_t revision,MAC alias){
 void Room::remove(Nonce n){peers_.erase(n);}
 uint16_t Room::slot(Nonce n)const{auto p=peers_.find(n);return p==peers_.end()?65535:p->second.slot;}
 void Room::translate(Bytes &p,bool outgoing)const{
-    // Gen 5 includes its console identity throughout Nintendo's application
-    // protocol. Keep every native byte intact; generated consoles receive a
-    // stable distinct identity before boot instead of rewriting game data.
-    if(title(code_.data())>=6)return;
-    if(p.size()<46||p.size()>MaxPacket)return;
-    unsigned type=((p[22]|(unsigned(p[23])<<8))>>2)&3;if(type!=0&&type!=2)return;
-    const auto &from=outgoing?native_:alias_,&to=outgoing?alias_:native_;
-    for(size_t offset:{size_t(26),size_t(32),size_t(38)})
-        if(std::equal(from.begin(),from.end(),p.begin()+offset))std::copy(to.begin(),to.end(),p.begin()+offset);
+    // Independent virtual hardware identities are established before boot.
+    // Headers and checksummed Nintendo application identities must agree in
+    // both generations, including real firmware and restored game caches.
+    (void)p;(void)outgoing;
 }
 bool Room::receive(Nonce n,const void *data,size_t size){
     auto p=peers_.find(n);if(p==peers_.end())return false;

@@ -19,7 +19,7 @@
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
-static NSString *const WireVersion=@"ds131-room7";
+static NSString *const WireVersion=@"ds131-room8";
 static std::mutex lock;
 static std::condition_variable packetsReady;
 static struct {
@@ -35,6 +35,8 @@ static struct {
     bool finishPending=false;
     double nativeMilliseconds=0,waitMilliseconds=0,lastMetrics=0;
     uint64_t measuredFrames=0,waits=0,transportMessages=0;
+    uint64_t nativeTimeouts=0,nativeCmd=0,nativeReply=0,nativeOther=0,filterBSSID=0,filterDestination=0;
+    double sendQueueDelayMax=0,sendCallMax=0;
     Nonce nonce{};
     NSData *lastBattery=nil;
     NSString *savePath=nil;
@@ -117,7 +119,8 @@ static bool persist(bool backup){
 static void prepare(){
     uint64_t generation;
     {std::lock_guard<std::mutex> guard(lock);if(!g.requested||g.preparing||g.prepared||g.failedPrepare||!g.loaded||!g.radio)return;g.preparing=true;generation=g.epoch;}
-    if(title(g.code)>=6&&g.core.firmwareIdentityMatches&&!g.core.firmwareIdentityMatches()){
+    if((g.core.firmwareIdentityMatches&&!g.core.firmwareIdentityMatches())||
+       (g.core.localIdentityMatches&&!g.core.localIdentityMatches())){
         {std::lock_guard<std::mutex> guard(lock);g.preparing=false;g.failedPrepare=true;}
         warning(@"This DS state has an older console identity. Save in the game, then restart from the game's normal save before nearby play. Your state and save files have been kept.",generation);return;
     }
@@ -142,7 +145,7 @@ static void prepare(){
     else warning(@"Nearby play stopped because the current save path or automatic checkpoint could not be verified. Keep your current game open and save normally.",generation);
 }
 static void sendPacket(int flags,const void *data,size_t size,uint16_t target){
-    (void)flags;if(!size)return; // A flush hint has no game payload.
+    if(!size){if(flags&RETRO_NETPACKET_FLUSH_HINT)[[MDSNearby shared] drain];return;}
     if(!validPacket(data,size))return;
     Bytes copy(static_cast<const uint8_t*>(data),static_cast<const uint8_t*>(data)+size);
     {std::lock_guard<std::mutex> guard(lock);if(g.room){g.room->send(copy.data(),copy.size(),target);}}
@@ -166,12 +169,15 @@ void MDS_waitForPackets(uint32_t microseconds){
 void MDS_netpacket(const retro_netpacket_callback *cb){if(cb){std::lock_guard<std::mutex> guard(lock);g.net=*cb;}}
 void MDS_gameLoaded(const char code[4],uint8_t revision,MDSCore core){
     MDS_gameUnloading();
-    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;}
+    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;g.nativeTimeouts=g.nativeCmd=g.nativeReply=g.nativeOther=g.filterBSSID=g.filterDestination=0;g.sendQueueDelayMax=g.sendCallMax=0;}
     dispatch_async(dispatch_get_main_queue(),^{installPauseHooks();});
 }
 void MDS_signal(unsigned event,const void *packet){
     uint64_t generation;bool on=false,changed=false;
     {std::lock_guard<std::mutex> guard(lock);if(!g.loaded)return;generation=g.epoch;
+        if(event==4)g.nativeTimeouts++;if(event==5)g.nativeCmd++;if(event==6)g.nativeReply++;
+        if(event==7)g.nativeOther++;if(event==8)g.filterBSSID++;if(event==9)g.filterDestination++;
+        if(event>=4)return;
         if(event==1||event==2){on=event==1;changed=g.radio!=on;g.radio=on;if(g.room)g.room->radio(on);if(changed&&!on&&g.prepared)g.finishPending=true;}
         if(event==3&&packet){
             // Exact 1.3.1 Packet ABI verified from the bundled ARM64 engine:
@@ -203,8 +209,8 @@ void MDS_afterFrame(double nativeMilliseconds){
     NSDictionary *metrics=nil;
     {std::lock_guard<std::mutex> guard(lock);generation=g.epoch;save=g.prepared&&g.room&&((++g.frames%60)==0);
         if(g.room&&nativeMilliseconds>0){g.nativeMilliseconds+=nativeMilliseconds;g.measuredFrames++;}
-        if(g.room&&CACurrentMediaTime()-g.lastMetrics>=5){g.lastMetrics=CACurrentMediaTime();
-            metrics=@{@"format":@1,@"candidate":@"DS-v0.5",@"phase":@(g.radio?(g.room->active()?2:1):3),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room->sentCount()),@"received":@(g.room->receivedCount()),@"acknowledged":@(g.room->acknowledged()),@"pending":@(g.room->pendingCount()),@"duplicates":@(g.room->duplicateCount()),@"rejected":@(g.room->rejectedCount()),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970)};
+        if(g.loaded&&CACurrentMediaTime()-g.lastMetrics>=5){g.lastMetrics=CACurrentMediaTime();
+            metrics=@{@"format":@2,@"candidate":@"DS-v0.7",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
         }
     }
     if(metrics){dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
@@ -235,15 +241,14 @@ void MDS_gameUnloading(){
     dispatch_queue_t _sendQueue;
 }
 +(instancetype)shared{static MDSNearby *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
--(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.room",DISPATCH_QUEUE_SERIAL);[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
+-(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.room",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
 -(BOOL)valid:(NSDictionary*)info{
     Nonce n;MAC mac,alias;
     if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||![info[@"local"] isEqual:@"1"]||!readNonce(info[@"nonce"],n)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||!readMAC(info[@"mac"],mac)||!readMAC(info[@"alias"],alias))return NO;
     NSData *a=[_meta[@"code"] dataUsingEncoding:NSASCIIStringEncoding],*b=[info[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
     if(a.length!=4||b.length!=4||!compatible((const char*)a.bytes,(const char*)b.bytes)||[info[@"runtime"] isEqual:_runtime])return NO;
-    if(title((const char*)a.bytes)>=6){MAC local;
-        return alias==mac&&!(mac[0]&1)&&readMAC(_meta[@"mac"],local)&&mac!=local;}
-    return alias==Room::address(n);
+    MAC local;
+    return alias==mac&&readMAC(_meta[@"mac"],local)&&mac!=local;
 }
 -(void)advertise{
     [_advertiser stopAdvertisingPeer];if(!_identity||!_meta)return;
@@ -296,13 +301,16 @@ void MDS_gameUnloading(){
 -(void)drain{
     MCSession *session=self.session;if(!session)return;uint64_t generation=epoch.load();
     {std::lock_guard<std::mutex> guard(lock);if(!g.room||g.sendScheduled)return;g.sendScheduled=true;}
-    dispatch_async(_sendQueue,^{for(;;){NSMutableArray *out=[NSMutableArray new];
+    double queuedAt=CACurrentMediaTime();
+    dispatch_async(_sendQueue,^{
+      {std::lock_guard<std::mutex> guard(lock);if(generation==g.epoch)g.sendQueueDelayMax=std::max(g.sendQueueDelayMax,(CACurrentMediaTime()-queuedAt)*1000);}
+      for(;;){NSMutableArray *out=[NSMutableArray new];
         {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;if(!g.room||session!=self.session){g.sendScheduled=false;return;}
             for(MCPeerID *peer in self->_wirePeers){Nonce n;if(!readNonce(self->_wirePeers[peer],n))continue;
                 for(const auto &batch:batchWire(g.room->takeWire(n)))[out addObject:@[peer,[NSData dataWithBytes:batch.data() length:batch.size()]]];}
             if(!out.count){g.sendScheduled=false;return;}}
-        for(NSArray *entry in out){NSError *error=nil;BOOL sent=[session sendData:entry[1] toPeers:@[entry[0]] withMode:MCSessionSendDataReliable error:&error];
-            {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.transportMessages++;}
+        for(NSArray *entry in out){NSError *error=nil;double sendAt=CACurrentMediaTime();BOOL sent=[session sendData:entry[1] toPeers:@[entry[0]] withMode:MCSessionSendDataReliable error:&error];
+            {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.transportMessages++;g.sendCallMax=std::max(g.sendCallMax,(CACurrentMediaTime()-sendAt)*1000);}
             if(!sent)dispatch_async(dispatch_get_main_queue(),^{if(generation==epoch.load()&&session==self.session){[self remove:entry[0]];[session cancelConnectPeer:entry[0]];}});}
     }});
 }
