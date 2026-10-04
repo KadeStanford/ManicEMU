@@ -70,7 +70,8 @@ jobs:
       - name: Build reset-capable desktop engine for private local testing
         shell: msys2 {0}
         run: |
-          git clone --depth 1 --branch v1.3.1 https://github.com/JesseTG/melonds-ds.git ds-windows-source
+          git clone https://github.com/Daiuno/melonds-ds.git ds-windows-source
+          git -C ds-windows-source checkout --detach 1a28e0fe2a78c9d2318f4324835ff906488299a2
           python DSLink/scripts/patch_source.py ds-windows-source
           cmake -S ds-windows-source -B ds-windows-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DENABLE_JIT=OFF -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_LTO_RELEASE=OFF -DBUILD_AS_SHARED_LIBRARY=ON
           cmake --build ds-windows-build --parallel 3

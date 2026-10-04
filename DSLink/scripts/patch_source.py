@@ -1,15 +1,15 @@
-"""Apply reproducible lifecycle/reset changes to public melonDS DS v1.3.1.
+"""Apply lifecycle/reset changes to Manic's public melonDS DS v1.3.1 fork.
 
 This source route is required for a shippable core. The separately verified
 binary instrumentation is a diagnostic prototype: the shipped 1.3.1 stop
 callback does not clear its queue, and must not be used for repeated sessions.
 """
 import argparse,pathlib,subprocess
-COMMIT='bc4e4b67d2d470d7c682810a1e892cafd6f9082b'
+COMMIT='1a28e0fe2a78c9d2318f4324835ff906488299a2'
 def patch(root):
     root=pathlib.Path(root)
     commit=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
-    if commit!=COMMIT:raise ValueError('Public melonDS DS v1.3.1 checkout required')
+    if commit!=COMMIT:raise ValueError('Pinned Manic melonDS DS v1.3.1 fork required')
     changes={}
     def replace(file,before,after):
         p=root/file;s=changes.get(p,p.read_text())
@@ -47,7 +47,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            'PUBLIC_SYMBOL unsigned manic_ds_protocol_revision(void) { return 1; }\n\nPUBLIC_SYMBOL void retro_init(void) {')
+            'extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 1; }\n\nPUBLIC_SYMBOL void retro_init(void) {')
     for p,s in changes.items():p.write_text(s,encoding='utf-8',newline='\n')
     return list(changes)
 if __name__=='__main__':
