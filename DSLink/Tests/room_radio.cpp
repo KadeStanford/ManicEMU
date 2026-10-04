@@ -28,11 +28,15 @@ int main(){
     // Every admitted title pairing traverses the same actual RF carrier.
     const char *titles[]={"ADAE","APAE","CPUE","IPKE","IPGE","IRBO","IRAO","IREO","IRDO"};
     unsigned pairings=0;const auto small=payload(10),normal=payload(100),maximum=payload(MaxPacket);
-    for(const auto *a:titles)for(const auto *b:titles)if(compatible(a,b)){
-        Pair pair(a,b);auto frames=pair.encode(normal);pair.deliver(frames);Received p;
-        check(pair.b.pop(p)&&p.data==normal&&p.source==pair.b.slot(pair.an));
-        check(pair.a.pendingCount()==0&&pair.a.sentCount()==1);++pairings;
-    }check(pairings==41);
+    for(const auto *a:titles){
+        for(const auto *b:titles){
+            if(!compatible(a,b))continue;
+            Pair pair(a,b);auto frames=pair.encode(normal);pair.deliver(frames);Received p;
+            check(pair.b.pop(p)&&p.data==normal&&p.source==pair.b.slot(pair.an));
+            check(pair.a.pendingCount()==0&&pair.a.sentCount()==1);++pairings;
+        }
+    }
+    check(pairings==41);
     Pair pair;Received received;
     auto fragmented=pair.encode(maximum);check(fragmented.size()==3);
     check(pair.b.receiveRadio(pair.an,fragmented[0].data(),fragmented[0].size()));
