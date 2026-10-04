@@ -14,9 +14,10 @@ def patch(root):
     compat=pathlib.Path(__file__).resolve().parents[1]/'patches/manic-v131-compat.patch'
     # Git on Windows may materialize text patches with CRLF. Normalize only
     # line endings before the exact public-source checksum guard.
-    if hashlib.sha256(compat.read_bytes().replace(b'\r\n',b'\n')).hexdigest()!=COMPAT_SHA256:raise ValueError('Manic compatibility patch checksum mismatch')
-    subprocess.check_call(['git','-C',str(root),'apply','--check',str(compat)])
-    subprocess.check_call(['git','-C',str(root),'apply',str(compat)])
+    patch_bytes=compat.read_bytes().replace(b'\r\n',b'\n')
+    if hashlib.sha256(patch_bytes).hexdigest()!=COMPAT_SHA256:raise ValueError('Manic compatibility patch checksum mismatch')
+    subprocess.run(['git','-C',str(root),'apply','--check','-'],input=patch_bytes,check=True)
+    subprocess.run(['git','-C',str(root),'apply','-'],input=patch_bytes,check=True)
     changes={}
     def replace(file,before,after):
         p=root/file;s=changes.get(p,p.read_text())
