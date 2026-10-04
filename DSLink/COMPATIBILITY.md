@@ -23,8 +23,8 @@ and game-specific rules must be recorded with each real test.
 
 | Title | Exact authorized cartridge | Local trade/battle route | Current desktop game evidence |
 |---|---|---|---|
-| Diamond | ADAE revision 5 | Union Room; Colosseum battles | Boots public save: 8 badges; state roundtrip passes |
-| Pearl | APAE revision 5 | Union Room; Colosseum battles | Boots public save: 8 badges; state roundtrip passes |
+| Diamond | ADAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; first-session normal exits passed; post-trade exit and battle pending |
+| Pearl | APAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; first-session normal exits passed; post-trade exit and battle pending |
 | Platinum | CPUE revision 1 | Union Room; Colosseum battles | CPUE/CPUE trade and bilateral cold reload; Union Room exit; trade-to-Colosseum transition; two battles with turn exchange and completed forfeit exits; faint/replacement passed |
 | HeartGold | IPKE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
 | SoulSilver | IPGE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
@@ -60,8 +60,17 @@ Platinum test used the identical default firmware MAC on both consoles and
 translated only the peer transport's 802.11 addresses. Both players appeared,
 connected and traded back the selected Pokemon. The production map retains the
 native firmware/WFC identity and save payload, with distinct peer aliases only
-when identities collide. Production-map game testing and physical phone
-verification must be recorded separately from the private prototype result.
+when identities collide. The exact production C++ map subsequently passed native
+CPUE revision 1 / CPUE revision 1 discovery and trading with both firmware MACs
+unchanged at 00:09:BF:11:22:33. Both newer native save blocks and exchanged PK4
+checksums passed, and separate fresh emulator processes loaded each battery save
+without a state file and retained the exchanged identities. A separate fresh
+same-MAC production session passed normal Union Room pad exits on both consoles.
+These are desktop results; default-MAC battle completion and physical phone
+verification remain pending. The initial production trade series checked only
+Down for its second player's exit while it was on the entry mat. Stepping away
+and re-entering the pad passed in the separate exit test, so the earlier attempt
+does not establish an emulator exit bug.
 
 The actual desktop harness uses two native core processes and a local TCP channel
 around the unchanged production C++ protocol; it does not exercise iOS Multipeer
@@ -69,6 +78,19 @@ Connectivity. The original stepping harness paused each process at command
 boundaries and slowed sharply during the native contact handshake. A continuous
 frame pump is used for subsequent game-flow testing. No cartridge/save/firmware
 input is published or included in CI artifacts.
+
+Diamond ADAE revision 5 / Pearl APAE revision 5 also passed actual native Union
+Room discovery, contact through a Trainer Case offer, and normal room exits on
+both consoles with identical default MACs. A later state-assisted fresh session
+timed out during contact and displayed the game's cancellation message. A fresh
+battery-only session subsequently completed the cross-title trade: Diamond's
+Torterra and Pearl's Infernape exchanged selected slots. Both games returned to
+party selection with the received Pokemon, both wrote newer valid native saves,
+all party checksums passed, and both independent fresh processes loaded the
+traded batteries without state input and retained the exchanged identities.
+Post-trade exit and battle remain pending for this pair. Several harness timing
+details also changed, so the earlier contact timeout cause is not established.
+This does not establish all-pair or physical phone success.
 
 The actual Union Room battle attempt displayed the game's requirement for two
 Pokemon at level 30 or lower. The disposable parties were level 65, so that
