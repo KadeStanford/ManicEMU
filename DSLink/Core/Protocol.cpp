@@ -88,6 +88,14 @@ Bytes Protocol::encode(Kind kind,uint64_t seq,const void *data,size_t size,uint1
     if(size)std::memcpy(b.data()+WireHeader,data,size);return b;
 }
 void Protocol::fail(){failed_=true;incoming_.clear();wire_.clear();}
+void Protocol::acknowledge(uint64_t sequence){
+    auto ack=encode(Kind::Ack,sequence,nullptr,0,uint16_t(1-id_));
+    // ACKs are cumulative. Consecutive queued ACKs can share the newest fence;
+    // never remove or reorder a game/control frame between them.
+    if(!wire_.empty()&&wire_.back()[5]==uint8_t(Kind::Ack))wire_.back()=std::move(ack);
+    else if(wire_.size()<MaxQueue)wire_.push_back(std::move(ack));
+    else fail();
+}
 bool Protocol::enqueue(Kind kind,const void *data,size_t size,uint16_t target){
     if(!bound_||failed_||ended_||pending_.size()>=MaxQueue||wire_.size()>=MaxQueue||tx_==std::numeric_limits<uint64_t>::max()){
         fail();return false;
@@ -136,8 +144,7 @@ bool Protocol::receive(const void *data,size_t size){
     }
     if(!valid){++rejected_;return false;}
     if(seq<=rx_){
-        ++duplicates_;if(wire_.size()>=MaxQueue){fail();return false;}
-        wire_.push_back(encode(Kind::Ack,rx_,nullptr,0,uint16_t(1-id_)));return true;
+        ++duplicates_;acknowledge(rx_);return !failed_;
     }
     if(seq!=rx_+1){fail();return false;} // Ordered channel broke: never skip game data.
     if(ended_||(k==Kind::Ready&&peerReady_)||(k==Kind::Data&&(peerClose_||incoming_.size()>=MaxQueue))||wire_.size()>=MaxQueue){fail();return false;}
@@ -149,7 +156,7 @@ bool Protocol::receive(const void *data,size_t size){
     case Kind::Close:peerClose_=true;break;
     default:break;
     }
-    rx_=seq;wire_.push_back(encode(Kind::Ack,seq,nullptr,0,uint16_t(1-id_)));
+    rx_=seq;acknowledge(seq);
     if(closeSent_&&peerClose_&&pending_.empty())ended_=true;
     return true;
 }

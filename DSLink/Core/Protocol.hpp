@@ -56,6 +56,8 @@ public:
     bool paired() const {return bound_&&localReady_&&peerReady_&&readyAcked_&&!failed_&&!ended_;}
     bool bothOff() const {return paired()&&!radio_&&!peerRadio_;}
     bool settled() const {return pending_.empty()&&incoming_.empty();}
+    bool hasIncoming() const {return !incoming_.empty();}
+    size_t pendingCount() const {return pending_.size();}
     bool paused() const {return held_||peerHeld_||interrupted_||failed_||(releaseSeq_&&acked_<releaseSeq_);}
     uint16_t id() const {return id_;}
     uint64_t receivedCount() const {return rx_;}
@@ -70,6 +72,7 @@ private:
     bool enqueue(Kind kind,const void *data,size_t size,uint16_t target=65535);
     Bytes encode(Kind kind,uint64_t sequence,const void *data,size_t size,uint16_t target) const;
     void fail();
+    void acknowledge(uint64_t sequence);
     Nonce identity_,peer_{};
     std::array<uint8_t,32> room_{};
     std::array<char,4> code_{};

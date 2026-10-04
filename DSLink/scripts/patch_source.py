@@ -34,6 +34,23 @@ def patch(root):
 }
 
 bool MpState::IsReady() const noexcept {''')
+    replace('src/libretro/net/mp.cpp','#include <ctime>',
+            '#include "manic_receive_deadline.hpp"\n#include <thread>')
+    replace('src/libretro/net/mp.cpp',
+            '        for(std::clock_t start = std::clock(); std::clock() < (start + (RECV_TIMEOUT_MS * CLOCKS_PER_SEC / 1000));) {',
+            '        manicds::ReceiveDeadline deadline(RECV_TIMEOUT_MS);\n        while(deadline.nextWaitMicros()) {')
+    replace('src/libretro/net/mp.cpp',
+            '''            if(!receivedPackets.empty()) {
+                return NextPacket();
+            }
+        }''',
+            '''            if(!receivedPackets.empty()) {
+                return NextPacket();
+            }
+            struct Wait { uint32_t microseconds; uint32_t reserved; } wait{deadline.nextWaitMicros(),0};
+            if(wait.microseconds && !retro::environment(0x4d445302, &wait))
+                std::this_thread::sleep_for(std::chrono::microseconds(wait.microseconds));
+        }''')
     replace('src/libretro/platform/mp.cpp','    _mpState.SetSendFn(nullptr);',
             '    _mpState.Reset();\n    _mpState.SetSendFn(nullptr);')
     replace('src/libretro/platform/mp.cpp','    if(!_mpState.IsReady()) {\n        return false;\n    }',
@@ -55,7 +72,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 2; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 3; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;
@@ -65,6 +82,7 @@ extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
 
 PUBLIC_SYMBOL void retro_init(void) {''')
     for p,s in changes.items():p.write_text(s,encoding='utf-8',newline='\n')
+    (root/'src/libretro/net/manic_receive_deadline.hpp').write_bytes((pathlib.Path(__file__).resolve().parents[1]/'Core/ReceiveDeadline.hpp').read_bytes())
     return list(changes)
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('checkout');a=p.parse_args()

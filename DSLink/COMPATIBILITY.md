@@ -1,5 +1,17 @@
 # Compatibility and evidence
 
+User-reported physical v0.2 result: HeartGold/SoulSilver joined a battle on two
+iPhones. Both became choppy when connected, then displayed the native game's
+communication error and returned before the battle. One first room attempt did
+not complete; a second attempt joined. Phone cartridge revisions were not
+recorded. This is partial physical connection evidence, not a completed battle,
+trade or persistence result. It establishes an unresolved phone regression.
+
+The desktop results below use the v0.2 production protocol/engine unless an
+earlier Platinum adapter is explicitly identified. The v0.3 pacing/discovery
+changes require fresh native and physical verification; older successful game
+results do not establish that the revised candidate passes them.
+
 An actual Platinum CPUE revision 1 / CPUE revision 1 Union Room trade passed on
 two independent desktop core processes. Infernape "Mario" (PID 2413151600) and
 Staraptor "Limit Bird" (PID 3963018234) exchanged selected party slots. Both games

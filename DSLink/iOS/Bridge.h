@@ -15,5 +15,6 @@ void MDS_gameUnloading();
 void MDS_netpacket(const retro_netpacket_callback *callbacks);
 void MDS_signal(unsigned event,const void *packet);
 bool MDS_beforeFrame();
-void MDS_afterFrame();
+void MDS_afterFrame(double nativeMilliseconds=0);
+void MDS_waitForPackets(uint32_t microseconds);
 bool MDS_allowRestore();

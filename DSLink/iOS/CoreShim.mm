@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstring>
+#include <chrono>
 #include "Bridge.h"
 static retro_environment_t frontend;
 static void *engine;
@@ -18,6 +19,10 @@ static void *symbol(const char *name){
 template<class F> static F original(const char *name){return reinterpret_cast<F>(symbol(name));}
 struct Event {uint32_t number,reserved;const void *packet;};
 static bool environment(unsigned command,void *data){
+    if(command==0x4d445302){
+        if(!data)return false;const auto *p=static_cast<const uint32_t*>(data);
+        if(p[1]||p[0]>1000)return false;MDS_waitForPackets(p[0]);return true;
+    }
     if(command==0x4d445301){
         if(data){const auto *e=static_cast<const Event*>(data);if(!e->reserved&&e->number<=3)MDS_signal(e->number,e->packet);}
         return true;
@@ -41,11 +46,12 @@ extern "C" bool retro_load_game(const retro_game_info *info){
     // A reset-capable engine is mandatory. The diagnostic binary patch lacks
     // queue reset; it cannot enable a feature IPA merely by having event hooks.
     using Revision=unsigned(*)();auto revisionFn=original<Revision>("manic_ds_protocol_revision");
-    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==2?code:disabled,revision,core);return true;
+    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==3?code:disabled,revision,core);return true;
 }
 extern "C" void retro_run(){
     if(!MDS_beforeFrame())return;
-    auto f=original<decltype(&retro_run)>("retro_run");if(f)f();MDS_afterFrame();
+    auto begin=std::chrono::steady_clock::now();auto f=original<decltype(&retro_run)>("retro_run");if(f)f();
+    MDS_afterFrame(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
 }
 extern "C" void retro_unload_game(){MDS_gameUnloading();auto f=original<decltype(&retro_unload_game)>("retro_unload_game");if(f)f();}
 extern "C" void retro_deinit(){MDS_gameUnloading();auto f=original<decltype(&retro_deinit)>("retro_deinit");if(f)f();}

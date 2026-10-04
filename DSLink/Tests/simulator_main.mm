@@ -36,22 +36,28 @@ static void waitUntil(std::function<bool()> condition){for(unsigned i=0;i<400;i+
 @implementation TestSession
 -(BOOL)sendData:(NSData*)data toPeers:(NSArray<MCPeerID*>*)peers withMode:(MCSessionSendDataMode)mode error:(NSError**)error{
     (void)peers;(void)mode;(void)error;std::vector<Bytes> frames;
-    {std::lock_guard<std::mutex> guard(peerLock);if(!other||!other->receive(data.bytes,data.length))return NO;
+    std::vector<Bytes> messages;if(!unbatchWire(data.bytes,data.length,messages))return NO;
+    {std::lock_guard<std::mutex> guard(peerLock);if(!other)return NO;for(const auto &message:messages)if(!other->receive(message.data(),message.size()))return NO;
         Received discard;while(other->pop(discard))peerReceived=discard.data;frames=other->takeWire();}
-    for(const auto &frame:frames){NSData *reply=[NSData dataWithBytes:frame.data() length:frame.size()];
+    for(const auto &frame:batchWire(frames)){NSData *reply=[NSData dataWithBytes:frame.data() length:frame.size()];
         if(self.holdAcks){@synchronized(self){[self.savedReplies addObject:reply];}}
         else [[MDSNearby shared] session:self didReceiveData:reply fromPeer:[MDSNearby shared].partner];}
     return YES;
 }
 @end
 static void injectOther(TestSession *session){std::vector<Bytes> frames;{std::lock_guard<std::mutex> guard(peerLock);frames=other->takeWire();}
-    for(const auto &frame:frames)[[MDSNearby shared] session:session didReceiveData:[NSData dataWithBytes:frame.data() length:frame.size()] fromPeer:[MDSNearby shared].partner];}
+    for(const auto &frame:batchWire(frames))[[MDSNearby shared] session:session didReceiveData:[NSData dataWithBytes:frame.data() length:frame.size()] fromPeer:[MDSNearby shared].partner];}
 static bool settled(){std::lock_guard<std::mutex> guard(lock);return g.protocol&&g.protocol->settled();}
 static bool ended(){std::lock_guard<std::mutex> guard(lock);return g.protocol&&g.protocol->phase()==Phase::Ended;}
 static void tests(){@autoreleasepool{
     results=[NSMutableDictionary new];NSString *errorText=nil;
     NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     try{
+        check(@"user nickname wins over generic device model",[boundedPlayerName(@"Kade",@"iPhone") isEqual:@"Kade"]);
+        check(@"device name used when nickname absent",[boundedPlayerName(nil,@"My iPhone") isEqual:@"My iPhone"]);
+        check(@"Unicode name respects peer byte limit",[boundedPlayerName([@"👾" stringByPaddingToLength:100 withString:@"👾" startingAtIndex:0],nil) lengthOfBytesUsingEncoding:NSUTF8StringEncoding]<=63);
+        NSData *extras=[NSJSONSerialization dataWithJSONObject:@{@"nickname":@"Player One",@"unrelated":@"synthetic sentinel"} options:0 error:nil];
+        check(@"only existing nickname selected from settings extras",[nicknameFromExtras(extras) isEqual:@"Player One"]);
         memset(testBattery,0x51,sizeof(testBattery));memset(testState,0x73,sizeof(testState));
         NSString *path=[[docs URLByAppendingPathComponent:@"synthetic.srm"] path];
         NSData *before=[NSData dataWithBytes:testBattery length:sizeof(testBattery)];[before writeToFile:path atomically:YES];
@@ -76,19 +82,28 @@ static void tests(){@autoreleasepool{
             NSDictionary *same=@{@"v":WireVersion,@"ready":@"1",@"code":@"CPUE",@"nonce":hexNonce(peerNonce),@"runtime":@"synthetic-B",@"mac":g.wirelessMAC};
             [manager invite:[[MCPeerID alloc]initWithDisplayName:@"Duplicate console"] info:same];
             check(@"duplicate firmware identity allows invitation without mutation",manager.partner!=nil&&[manager valueForKey:@"notice"]==nil&&[g.wirelessMAC isEqual:@"0009bf010203"]);
+            [manager resetPendingInvitation];check(@"failed prelink invitation clears pending peer",manager.partner==nil&&![[manager valueForKey:@"inviting"] boolValue]);
         });
         __block TestSession *session;dispatch_sync(dispatch_get_main_queue(),^{
             MDSNearby *manager=[MDSNearby shared];[manager cleanup];[manager setValue:@(g.epoch) forKey:@"generation"];
             MCPeerID *identity=[[MCPeerID alloc]initWithDisplayName:@"Synthetic console A"],*peer=[[MCPeerID alloc]initWithDisplayName:@"Synthetic console B"];
-            session=[[TestSession alloc]initWithPeer:identity securityIdentity:nil encryptionPreference:MCEncryptionRequired];session.savedReplies=[NSMutableArray new];manager.session=session;manager.partner=peer;
+            session=[[TestSession alloc]initWithPeer:identity securityIdentity:nil encryptionPreference:MCEncryptionRequired];session.savedReplies=[NSMutableArray new];session.holdAcks=YES;manager.session=session;manager.partner=peer;
             NSDictionary *info=@{@"code":@"CPUE",@"rev":@"1",@"nonce":hexNonce(peerNonce),@"runtime":@"synthetic-B",@"mac":g.wirelessMAC};[manager setValue:info forKey:@"partnerMeta"];
+            injectOther(session);check(@"early reliable Ready retained before connected callback",!g.earlyWire.empty());
             [manager session:session peer:peer didChangeState:MCSessionStateConnected];
         });
+        TestSession *pairingSession=session;waitUntil([pairingSession]{@synchronized(pairingSession){return pairingSession.savedReplies.count>0;}});
+        check(@"game waits for bilateral Ready acknowledgment",!MDS_beforeFrame()&&starts==0);
+        session.holdAcks=NO;@synchronized(session){for(NSData *reply in session.savedReplies)[[MDSNearby shared] session:session didReceiveData:reply fromPeer:[MDSNearby shared].partner];[session.savedReplies removeAllObjects];}
         waitUntil([]{std::lock_guard<std::mutex> guard(lock);return g.protocol&&g.protocol->paired();});
         check(@"core callback starts between frames",MDS_beforeFrame()&&starts==1);
         check(@"linked state restore blocked",!MDS_allowRestore());
+        dispatch_semaphore_t burstGate=dispatch_semaphore_create(0);dispatch_queue_t sendQueue=[[MDSNearby shared] valueForKey:@"sendQueue"];
+        dispatch_async(sendQueue,^{dispatch_semaphore_wait(burstGate,DISPATCH_TIME_FOREVER);});
         uint8_t packet[14]{};packet[9]=0;packet[10]=42;for(unsigned i=0;i<100;i++)sendPacket(0,packet,sizeof(packet),65535);
+        dispatch_semaphore_signal(burstGate);
         waitUntil(settled);check(@"serialized submission and acknowledgments settle burst",settled());
+        check(@"native packet burst coalesces transport messages",g.transportMessages<100);
         {std::lock_guard<std::mutex> guard(peerLock);other->send(packet,sizeof(packet));}injectOther(session);
         check(@"network delegate does not invoke emulator receive",received==0);MDS_beforeFrame();check(@"receive invoked only on core thread",received==1&&!wrongThread);
         check(@"paired duplicate identity enables transport-only address mapping",g.addresses.enabled()&&[g.wirelessMAC isEqual:@"0009bf010203"]);

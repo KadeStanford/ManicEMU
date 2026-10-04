@@ -79,6 +79,19 @@ try:
  check('queue overflow fails closed',not a.cmd('SEND '+packet(b'x').hex())['ok'] and a.cmd('STATUS')['phase']==5)
 finally:a.stop();b.stop()
 
+# Consecutive cumulative ACKs must settle a burst without discarding payloads.
+a,b=Peer(11,'IPKE'),Peer(12,'IPGE')
+try:
+ a.cmd('RADIO 1');b.cmd('RADIO 1');a.cmd('BIND 12 IPGE');b.cmd('BIND 11 IPKE');pump(a,b)
+ payloads=[packet(bytes([n])*30) for n in range(64)]
+ for data in payloads:check('burst packet accepted',a.cmd('SEND '+data.hex())['ok'])
+ for wire in a.cmd('DRAIN')['wire']:check('ordered burst received',b.cmd('IN '+wire)['ok'])
+ acks=b.cmd('DRAIN')['wire'];check('burst cumulative ACK coalesced',len(acks)==1)
+ for ack in acks:check('cumulative burst fence accepted',a.cmd('IN '+ack)['ok'])
+ check('entire burst acknowledged',a.cmd('STATUS')['settled'])
+ for data in payloads:check('every burst payload preserved',b.cmd('POP')['payload']==data.hex())
+finally:a.stop();b.stop()
+
 for mode in ('bilateral_close','interrupted_radio_exit'):
  a,b=Peer(3,'IRBO'),Peer(4,'IRDO')
  try:
