@@ -68,5 +68,8 @@ by the original teardown. The wrapper initializes the original frame-marker
 pointer, changes no user setting, and makes no function calls. Exact original/R5
 hash and instruction guards reject unknown binaries. The ARM64 execution test
 covers mapped/unmapped state, both setting types, and register/flag preservation.
-R6's native game/menu comparison and physical phone verification are separate
-from the confirmed R5 workaround; a passing build alone does not establish them.
+R6 native run `37171528022` completed 3,600 Vulkan calls with duplicate skipping
+explicitly enabled, both with and without the loader. Encrypted frames at 2,050,
+3,000 and 3,250 show the menu open, the game after closing it, and the menu open
+again. Both repaired jobs unloaded cleanly. Physical R6 verification remains
+separate from the user's confirmed R5 workaround.

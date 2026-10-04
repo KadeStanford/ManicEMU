@@ -49,12 +49,12 @@ multiplied by the cached native screen scale. Increasing the core's internal
 resolution alone does not guarantee that its final drawable retains those pixels.
 The new producer geometry follows the canonical composite pixel dimensions
 before rendering; disconnect restores the original view dimensions. DeSmuME's
-running resolution option also updates the composite factor. Crop filtering
+running resolution option also updates the composite factor.
 Startup configuration dictionaries are observed after the original app handles
 them, so a previously selected resolution reaches the producer immediately.
 The observer does not query the environment callback (which clears the original
 core's option-update flag) or flush configuration files.
-remains nearest, and this does not create additional detail in native-resolution
+Crop filtering remains nearest, and this does not create additional detail in native-resolution
 sprites, text, or CPU-drawn plugin graphics.
 
 When `MASAirPlayDiagnostics` is enabled, bounded numeric evidence is written once
