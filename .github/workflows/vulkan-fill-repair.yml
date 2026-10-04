@@ -1,0 +1,19 @@
+name: Original Vulkan screen-fill repair verification
+on:
+  push:
+    branches: [recovery/dual-airplay-azahar]
+    paths: ['OriginalCoreRepair/repair_vulkan_fill*', 'OriginalCoreRepair/Tests/test_vulkan_fill_repair.py', '.github/workflows/vulkan-fill-repair.yml']
+permissions:
+  contents: read
+jobs:
+  actual-arm64-wrapper:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Verify repair guards and execute actual wrapper instructions
+        run: |
+          curl --fail --location --retry 3 --silent --show-error https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro -o "$RUNNER_TEMP/original-core.dylib"
+          python3 -m pip install --target "$RUNNER_TEMP/repair-test-deps" unicorn==2.1.4
+          PYTHONPATH="$RUNNER_TEMP/repair-test-deps" python3 OriginalCoreRepair/Tests/test_vulkan_fill_repair.py "$RUNNER_TEMP/original-core.dylib"
