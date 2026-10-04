@@ -84,7 +84,7 @@ static void tests(){@autoreleasepool{
         LibretroCore *frontend=[LibretroCore new];dispatch_sync(dispatch_get_main_queue(),^{installPauseHooks();});[frontend pause];waitUntil(settled);
         check(@"existing frontend pause chained and peer holds",pauseCalls==1&&!MDS_beforeFrame());
         session.holdAcks=YES;[frontend resume];check(@"release waits for peer acknowledgment",resumeCalls==1&&!MDS_beforeFrame());
-        waitUntil([&]{@synchronized(session){return session.savedReplies.count>0;}});session.holdAcks=NO;
+        TestSession *activeSession=session;waitUntil([activeSession]{@synchronized(activeSession){return activeSession.savedReplies.count>0;}});session.holdAcks=NO;
         @synchronized(session){for(NSData *reply in session.savedReplies)[[MDSNearby shared] session:session didReceiveData:reply fromPeer:[MDSNearby shared].partner];[session.savedReplies removeAllObjects];}
         waitUntil(settled);check(@"acknowledged resume allows core",MDS_beforeFrame());
         testBattery[0]=0x92;for(unsigned i=0;i<60;i++)MDS_afterFrame();check(@"current synthetic battery atomically persists",[NSData dataWithContentsOfFile:path].length==512&&((const uint8_t*)[NSData dataWithContentsOfFile:path].bytes)[0]==0x92);
@@ -102,7 +102,7 @@ static void tests(){@autoreleasepool{
     [[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[docs URLByAppendingPathComponent:@"smoke.json"] atomically:YES];
 }}
 @interface TestScene:NSObject<UIWindowSceneDelegate>
-@property(strong) UIWindow *window;
+@property(nonatomic,strong) UIWindow *window;
 @end
 @implementation TestScene
 -(void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options{
