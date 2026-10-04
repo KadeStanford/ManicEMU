@@ -53,7 +53,7 @@ for i,x in enumerate(codes):
     a.cmd('RADIO 1');b.cmd('RADIO 1');pump(a,b)
     check('trade-to-battle/repeated session keeps pairing',a.cmd('STATUS')['phase']==2 and b.cmd('STATUS')['phase']==2)
    a.cmd('HOLD 1');pump(a,b);check('bilateral hold',a.cmd('STATUS')['paused'] and b.cmd('STATUS')['paused'])
-   a.cmd('HOLD 0');pump(a,b);check('hold release',not a.cmd('STATUS')['paused'] and not b.cmd('STATUS')['paused'])
+   a.cmd('HOLD 0');check('resume blocked before acknowledgment',a.cmd('STATUS')['paused']);pump(a,b);check('hold release',not a.cmd('STATUS')['paused'] and not b.cmd('STATUS')['paused'])
    pending=packet(b'in-flight');a.cmd('SEND '+pending.hex());wire=a.cmd('DRAIN')['wire'][0]
    a.cmd('DISC');b.cmd('DISC');check('in-flight loss suspends',a.cmd('STATUS')['phase']==4)
    check('other identity cannot reconnect',not a.cmd('RECONNECT 3')['ok'])
@@ -78,6 +78,29 @@ try:
  for _ in range(256):check('bounded queue slot accepted',a.cmd('SEND '+packet(b'x').hex())['ok'])
  check('queue overflow fails closed',not a.cmd('SEND '+packet(b'x').hex())['ok'] and a.cmd('STATUS')['phase']==5)
 finally:a.stop();b.stop()
+
+for mode in ('bilateral_close','interrupted_radio_exit'):
+ a,b=Peer(3,'IRBO'),Peer(4,'IRDO')
+ try:
+  a.cmd('RADIO 1');b.cmd('RADIO 1');a.cmd('BIND 4 IRDO');b.cmd('BIND 3 IRBO');pump(a,b)
+  if mode=='bilateral_close':
+   a.cmd('RADIO 0');b.cmd('RADIO 0');pump(a,b);a.cmd('CLOSE');b.cmd('CLOSE');pump(a,b)
+   check('bilateral close acknowledgments end room',a.cmd('STATUS')['phase']==6 and b.cmd('STATUS')['phase']==6)
+  else:
+   a.cmd('DISC');check('active radio cannot abandon interrupted session',not a.cmd('ABANDON')['ok'])
+   a.cmd('RADIO 0');check('explicit radio exit abandons interrupted transport',a.cmd('ABANDON')['ok'] and a.cmd('STATUS')['phase']==6)
+ finally:a.stop();b.stop()
+
+a=Peer(5,'ADAE')
+try:
+ local=bytearray(48);local[16:22]=bytes([3,9,191,0,0,16])
+ check('Nintendo local destination starts detector',a.cmd('LOCAL 0 '+local.hex())['ok'])
+ infra=bytearray(local);infra[13]=1
+ for kind in range(3):check('infrastructure WFC excluded from local discovery',not a.cmd(f'LOCAL {kind} '+infra.hex())['ok'])
+ beacon=bytearray(53);beacon[12]=0x80;beacon[48:]=bytes([221,3,0,9,191])
+ check('local Nintendo host beacon detected',a.cmd('LOCAL 0 '+beacon.hex())['ok'])
+ beacon[49]=8;check('truncated vendor beacon rejected',not a.cmd('LOCAL 0 '+beacon.hex())['ok'])
+finally:a.stop()
 report={'checks_passed':len(checks),'pairing_admission_cases':81,'compatible_code_pairs':41,
  'repeated_synthetic_sessions_per_compatible_pair':3,'elapsed_seconds':time.monotonic()-start,
  'test_type':'Synthetic raw packet protocol, two independent desktop processes',

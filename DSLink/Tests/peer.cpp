@@ -28,6 +28,8 @@ int main(int argc,char **argv){
         else if(command=="IN"){in>>arg;auto b=unhex(arg);ok=p.receive(b.data(),b.size());}
         else if(command=="POP"){Received r;ok=p.pop(r);if(ok)payload=std::move(r.data);}
         else if(command=="DISC")p.disconnect();
+        else if(command=="ABANDON")ok=p.abandonAfterRadioOff();
+        else if(command=="LOCAL"){in>>value>>arg;auto b=unhex(arg);ok=localFrame(b.data(),b.size(),value);}
         else if(command=="RECONNECT"){in>>value;ok=p.reconnect(nonce(value));}
         else if(command=="CLOSE")p.close();
         else if(command!="STATUS"&&command!="DRAIN"&&command!="RETRANSMIT")return 3;
