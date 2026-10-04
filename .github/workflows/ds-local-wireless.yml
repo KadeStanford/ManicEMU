@@ -57,3 +57,24 @@ jobs:
           path: |
             DSLink/build/*.framework
             DSLink/build/build-manifest.json
+  windows-engine:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-python git
+      - name: Build reset-capable desktop engine for private local testing
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 --branch v1.3.1 https://github.com/JesseTG/melonds-ds.git ds-windows-source
+          python DSLink/scripts/patch_source.py ds-windows-source
+          cmake -S ds-windows-source -B ds-windows-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DENABLE_JIT=OFF -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_LTO_RELEASE=OFF -DBUILD_AS_SHARED_LIBRARY=ON
+          cmake --build ds-windows-build --parallel 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DS-Windows-public-source-engine
+          path: ds-windows-build/src/libretro/melondsds_libretro.dll

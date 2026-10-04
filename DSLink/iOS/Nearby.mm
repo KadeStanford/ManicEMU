@@ -16,7 +16,7 @@ static NSString *const Service=@"manic-ds";
 static NSString *const WireVersion=@"ds131-mds1";
 static std::mutex lock;
 static struct {
-    std::unique_ptr<Protocol> protocol;
+    std::unique_ptr<manicds::Protocol> protocol;
     MDSCore core{};
     retro_netpacket_callback net{};
     char code[4]{};
@@ -55,6 +55,7 @@ static NSString *titleName(NSString *code){
 -(void)radio:(BOOL)on generation:(uint64_t)generation;
 -(void)prepared:(uint64_t)generation;
 -(void)drain;
+-(void)drainWithRetransmit:(BOOL)repeat;
 -(void)cleanup;
 -(void)warning:(NSString*)message generation:(uint64_t)generation;
 @end
@@ -189,7 +190,7 @@ void MDS_gameUnloading(){
     NSMutableDictionary<MCPeerID*,NSDictionary*> *_peers;
     NSDictionary *_meta,*_partnerMeta;NSString *_runtime,*_approvedRuntime;MCPeerID *_approvedPeer;
     UIAlertController *_dialog,*_notice;NSTimer *_timer;uint64_t _generation;
-    BOOL _inviting,_prepared;CFTimeInterval _parkedAt,_lastResend;
+    BOOL _inviting,_prepared;CFTimeInterval _parkedAt,_offAt,_lastResend;
     dispatch_queue_t _sendQueue;
 }
 +(instancetype)shared{static MDSNearby *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
@@ -237,30 +238,37 @@ void MDS_gameUnloading(){
     NSData *context=[NSJSONSerialization dataWithJSONObject:_meta options:0 error:nil];[_browser invitePeer:peer toSession:self.session withContext:context timeout:20];
 }
 -(void)drain{
+    [self drainWithRetransmit:NO];
+}
+-(void)drainWithRetransmit:(BOOL)repeat{
     MCSession *session=self.session;MCPeerID *peer=self.partner;if(!session||!peer)return;
-    std::vector<Bytes> frames;uint64_t generation;
-    {std::lock_guard<std::mutex> guard(lock);if(!g.protocol)return;frames=g.protocol->takeWire();generation=g.epoch;}
-    if(frames.empty())return;
+    uint64_t generation=epoch.load();
     dispatch_async(_sendQueue,^{
         if(generation!=epoch.load()||session!=self.session)return;
+        std::vector<Bytes> frames;
+        // Both dequeue and submission run on this one queue. Core, delegate and
+        // timer callers cannot submit a later sequence ahead of an earlier one.
+        {std::lock_guard<std::mutex> guard(lock);if(!g.protocol||generation!=g.epoch)return;
+            frames=g.protocol->takeWire();if(repeat){auto retries=g.protocol->retransmit();frames.insert(frames.end(),retries.begin(),retries.end());}}
         for(const auto &frame:frames){NSData *data=[NSData dataWithBytes:frame.data() length:frame.size()];NSError *error=nil;
             if(![session sendData:data toPeers:@[peer] withMode:MCSessionSendDataReliable error:&error]){std::lock_guard<std::mutex> guard(lock);if(generation==g.epoch&&g.protocol)g.protocol->disconnect();break;}
         }
     });
 }
 -(void)tick:(NSTimer*)timer{
-    (void)timer;Phase phase=Phase::Ready;bool settled=false,endedReady=false;std::vector<Bytes> repeat;
+    (void)timer;Phase phase=Phase::Ready;bool settled=false,endedReady=false,repeat=false;
     {std::lock_guard<std::mutex> guard(lock);if(g.protocol){phase=g.protocol->phase();settled=g.protocol->settled();endedReady=phase==Phase::Ended&&!g.started&&g.finishSaved;
         if((phase==Phase::Interrupted||phase==Phase::Failed)&&!g.radio)g.protocol->abandonAfterRadioOff();
         if(phase==Phase::Parked&&settled){if(!_parkedAt)_parkedAt=CACurrentMediaTime();if(CACurrentMediaTime()-_parkedAt>=5)g.protocol->close();}else _parkedAt=0;
-        if(CACurrentMediaTime()-_lastResend>=0.5&&phase!=Phase::Interrupted&&phase!=Phase::Failed&&phase!=Phase::Ended){repeat=g.protocol->retransmit();_lastResend=CACurrentMediaTime();}}}
-    for(const auto &frame:repeat){MCSession *session=self.session;MCPeerID *peer=self.partner;if(session&&peer)[session sendData:[NSData dataWithBytes:frame.data() length:frame.size()] toPeers:@[peer] withMode:MCSessionSendDataReliable error:nil];}
-    [self drain];
+        // A missing peer fence cannot retain an exited room indefinitely.
+        if(!g.radio){if(!_offAt)_offAt=CACurrentMediaTime();if(CACurrentMediaTime()-_offAt>=20&&phase!=Phase::Ended){g.protocol->disconnect();g.protocol->abandonAfterRadioOff();}}else _offAt=0;
+        if(CACurrentMediaTime()-_lastResend>=0.5&&phase!=Phase::Interrupted&&phase!=Phase::Failed&&phase!=Phase::Ended){repeat=true;_lastResend=CACurrentMediaTime();}}}
+    [self drainWithRetransmit:repeat];
     if(endedReady){
         // A bounded radio-off park ends with bilateral CLOSE/ACK fences. The
         // next radio start creates a fresh room nonce; only the same approved
         // runtime may silently rejoin. Discovery resumes for other peers.
-        [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_inviting=NO;_parkedAt=0;_prepared=NO;_meta=nil;
+        [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_inviting=NO;_parkedAt=_offAt=0;_prepared=NO;_meta=nil;
         {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.prepared=g.requested=g.failedPrepare=g.intent=g.finishSaved=false;g.nonce=newNonce();}
         [_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
     }
@@ -273,7 +281,7 @@ void MDS_gameUnloading(){
 }
 -(void)cleanup{
     [_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];_advertiser=nil;_browser=nil;
-    [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_meta=nil;_peers=nil;_prepared=_inviting=NO;_parkedAt=0;
+    [self.session disconnect];self.session=nil;self.partner=nil;_partnerMeta=nil;_meta=nil;_peers=nil;_prepared=_inviting=NO;_parkedAt=_offAt=0;
     [self dismiss];if(_notice.presentingViewController)[_notice dismissViewControllerAnimated:NO completion:nil];_notice=nil;_approvedPeer=nil;_approvedRuntime=nil;
 }
 -(void)background:(NSNotification*)notification{
@@ -302,7 +310,7 @@ void MDS_gameUnloading(){
     dispatch_async(dispatch_get_main_queue(),^{if(session!=self.session||![peer isEqual:self.partner])return;
         if(state==MCSessionStateConnected){Nonce other;NSData *code=[self->_partnerMeta[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
             if(!readNonce(self->_partnerMeta[@"nonce"],other)||code.length!=4)return;
-            {std::lock_guard<std::mutex> guard(lock);if(!g.prepared||g.protocol)return;g.finishSaved=false;g.protocol=std::make_unique<Protocol>(g.nonce,g.code,g.revision);g.protocol->radio(g.radio);if(!g.protocol->bind(other,(const char*)code.bytes,uint8_t([self->_partnerMeta[@"rev"] intValue]))){g.protocol.reset();return;}}
+            {std::lock_guard<std::mutex> guard(lock);if(!g.prepared||g.protocol)return;g.finishSaved=false;g.protocol=std::make_unique<manicds::Protocol>(g.nonce,g.code,g.revision);g.protocol->radio(g.radio);if(!g.protocol->bind(other,(const char*)code.bytes,uint8_t([self->_partnerMeta[@"rev"] intValue]))){g.protocol.reset();return;}}
             self->_approvedPeer=peer;self->_approvedRuntime=self->_partnerMeta[@"runtime"];self->_inviting=NO;[self dismiss];[self->_advertiser stopAdvertisingPeer];[self->_browser stopBrowsingForPeers];[self drain];
         }else if(state==MCSessionStateNotConnected){
             {std::lock_guard<std::mutex> guard(lock);if(g.protocol)g.protocol->disconnect();}
