@@ -35,6 +35,9 @@ root=pathlib.Path(sys.argv[1]);faults=list(root.glob('fault-*.bin'));assert len(
 values=struct.unpack('<39Q',faults[0].read_bytes())
 assert values[0]==0x4d414e4943464c54 and values[1]==1 and values[2]==11 and values[5] and values[6] and values[7]
 images=faults[0].with_suffix('.images').read_text();assert 'RecorderSelfTest' in images
-report={'signal_verified':11,'native_pc_lr_sp_recorded':True,'loaded_image_ranges_recorded':True,'device_framework_separate_from_self_test':True}
+stack=faults[0].with_suffix('.stack').read_bytes()
+assert 528<=len(stack)<=16400 and (len(stack)-16)%512==0
+assert struct.unpack_from('<2Q',stack)==(values[7],values[8])
+report={'signal_verified':11,'native_pc_lr_sp_recorded':True,'loaded_image_ranges_recorded':True,'bounded_native_stack_recorded':True,'device_framework_separate_from_self_test':True}
 (root/'self-test.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
 PY
