@@ -7,7 +7,7 @@
 #import "../iOS/ManicAirPlaySplit.m"
 
 static NSString *lastLayout;
-static unsigned loads,stops,ends,touches,releases;
+static unsigned loads,stops,ends,touches,releases,storedConfigCalls;
 static CGPoint touchPoint;
 float cocoa_screen_get_native_scale(void){return UIScreen.mainScreen.nativeScale;}
 const char *video_driver_get_ident(void){return "vulkan";}
@@ -23,6 +23,7 @@ static void check(NSString *key,BOOL passed);
 - (void)sendTouchEventX:(CGFloat)x y:(CGFloat)y;
 - (void)releaseTouchEvent;
 - (void)updateRunningCoreConfigs:(NSDictionary *)configs flush:(BOOL)flush;
+- (void)updateCoreConfig:(NSString *)core configs:(NSDictionary *)configs reload:(BOOL)reload;
 @end
 @implementation LibretroCore
 + (instancetype)sharedInstance {static id v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
@@ -43,6 +44,7 @@ static void check(NSString *key,BOOL passed);
 - (void)sendTouchEventX:(CGFloat)x y:(CGFloat)y {touches++;touchPoint=CGPointMake(x,y);}
 - (void)releaseTouchEvent {releases++;}
 - (void)updateRunningCoreConfigs:(NSDictionary *)configs flush:(BOOL)flush {}
+- (void)updateCoreConfig:(NSString *)core configs:(NSDictionary *)configs reload:(BOOL)reload {storedConfigCalls++;}
 @end
 @interface TestSourceDrawable : NSObject
 @property(strong) id<MTLTexture> texture;
@@ -242,6 +244,13 @@ static void gpu(void) {
         check(@"producer_geometry_preserves_requested_composite_pixels",CGSizeEqualToSize(findLayer(vc.view.layer).drawableSize,CGSizeMake(1024,1536))&&
             fabs(vc.view.bounds.size.width*cocoa_screen_get_native_scale()-1024)<0.001&&fabs(vc.view.bounds.size.height*cocoa_screen_get_native_scale()-1536)<0.001);
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
+        [core updateCoreConfig:@"Azahar" configs:@{@"citra_resolution_factor":@"3"} reload:NO];
+        [core set3DSCustomLayout:@"0,0,400,240,0,0,0,0,400,240"];
+        check(@"startup_resolution_dict_preserves_original_call",storedConfigCalls==1);
+        check(@"stored_resolution_reaches_producer_before_live_setting_change",CGSizeEqualToSize(m.plan.source.drawableSize,CGSizeMake(1200,1440)));
+        [core updateCoreConfig:@"DeSmuME" configs:@{@"desmume_internal_resolution":@"512x384"} reload:NO];
+        [core setNDSCustomLayout:@"0,0,256,192,0,0,0,0,256,192"];
+        check(@"stored_ds_resolution_keeps_independent_factor",CGSizeEqualToSize(m.plan.source.drawableSize,CGSizeMake(512,768))&&m.last3DSResolutionFactor==3);
         for(NSUInteger factor=1;factor<=4;factor*=2) {
             [core set3DSCustomLayout:@"0,0,400,240,0,0,0,0,400,240"];
             [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@(factor).stringValue} flush:NO];
@@ -252,6 +261,7 @@ static void gpu(void) {
                 fabs(vc.view.subviews.firstObject.bounds.size.height*cocoa_screen_get_native_scale()-480*factor)<0.001);
         }
         [core updateRunningCoreConfigs:@{@"citra_resolution_factor":@"1"} flush:NO];
+        [core updateRunningCoreConfigs:@{@"desmume_internal_resolution":@"256x192"} flush:NO];
         [core setNDSCustomLayout:@"0,0,800,600,0,0,0,0,800,600"];
         UIView *touchArea=[[TestTouchInputView alloc] initWithFrame:CGRectMake(30,350,300,180)];
         [root.view addSubview:touchArea];[m refresh];

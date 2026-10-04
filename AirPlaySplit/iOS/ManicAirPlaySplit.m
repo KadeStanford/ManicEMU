@@ -17,6 +17,7 @@ static void (*originalNDS)(id,SEL,id);
 static void (*original3DS)(id,SEL,id);
 static void (*originalTouch)(id,SEL,CGFloat,CGFloat);
 static void (*originalConfigs)(id,SEL,id,BOOL);
+static void (*originalStoredConfigs)(id,SEL,id,id,BOOL);
 static void (*originalEnd)(id,SEL);
 static id (*originalDrawable)(id,SEL);
 static id (*originalLayerDrawable)(id,SEL);
@@ -136,6 +137,7 @@ static void logPerformance(MASPlan *p) {
 @property(copy) NSString *phoneLayout,*requestedLayout;
 @property(copy) NSString *appliedLayout;
 @property NSUInteger resolutionFactor;
+@property NSUInteger last3DSResolutionFactor,lastDSResolutionFactor;
 @property CGRect phoneRegion;
 @property CGSize phoneBounds;
 @property BOOL dual,threeDS,swapped,disabled;
@@ -260,6 +262,7 @@ static NSString *effectiveLayout(MASManager *m) {
     NSAssert(NSThread.isMainThread,@"Layout must run on the UI thread");
     NSString *previous=self.requestedLayout;
     self.threeDS=threeDS; self.dual=layout!=nil; self.requestedLayout=layout;
+    self.resolutionFactor=MAX(1,threeDS?self.last3DSResolutionFactor:self.lastDSResolutionFactor);
     NSArray *parts=[layout componentsSeparatedByString:@","];
     if(parts.count!=10) {self.dual=NO;[self removeSurfaces];return;}
     CGFloat v[10];for(int i=0;i<10;i++) {v[i]=[parts[i] doubleValue];if(!isfinite(v[i])){self.dual=NO;[self removeSurfaces];return;}}
@@ -359,8 +362,10 @@ static NSString *effectiveLayout(MASManager *m) {
         (driverNativeScale?driverNativeScale():UIScreen.mainScreen.nativeScale);
     if(!isfinite(renderScale)||renderScale<=0)renderScale=UIScreen.mainScreen.scale?:1;
     CGSize producerSize=CGSizeMake(composite.width/renderScale,composite.height/renderScale);
-    if(!CGSizeEqualToSize(view.bounds.size,producerSize))view.frame=(CGRect){CGPointZero,producerSize};
-    [view setNeedsLayout];[view layoutIfNeeded];
+    if(!CGSizeEqualToSize(view.bounds.size,producerSize)){
+        view.frame=(CGRect){CGPointZero,producerSize};[view setNeedsLayout];
+    }
+    [view layoutIfNeeded];
     self.lastProducerBounds=view.bounds;
     if(!CGSizeEqualToSize(source.drawableSize,composite))source.drawableSize=composite;
     CGSize bounds=self.phoneParent.bounds.size;
@@ -423,14 +428,23 @@ static void masLayout(id self,SEL cmd,id layout) {
     onMain(^{MASManager *m=MASManager.shared;m.core=self;[m layout:layout threeDS:threeDS];if(m.plan)effective=effectiveLayout(m);});
     (threeDS?original3DS:originalNDS)(self,cmd,effective);
 }
-static void masConfigs(id self,SEL cmd,NSDictionary *configs,BOOL flush) {
-    originalConfigs(self,cmd,configs,flush);
+static void observeResolution(NSDictionary *configs) {
     NSString *value=configs[@"citra_resolution_factor"];
+    BOOL threeDS=value!=nil;
     if(!value&&configs[@"desmume_internal_resolution"]){
         NSArray *size=[configs[@"desmume_internal_resolution"] componentsSeparatedByString:@"x"];
         if(size.count==2)value=[NSString stringWithFormat:@"%ld",MAX(1,[size[0] integerValue]/256)];
     }
-    if(value)onMain(^{MASManager *m=MASManager.shared;m.resolutionFactor=MAX(1,MIN(10,value.integerValue));[m refresh];});
+    if(value)onMain(^{MASManager *m=MASManager.shared;NSUInteger factor=MAX(1,MIN(10,value.integerValue));
+        if(threeDS)m.last3DSResolutionFactor=factor;else m.lastDSResolutionFactor=factor;
+        if(m.threeDS==threeDS){m.resolutionFactor=factor;[m refresh];}
+    });
+}
+static void masConfigs(id self,SEL cmd,NSDictionary *configs,BOOL flush) {
+    originalConfigs(self,cmd,configs,flush);observeResolution(configs);
+}
+static void masStoredConfigs(id self,SEL cmd,id coreName,NSDictionary *configs,BOOL reload) {
+    originalStoredConfigs(self,cmd,coreName,configs,reload);observeResolution(configs);
 }
 static void masTouch(id self,SEL cmd,CGFloat x,CGFloat y) {
     MASManager *m=MASManager.shared;
@@ -709,6 +723,7 @@ static void install(void) {
     original3DS=(void *)replace(core,@"set3DSCustomLayout:",(IMP)masLayout,3);
     originalTouch=(void *)replace(core,@"sendTouchEventX:y:",(IMP)masTouch,4);
     originalConfigs=(void *)replace(core,@"updateRunningCoreConfigs:flush:",(IMP)masConfigs,4);
+    originalStoredConfigs=(void *)replace(core,@"updateCoreConfig:configs:reload:",(IMP)masStoredConfigs,5);
     originalDrawable=(void *)replace(context,@"nextDrawable",(IMP)masDrawable,2);
     originalEnd=(void *)replace(context,@"end",(IMP)masEnd,2);
     originalLayerDrawable=(void *)replace(CAMetalLayer.class,@"nextDrawable",(IMP)masLayerDrawable,2);
