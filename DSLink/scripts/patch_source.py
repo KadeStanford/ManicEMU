@@ -54,8 +54,9 @@ bool MpState::IsReady() const noexcept {''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
             '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 2; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
-    if (!out || !MelonDsDs::Core.Console) return false;
-    std::memcpy(out, MelonDsDs::Core.Console->Wifi.GetMAC(), 6);
+    const auto* console = MelonDsDs::Core.GetConsole();
+    if (!out || !console) return false;
+    std::memcpy(out, console->Wifi.GetMAC(), 6);
     return true;
 }
 

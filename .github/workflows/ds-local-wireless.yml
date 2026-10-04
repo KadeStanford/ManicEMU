@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ds-local-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   desktop-protocol:
     runs-on: ubuntu-latest
