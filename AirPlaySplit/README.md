@@ -3,9 +3,10 @@
 This optional injected framework uses the original Manic `LibretroCore` and Metal
 `Context` renderer. It does not replace the app or any existing emulator framework.
 When Manic moves its game view to an external screen, the core renders both DS or
-3DS screens into one canonical frame. A shared GPU snapshot feeds independent
-phone and TV crop queues. Each queue keeps only the newest completed frame, so a
-waiting TV drawable cannot stall the phone crop. The phone's **Swap
+3DS screens into one canonical frame. The original producer visibly displays the
+phone crop at its native render dimensions, and a bounded GPU snapshot feeds the
+TV crop queue. The queue keeps only the newest completed frame, so a waiting TV
+drawable cannot stall the phone source. The phone's **Swap
 screens** button reverses the outputs; when the bottom screen is on TV, the phone
 surface acts as its touchpad.
 
@@ -35,7 +36,7 @@ once per second: source drawable wait, copy encoding/completion time, sink
 drawable wait, captures/drops, allocations, in-flight snapshots and presentations.
 It contains no game paths, save contents or plugin payloads. The R3 pacing repair
 keeps the original producer view on the phone screen while the independent crop
-sink remains external. The source is clipped without changing its bounds;
+sink remains external. Earlier R7 used a clipped 1x1 producer host;
 disconnect/reset restore ownership only if the source is still in our host.
 The shipped source passed 58 checks, including producer screen assignment,
 render-dimension preservation and disconnect/reconnect ownership. Physical
@@ -65,3 +66,25 @@ drawable waits and capture-to-sink-submit frame ages. These ages measure the
 sender pipeline, not AirPlay encoding, network or receiver latency. No screenshots,
 game paths, input history, keys or save contents are recorded. Physical source
 dimensions, quality and latency still require a coordinated device test.
+
+The next candidate corrects the R7 producer host after a physical report that
+both wired and wireless external output froze images while audio and UI stayed
+responsive. The producer now occupies the real phone skin slot: its native
+composite bounds stay intact, and a UIKit transform shows the intended top or
+bottom crop. It is not covered by a redundant phone snapshot sink. Touch input
+still uses the original skin and the completed source viewport. Disconnect
+restores source ownership, dimensions and transform. Foreground and scene events
+reconcile existing windows, and starting a game while casting remains active can
+recover the existing phone play controller and touchscreen slot.
+
+Upstream [MoltenVK's native presentation path](https://github.com/KhronosGroup/MoltenVK/blob/main/MoltenVK/MoltenVK/GPUObjects/MVKImage.mm)
+makes images reusable from `addPresentedHandler`; its Simulator path completes
+that work immediately. Thus earlier Simulator crops did not establish that an
+occluded iPhone source could continue presenting. Source texture references are
+now captured before presentation instead of reading `drawable.texture` afterward.
+New numeric diagnostics include native source presentation callback count,
+visible producer area and completed direct-phone captures. Simulator tests cover
+the visible phone crop, lower portrait placement, native dimensions, forbidden
+post-present texture lookup, blocked TV, foreground recovery and already-connected
+game start. They still do not prove physical presentation callbacks or receiver
+latency. A focused iPhone wired/wireless check remains required.

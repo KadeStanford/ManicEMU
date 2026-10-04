@@ -48,8 +48,16 @@ static void check(NSString *key,BOOL passed);
 @end
 @interface TestSourceDrawable : NSObject
 @property(strong) id<MTLTexture> texture;
+@property BOOL textureUnavailableAfterPresent;
+@property unsigned forbiddenTextureReads;
 @end
-@implementation TestSourceDrawable @end
+@implementation TestSourceDrawable
+@synthesize texture=_texture;
+- (id<MTLTexture>)texture {
+    if(self.textureUnavailableAfterPresent){self.forbiddenTextureReads++;return nil;}
+    return _texture;
+}
+@end
 @interface Context : NSObject {
     CAMetalLayer *_layer;
     id<CAMetalDrawable> _drawable;
@@ -112,13 +120,14 @@ static void presentWithoutContext(CAMetalLayer *layer) {
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
 static void slowTVCheck(MASManager *manager,dispatch_block_t completion) {
-    MASPlan *plan=manager.plan;unsigned phoneBefore=plan.phoneSink.presentations,tvBefore=plan.tvSink.presentations;
+    MASPlan *plan=manager.plan;unsigned phoneBefore=plan.directPhoneCaptures,tvBefore=plan.tvSink.presentations;
     dispatch_semaphore_t entered=dispatch_semaphore_create(0),resume=dispatch_semaphore_create(0);
     dispatch_async(plan.tvSink.queue,^{dispatch_semaphore_signal(entered);dispatch_semaphore_wait(resume,DISPATCH_TIME_FOREVER);});
     dispatch_semaphore_wait(entered,DISPATCH_TIME_FOREVER);
     for(unsigned i=0;i<3;i++)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,i*NSEC_PER_SEC/10),dispatch_get_main_queue(),^{presentWithoutContext(plan.source);});
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
-        check(@"blocked_tv_does_not_stall_phone_crop",plan.phoneSink.presentations>=phoneBefore+2&&plan.tvSink.presentations==tvBefore);
+        check(@"blocked_tv_does_not_stall_native_phone_crop",plan.directPhoneCaptures>=phoneBefore+2&&plan.tvSink.presentations==tvBefore);
+        check(@"direct_phone_does_not_acquire_redundant_occluded_sink",plan.phoneSink.presentations==0&&plan.phoneSink.commandQueue==nil);
         check(@"blocked_tv_keeps_newest_completed_capture_only",plan.tvSink.pending.sequence==plan.sequence&&plan.tvSink.superseded>=2);
         check(@"independent_sinks_keep_shared_capture_pool_bounded",plan.peakInflight<=3&&plan.inflight<=3);
         dispatch_semaphore_signal(resume);
@@ -241,6 +250,9 @@ static void gpu(void) {
         MASManager *m=MASManager.shared;
         check(@"external_connection_creates_two_live_targets",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1);
         check(@"producer_stays_on_phone_screen_while_tv_sink_is_external",vc.view.window==self.window&&m.externalSurface.window==self.external&&vc.view.superview==m.producerHost);
+        check(@"native_producer_has_visible_phone_crop_not_clipped_1x1_host",m.producerHost.bounds.size.width>100&&m.producerHost.bounds.size.height>100&&m.plan.producerVisibleArea>10000);
+        check(@"native_producer_stays_above_snapshot_surface_for_presented_callbacks",
+            [root.view.subviews indexOfObject:m.producerHost]>[root.view.subviews indexOfObject:m.phoneSurface]);
         check(@"producer_geometry_preserves_requested_composite_pixels",CGSizeEqualToSize(findLayer(vc.view.layer).drawableSize,CGSizeMake(1024,1536))&&
             fabs(vc.view.bounds.size.width*cocoa_screen_get_native_scale()-1024)<0.001&&fabs(vc.view.bounds.size.height*cocoa_screen_get_native_scale()-1536)<0.001);
         check(@"single_screen_setting_keeps_both_core_screens",[lastLayout isEqual:canonicalScaled(NO,4)]);
@@ -267,6 +279,14 @@ static void gpu(void) {
         [root.view addSubview:touchArea];[m refresh];
         touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
         check(@"skin_and_rotation_changes_follow_live_touch_region",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
+        touchArea.frame=CGRectMake(40,CGRectGetHeight(root.view.bounds)-200,260,180);[m refresh];
+        CGRect nativeBottom=CGRectMake(0,vc.view.bounds.size.height/2,vc.view.bounds.size.width,vc.view.bounds.size.height/2);
+        CGRect shown=[vc.view convertRect:nativeBottom toView:m.producerHost];
+        CGRect fitted=MASFit(CGSizeMake(256,192),m.producerHost.bounds.size);
+        check(@"lower_portrait_slot_keeps_native_producer_visible",m.plan.producerVisibleArea>10000&&CGRectEqualToRect(m.producerHost.frame,m.phoneSurface.frame));
+        check(@"phone_display_crops_native_bottom_without_changing_render_bounds",
+            fabs(shown.origin.x-fitted.origin.x)<0.001&&fabs(shown.origin.y-fitted.origin.y)<0.001&&
+            fabs(shown.size.width-fitted.size.width)<0.001&&fabs(shown.size.height-fitted.size.height)<0.001);
         CGRect portraitBounds=root.view.bounds;
         root.view.bounds=CGRectMake(0,0,900,400);
         UIView *mainSlot=[[GameView alloc] initWithFrame:CGRectMake(180,10,500,380)];
@@ -280,6 +300,19 @@ static void gpu(void) {
         Context *context=[Context new];id<MTLCommandBuffer> frame=[context prepare:m.plan.source];
         [context nextDrawable];[context end];
         check(@"renderer_hook_presents_both_live_drawables",masEncodedFrames==1&&frame.status==MTLCommandBufferStatusCompleted&&ends==1);
+        // The real-device fallback runs after presentation; Metal disallows a
+        // new drawable.texture lookup then. Model that restriction explicitly.
+        TestSourceDrawable *presented=[TestSourceDrawable new];
+        MTLTextureDescriptor *retainedDesc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:256 height:384 mipmapped:NO];
+        retainedDesc.usage=MTLTextureUsageRenderTarget|MTLTextureUsageShaderRead;
+        presented.texture=[m.plan.source.device newTextureWithDescriptor:retainedDesc];
+        id<MTLTexture> acquiredTexture=presented.texture;
+        presented.textureUnavailableAfterPresent=YES;
+        id<MTLCommandBuffer> nativeFallback=[[m.plan.source.device newCommandQueue] commandBuffer];
+        captureFrameTexture((id)presented,m.plan.source,nativeFallback,acquiredTexture);
+        [nativeFallback commit];[nativeFallback waitUntilCompleted];
+        check(@"device_presented_fallback_uses_texture_retained_before_present",
+            presented.forbiddenTextureReads==0&&nativeFallback.status==MTLCommandBufferStatusCompleted);
         m.liveViewport=CGRectMake(20,30,400,480);[m touch:CGPointMake(0.25,0.75)];
         check(@"touch_maps_to_ds_bottom",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-120)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-450)<0.001);
         [m swap];check(@"swap_does_not_reload_or_stop",m.plan.swapped&&loads==1&&stops==0);
@@ -293,12 +326,12 @@ static void gpu(void) {
         presentWithoutContext(m.plan.source);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         check(@"vulkan_style_presentation_reaches_both_outputs_without_context",masPresentedFrames>0&&ends==1&&!m.phoneSurface.hidden&&!m.externalSurface.hidden);
-        check(@"vulkan_style_outputs_have_separate_screen_pixels",masPresentedPhonePixel==0xFF00FF00&&masPresentedTVPixel==0xFFFF0000);
+        check(@"vulkan_native_phone_crop_and_tv_sink_have_separate_screen_pixels",masPresentedPhonePixel==0xFF00FF00&&masPresentedTVPixel==0xFFFF0000);
         unsigned firstPresent=masPresentedFrames;
         [m swap];presentWithoutContext(m.plan.source);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         check(@"vulkan_style_swap_keeps_presenting_without_context",masPresentedFrames>firstPresent&&ends==1&&loads==1&&stops==0);
-        check(@"vulkan_style_swap_reverses_actual_output_pixels",masPresentedPhonePixel==0xFFFF0000&&masPresentedTVPixel==0xFF00FF00);
+        check(@"vulkan_native_phone_crop_swap_reverses_actual_output_pixels",masPresentedPhonePixel==0xFFFF0000&&masPresentedTVPixel==0xFF00FF00);
         check(@"sink_drawable_acquisition_runs_off_emulation_thread",masSinkAcquisitionsOnMain==0);
         slowTVCheck(m,^{
         // Simulate a blocked external presentation queue. Matched producer
@@ -344,16 +377,30 @@ static void gpu(void) {
         [[NSJSONSerialization dataWithJSONObject:timed options:NSJSONWritingPrettyPrinted error:nil]
             writeToFile:[metricsDir stringByAppendingPathComponent:@"performance.json"] atomically:YES];
         dispatch_semaphore_signal(resume);
-        [root.view addSubview:vc.view];[m refresh];
+        self.external.hidden=YES;[root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_removes_producer_host_without_reparenting_host_phone_view",!m.producerHost&&vc.view.superview==root.view);
         check(@"disconnect_restores_original_producer_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
         check(@"disconnect_restores_original_framebuffer_mode",findLayer(vc.view.layer).framebufferOnly);
+        check(@"disconnect_restores_source_transform",CGAffineTransformIsIdentity(vc.view.transform));
+        self.external.hidden=NO;
         [self.external.rootViewController.view addSubview:vc.view];[m refresh];
         check(@"reconnect_recreates_split_without_reload",m.plan&&m.phoneSurface&&m.externalSurface&&loads==1&&stops==0);
         check(@"reconnect_keeps_producer_on_phone_again",vc.view.window==self.window&&m.externalTarget==self.external);
-        [root.view addSubview:vc.view];[m refresh];
+        self.external.hidden=YES;[root.view addSubview:vc.view];[m refresh];
         [core stop];check(@"stop_cleans_up_without_save_or_core_reload",stops==1&&loads==1&&!m.dual);
+        // Cast remains connected while a new game starts directly on external
+        // output. There was no prior phone-layout call in this session.
+        self.external.hidden=NO;
+        UIViewController *next=[core startWithCustomSaveDir:nil];
+        next.view.frame=CGRectMake(0,0,320,480);
+        [self.external.rootViewController.view addSubview:next.view];
+        [core setNDSCustomLayout:canonical(NO)];
+        [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+        [m refresh];
+        check(@"game_start_while_cast_remains_connected_recovers_phone_skin",m.plan&&m.phoneParent==root.view&&next.view.window==self.window);
+        check(@"foreground_restoration_keeps_native_producer_visible",m.plan.producerVisibleArea>10000&&m.externalTarget==self.external);
+        [core stop];self.external.hidden=YES;
         gpu();
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];

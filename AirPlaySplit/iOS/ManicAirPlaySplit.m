@@ -57,8 +57,12 @@ static unsigned masSinkAcquisitionsOnMain,masSnapshotsSkipped;
 @property(strong) NSMutableArray *freeSnapshots;
 @property(strong) MASSink *phoneSink,*tvSink;
 @property BOOL threeDS,swapped,originalFramebufferOnly;
+@property BOOL directPhone;
+@property unsigned directPhoneCaptures;
 @property unsigned sourceFrames,snapshots,dropped,allocations,inflight,peakInflight,presentations;
 @property unsigned sequence,sourceWidth,sourceHeight,viewportWidth,viewportHeight;
+@property unsigned sourcePresentedCallbacks;
+@property double producerVisibleArea;
 @property CGSize compositeSize,externalModeSize;
 @property double sourceWaitMax,copyEncodeMax,copyCompletionMax,sinkWaitMax,lastMetricTime;
 @end
@@ -80,6 +84,10 @@ static NSDictionary *performanceMetrics(MASPlan *p) {
         @"dropped":@(p.dropped),@"allocations":@(p.allocations),@"inflight":@(p.inflight),
         @"peak_inflight":@(p.peakInflight),@"presentations":@(p.presentations),
         @"source_drawable_wait_max_ms":@(p.sourceWaitMax*1000),
+        @"source_presented_callbacks":@(p.sourcePresentedCallbacks),
+        @"producer_visible_area_points":@(p.producerVisibleArea),
+        @"phone_displays_native_producer":@(p.directPhone),
+        @"phone_direct_completed_captures":@(p.directPhoneCaptures),
         @"copy_encode_max_ms":@(p.copyEncodeMax*1000),
         @"copy_completion_max_ms":@(p.copyCompletionMax*1000),
         @"sink_drawable_wait_max_ms":@(p.sinkWaitMax*1000),
@@ -131,6 +139,7 @@ static void logPerformance(MASPlan *p) {
 @property CGRect externalSourceFrame;
 @property CGRect originalProducerBounds,lastProducerBounds;
 @property UIViewAutoresizing originalProducerAutoresizing;
+@property CGAffineTransform originalProducerTransform;
 @property(strong) MASSurface *phoneSurface,*externalSurface;
 @property(strong) UIButton *swapButton;
 @property(strong) id core;
@@ -150,6 +159,7 @@ static void logPerformance(MASPlan *p) {
 - (void)reset;
 - (void)touch:(CGPoint)p;
 - (void)releaseTouch;
+- (void)sceneChanged:(NSNotification *)notification;
 @end
 
 static CAMetalLayer *findLayer(CALayer *layer) {
@@ -191,6 +201,27 @@ static NSString *canonicalScaled(BOOL threeDS,NSUInteger factor) {
     NSUInteger w=threeDS?400:256,h=threeDS?240:192,b=threeDS?320:256,x=threeDS?40:0;
     return [NSString stringWithFormat:@"0,0,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu",
             w*factor,h*factor,x*factor,h*factor,b*factor,h*factor,w*factor,h*2*factor];
+}
+static NSArray<UIWindow *> *displayWindows(void) {
+    NSMutableOrderedSet *windows=[NSMutableOrderedSet orderedSetWithArray:UIApplication.sharedApplication.windows];
+    for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+        if([scene isKindOfClass:UIWindowScene.class])
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+    return windows.array;
+}
+static UIView *phoneGameRoot(UIViewController *controller) {
+    if(!controller)return nil;
+    UIView *presented=phoneGameRoot(controller.presentedViewController);if(presented)return presented;
+    for(UIViewController *child in controller.children) {
+        UIView *found=phoneGameRoot(child);if(found)return found;
+    }
+    if([NSStringFromClass(controller.class) hasSuffix:@"PlayViewController"] &&
+       controller.isViewLoaded && !controller.view.hidden && !externalWindow(controller.view.window))return controller.view;
+#ifdef MAS_TESTING
+    // Synthetic frontend has a plain root controller with a real skin touch area.
+    if(controller.isViewLoaded&&findTouchArea(controller.view)&&!externalWindow(controller.view.window))return controller.view;
+#endif
+    return nil;
 }
 #ifdef MAS_TESTING
 static NSString *canonical(BOOL threeDS) {return canonicalScaled(threeDS,1);}
@@ -241,6 +272,7 @@ static NSString *effectiveLayout(MASManager *m) {
     BOOL hadSurfaces=self.phoneSurface!=nil;
     self.plan=nil;
     UIView *source=self.coreView;
+    if(old)source.transform=self.originalProducerTransform;
     if(source.superview==self.producerHost&&self.externalSourceParent) {
         [self.externalSourceParent addSubview:source];source.frame=self.externalSourceFrame;
     } else if(old&&CGRectEqualToRect(source.bounds,self.lastProducerBounds)) {
@@ -300,11 +332,28 @@ static NSString *effectiveLayout(MASManager *m) {
 - (void)swap {
     [self releaseTouch];self.swapped=!self.swapped;[self refresh];
 }
+- (void)sceneChanged:(NSNotification *)notification {
+    // Reconcile after frontend scene delegates finish their current main-thread
+    // reparenting work. No rendering thread waits for this notification handler.
+    dispatch_async(dispatch_get_main_queue(),^{[self refresh];});
+}
 - (void)refresh {
     logPerformance(self.plan);
     UIView *view=self.coreView;
     UIWindow *external=externalWindow(view.window)?view.window:
         (view.superview==self.producerHost?self.externalTarget:nil);
+    if(!external&&self.dual&&!self.disabled)for(UIWindow *candidate in displayWindows())
+        if(externalWindow(candidate)&&!candidate.hidden){external=candidate;break;}
+    if(self.dual&&!self.phoneParent.window)for(UIWindow *candidate in displayWindows()) {
+        if(externalWindow(candidate)||candidate.hidden)continue;
+        UIView *parent=phoneGameRoot(candidate.rootViewController);
+        UIView *touchArea=parent?findTouchArea(parent):nil;
+        if(!touchArea)continue;
+        self.phoneParent=parent;self.phoneBounds=parent.bounds.size;
+        self.phoneRegion=[touchArea convertRect:touchArea.bounds toView:parent];
+        self.phoneLayout=canonicalScaled(self.threeDS,self.resolutionFactor);
+        break;
+    }
     BOOL connected=externalWindow(external)&&!external.hidden;
 #ifndef MAS_TESTING
     connected=connected&&[UIScreen.screens containsObject:external.screen];
@@ -326,11 +375,13 @@ static NSString *effectiveLayout(MASManager *m) {
         // phone screen; only our independent crop sink remains on AirPlay.
         self.externalSourceParent=view.superview;self.externalSourceFrame=view.frame;
         self.originalProducerBounds=view.bounds;self.originalProducerAutoresizing=view.autoresizingMask;
+        self.originalProducerTransform=view.transform;
         self.externalTarget=external;
-        self.producerHost=[[UIView alloc] initWithFrame:CGRectMake(0,0,1,1)];
+        self.producerHost=[UIView new];
         self.producerHost.userInteractionEnabled=NO;self.producerHost.clipsToBounds=YES;
-        [self.phoneParent insertSubview:self.producerHost atIndex:0];
+        [self.phoneParent addSubview:self.producerHost];
         CGSize sourceSize=view.bounds.size;
+        view.transform=CGAffineTransformIdentity;
         [self.producerHost addSubview:view];view.frame=(CGRect){CGPointZero,sourceSize};
         view.autoresizingMask=UIViewAutoresizingNone;
     }
@@ -355,7 +406,7 @@ static NSString *effectiveLayout(MASManager *m) {
     CGSize composite=CGSizeMake([dimensions[8] doubleValue],[dimensions[9] doubleValue]);
     // Both original drivers derive their final viewport from this view's bounds.
     // Vulkan uses the cached cocoa native scale; Metal uses main-screen scale.
-    // Set the hidden producer's geometry to the real composite pixels, before
+    // Set the producer's geometry to the real composite pixels, before
     // either driver rasterizes. Upscaling its already-rendered snapshot is too late.
     const char *ident=driverIdent?driverIdent():NULL;
     CGFloat renderScale=(ident&&!strcmp(ident,"metal"))?UIScreen.mainScreen.scale:
@@ -363,7 +414,7 @@ static NSString *effectiveLayout(MASManager *m) {
     if(!isfinite(renderScale)||renderScale<=0)renderScale=UIScreen.mainScreen.scale?:1;
     CGSize producerSize=CGSizeMake(composite.width/renderScale,composite.height/renderScale);
     if(!CGSizeEqualToSize(view.bounds.size,producerSize)){
-        view.frame=(CGRect){CGPointZero,producerSize};[view setNeedsLayout];
+        view.bounds=(CGRect){CGPointZero,producerSize};[view setNeedsLayout];
     }
     [view layoutIfNeeded];
     self.lastProducerBounds=view.bounds;
@@ -379,20 +430,43 @@ static NSString *effectiveLayout(MASManager *m) {
         if(!CGRectIsEmpty(large))r=large;
     }
     self.phoneSurface.frame=CGRectIntersection(self.phoneParent.bounds,r);
+    // iPhone MoltenVK makes swapchain images reusable from the source drawable's
+    // presented callback; Simulator does not take that path. A clipped/occluded
+    // 1x1 producer can exhaust native presentation while audio and UI continue.
+    // Keep the real producer visible as the intended phone crop. Render bounds
+    // retain native pixels; only UIKit display geometry scales and crops them.
+    // The phone surface only supplies touch/letterboxing beneath the live source.
+    self.producerHost.frame=self.phoneSurface.frame;
+    CGRect crop=CGRectMake(0,self.swapped?0:0.5,1,0.5);
+    CGSize cropAspect=self.threeDS?CGSizeMake(self.swapped?400:320,240):CGSizeMake(256,192);
+    if(self.threeDS&&!self.swapped){crop.origin.x=0.1;crop.size.width=0.8;}
+    CGRect fit=MASFit(cropAspect,self.producerHost.bounds.size);
+    CGFloat scale=fit.size.width/(producerSize.width*crop.size.width);
+    if(!isfinite(scale)||scale<=0)scale=1;
+    view.transform=CGAffineTransformMakeScale(scale,scale);
+    view.center=CGPointMake(fit.origin.x+(0.5-crop.origin.x)*producerSize.width*scale,
+                            fit.origin.y+(0.5-crop.origin.y)*producerSize.height*scale);
+    [self.phoneParent bringSubviewToFront:self.producerHost];
     self.externalSurface.frame=external.bounds;
     self.swapButton.frame=CGRectMake(MAX(0,CGRectGetMaxX(self.phoneSurface.frame)-164),
                                      MAX(self.phoneParent.safeAreaInsets.top,CGRectGetMinY(self.phoneSurface.frame)-38),164,34);
     [self.swapButton setTitle:self.swapped?@"Swap Â· TV touchpad":@"Swap screens" forState:UIControlStateNormal];
     [self.phoneSurface setNeedsLayout];[self.externalSurface setNeedsLayout];
+    [self.phoneParent bringSubviewToFront:self.swapButton];
     MASPlan *old=self.plan;
-    if(old.source==source&&old.swapped==self.swapped&&old.threeDS==self.threeDS){old.compositeSize=composite;return;}
+    CGRect visible=[self.producerHost convertRect:fit toView:self.phoneParent.window];
+    visible=CGRectIntersection(visible,self.phoneParent.window.bounds);
+    double visibleArea=CGRectIsNull(visible)?0:visible.size.width*visible.size.height;
+    if(old.source==source&&old.swapped==self.swapped&&old.threeDS==self.threeDS){old.compositeSize=composite;old.producerVisibleArea=visibleArea;return;}
     MASPlan *p=[MASPlan new];p.source=source;p.phone=(CAMetalLayer *)self.phoneSurface.layer;
     p.external=(CAMetalLayer *)self.externalSurface.layer;p.threeDS=self.threeDS;p.swapped=self.swapped;
+    p.directPhone=YES;
     p.phoneSink=[MASSink new];p.phoneSink.phone=YES;p.phoneSink.layer=p.phone;
     p.phoneSink.queue=dispatch_queue_create("org.manicemu.airplay.phone",DISPATCH_QUEUE_SERIAL);
     p.tvSink=[MASSink new];p.tvSink.layer=p.external;
     p.tvSink.queue=dispatch_queue_create("org.manicemu.airplay.tv",DISPATCH_QUEUE_SERIAL);
     p.displayQueue=p.tvSink.queue;p.compositeSize=composite;p.externalModeSize=external.screen.currentMode.size;
+    p.producerVisibleArea=visibleArea;
     p.snapshotSlots=dispatch_semaphore_create(3);p.freeSnapshots=[NSMutableArray new];
     p.originalFramebufferOnly=old.source==source?old.originalFramebufferOnly:source.framebufferOnly;
     self.plan=p;
@@ -545,7 +619,7 @@ static void publishFrame(MASFrame *frame,MASSink *sink) {
         }}
     });
 }
-static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTLCommandBuffer> producer) {
+static void captureFrameTexture(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTLCommandBuffer> producer,id<MTLTexture> acquiredTexture) {
     MASPlan *plan=MASManager.shared.plan;
     if(plan.source!=layer)return;
     if(dispatch_semaphore_wait(plan.snapshotSlots,DISPATCH_TIME_NOW)!=0) {
@@ -557,7 +631,7 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
     }
     double copyStart=CACurrentMediaTime();
     @synchronized(plan){plan.snapshots++;plan.inflight++;plan.peakInflight=MAX(plan.peakInflight,plan.inflight);}
-    id<MTLTexture> source=drawable.texture,snapshot=nil;
+    id<MTLTexture> source=acquiredTexture?:drawable.texture,snapshot=nil;
     @synchronized(plan.freeSnapshots){snapshot=plan.freeSnapshots.lastObject;if(snapshot)[plan.freeSnapshots removeLastObject];}
     if(snapshot.width!=source.width||snapshot.height!=source.height||snapshot.pixelFormat!=source.pixelFormat) {
         MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat width:source.width height:source.height mipmapped:NO];
@@ -581,6 +655,17 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
     if(!blit){recycleSnapshot(plan,snapshot);return;}
     [blit copyFromTexture:source sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0)
               sourceSize:MTLSizeMake(source.width,source.height,1) toTexture:snapshot destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];
+#ifdef MAS_TESTING
+    // The phone now displays the native drawable itself. Read its selected crop
+    // center to validate source pixels together with the UIKit crop geometry.
+    id<MTLBuffer> nativePhonePixel=nil;
+    if(plan.directPhone) {
+        nativePhonePixel=[source.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
+        [blit copyFromTexture:source sourceSlice:0 sourceLevel:0
+            sourceOrigin:MTLOriginMake(vp.x+vp.width/2,vp.y+vp.height*(plan.swapped?1:3)/4,0)
+            sourceSize:MTLSizeMake(1,1,1) toBuffer:nativePhonePixel destinationOffset:0 destinationBytesPerRow:256 destinationBytesPerImage:256];
+    }
+#endif
     [blit endEncoding];
     @synchronized(plan){plan.copyEncodeMax=MAX(plan.copyEncodeMax,CACurrentMediaTime()-copyStart);}
     [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
@@ -590,11 +675,25 @@ static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTL
         if(finished.status!=MTLCommandBufferStatusCompleted){recycleSnapshot(plan,snapshot);return;}
         MASFrame *frame=[MASFrame new];frame.owner=plan;frame.texture=snapshot;
         frame.viewport=vp;frame.sequence=sequence;frame.capturedAt=copyStart;
-        publishFrame(frame,plan.phoneSink);publishFrame(frame,plan.tvSink);
+        if(plan.directPhone) {
+            @synchronized(plan){plan.directPhoneCaptures++;}
+            dispatch_async(dispatch_get_main_queue(),^{
+                MASManager *manager=MASManager.shared;
+                if(manager.plan!=plan)return;
+                manager.liveViewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
+                manager.phoneSurface.hidden=NO;
+#ifdef MAS_TESTING
+                masPresentedPhonePixel=*(uint32_t *)nativePhonePixel.contents;
+#endif
+            });
+        } else publishFrame(frame,plan.phoneSink);
+        publishFrame(frame,plan.tvSink);
     }];
     if(!producer)[buffer commit];
 }
-static void copyPresentedFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer) {captureFrame(drawable,layer,nil);}
+static void captureFrame(id<CAMetalDrawable> drawable,CAMetalLayer *layer,id<MTLCommandBuffer> producer) {
+    captureFrameTexture(drawable,layer,producer,nil);
+}
 static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
     CAMetalLayer *layer=objc_getAssociatedObject(drawable,sourceKey);
     if(!layer||!MASManager.shared.plan)return;
@@ -602,7 +701,9 @@ static void recordScheduledPresentation(id<CAMetalDrawable> drawable) {
     NSMutableArray *frames=buffer?objc_getAssociatedObject(buffer,framesKey):nil;
     if(!frames||layer!=MASManager.shared.plan.source||[objc_getAssociatedObject(drawable,encodedKey) boolValue])return;
     objc_setAssociatedObject(drawable,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    @synchronized(frames){[frames addObject:@{@"drawable":drawable,@"source":layer}];}
+    // Read the texture before present. iOS forbids retrieving drawable.texture
+    // after presentation; the saved texture remains retained through GPU copy.
+    @synchronized(frames){[frames addObject:@{@"drawable":drawable,@"source":layer,@"texture":drawable.texture}];}
 }
 static void masPresent(id self,SEL cmd) {recordScheduledPresentation(self);originalPresent(self,cmd);}
 static void masPresentAtTime(id self,SEL cmd,CFTimeInterval t) {recordScheduledPresentation(self);originalPresentAtTime(self,cmd,t);}
@@ -612,7 +713,8 @@ static void masScheduled(id self,SEL cmd,MTLCommandBufferHandler action) {
         NSMutableArray *frames=[NSMutableArray new];objc_setAssociatedObject(self,framesKey,frames,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [(id<MTLCommandBuffer>)self addCompletedHandler:^(id<MTLCommandBuffer> finished) {
             NSArray *pending=objc_getAssociatedObject(finished,framesKey);
-            if(finished.status==MTLCommandBufferStatusCompleted)for(NSDictionary *frame in pending)copyPresentedFrame(frame[@"drawable"],frame[@"source"]);
+            if(finished.status==MTLCommandBufferStatusCompleted)for(NSDictionary *frame in pending)
+                captureFrameTexture(frame[@"drawable"],frame[@"source"],nil,frame[@"texture"]);
             objc_setAssociatedObject(finished,framesKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }];
     }
@@ -649,10 +751,12 @@ static id masLayerDrawable(CAMetalLayer *layer,SEL cmd) {
         // Native presented callbacks cover renderers that present without a
         // scheduled command-buffer callback. This API is absent in Simulator.
         SEL selector=NSSelectorFromString(@"addPresentedHandler:");
+        id<MTLTexture> acquiredTexture=drawable.texture;
         if([drawable respondsToSelector:selector])((void(*)(id,SEL,void(^)(id<MTLDrawable>)))objc_msgSend)(drawable,selector,^(id<MTLDrawable> value) {
+            @synchronized(p){p.sourcePresentedCallbacks++;}
             if([objc_getAssociatedObject(value,encodedKey) boolValue])return;
             objc_setAssociatedObject(value,encodedKey,@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            copyPresentedFrame((id)value,layer);
+            captureFrameTexture((id)value,layer,nil,acquiredTexture);
         });
     }
     return drawable;
@@ -732,5 +836,8 @@ static void install(void) {
     driverIdent=(void *)dlsym(RTLD_DEFAULT,"video_driver_get_ident");
     MASManager *m=MASManager.shared;
     m.timer=[NSTimer scheduledTimerWithTimeInterval:0.2 target:m selector:@selector(refresh) userInfo:nil repeats:YES];
+    for(NSString *name in @[UIApplicationDidBecomeActiveNotification,UISceneDidActivateNotification,
+                           UISceneWillConnectNotification,UISceneDidDisconnectNotification])
+        [NSNotificationCenter.defaultCenter addObserver:m selector:@selector(sceneChanged:) name:name object:nil];
 }
 __attribute__((constructor)) static void boot(void) {dispatch_async(dispatch_get_main_queue(),^{install();});}
