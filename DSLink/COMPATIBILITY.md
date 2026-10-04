@@ -9,7 +9,8 @@ trade or persistence result. It establishes an unresolved phone regression.
 
 The desktop results below use the v0.2 production protocol/engine unless an
 earlier Platinum adapter is explicitly identified. The v0.3 pacing/discovery
-changes require fresh native and physical verification; older successful game
+changes and v0.4 cached nickname/prelink-wait follow-up require fresh native and
+physical verification; older successful game
 results do not establish that the revised candidate passes them.
 
 An actual Platinum CPUE revision 1 / CPUE revision 1 Union Room trade passed on

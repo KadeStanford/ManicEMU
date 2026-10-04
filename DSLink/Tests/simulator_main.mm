@@ -27,6 +27,35 @@ static void stopCore(){stops++;wrongThread|=NSThread.isMainThread;}
 static std::mutex peerLock;
 static std::unique_ptr<manicds::Protocol> other;
 static NSMutableDictionary *results;
+// Model the already-open main-thread Realm boundary. An attempted second open
+// fails, as a differently configured read-only Realm does in the real SDK.
+static unsigned realmOpens=0;
+static NSURL *cachedPath;
+@interface RLMRealmConfiguration:NSObject
+@property(strong) NSURL *fileURL;
++(id)defaultConfiguration;
+@end
+@implementation RLMRealmConfiguration
++(id)defaultConfiguration{return [self new];}
+@end
+@interface RLMScheduler:NSObject
++(id)dispatchQueue:(dispatch_queue_t)queue;
+@end
+@implementation RLMScheduler
++(id)dispatchQueue:(dispatch_queue_t)queue{(void)queue;return @"main scheduler";}
+@end
+@interface RLMRealm:NSObject
++(id)realmWithConfiguration:(id)configuration error:(NSError**)error;
+-(id)objectWithClassName:(NSString*)name forPrimaryKey:(id)key;
+@end
+@implementation RLMRealm
++(id)realmWithConfiguration:(id)configuration error:(NSError**)error{(void)configuration;(void)error;realmOpens++;return nil;}
+-(id)objectWithClassName:(NSString*)name forPrimaryKey:(id)key{
+    if(!NSThread.isMainThread||![name isEqual:@"Settings"]||![key isEqual:@"SettingsDefault"])return nil;
+    return @{@"extras":[NSJSONSerialization dataWithJSONObject:@{@"nickname":@"Existing Manic Player"} options:0 error:nil]};
+}
+@end
+static id testCachedRealm(id config,id scheduler){cachedPath=[config fileURL];return NSThread.isMainThread&&[scheduler isEqual:@"main scheduler"]?[RLMRealm new]:nil;}
 static void check(NSString *name,bool value){results[name]=@(value);if(!value)throw std::runtime_error(name.UTF8String);}
 static void waitUntil(std::function<bool()> condition){for(unsigned i=0;i<400;i++){if(condition())return;std::this_thread::sleep_for(std::chrono::milliseconds(5));}throw std::runtime_error("synthetic callback timeout");}
 @interface TestSession:MCSession
@@ -58,6 +87,14 @@ static void tests(){@autoreleasepool{
         check(@"Unicode name respects peer byte limit",[boundedPlayerName([@"👾" stringByPaddingToLength:100 withString:@"👾" startingAtIndex:0],nil) lengthOfBytesUsingEncoding:NSUTF8StringEncoding]<=63);
         NSData *extras=[NSJSONSerialization dataWithJSONObject:@{@"nickname":@"Player One",@"unrelated":@"synthetic sentinel"} options:0 error:nil];
         check(@"only existing nickname selected from settings extras",[nicknameFromExtras(extras) isEqual:@"Player One"]);
+        dispatch_sync(dispatch_get_main_queue(),^{
+            NSURL *url=[NSURL fileURLWithPath:@"/synthetic/Library/Realm/default.realm"];
+            check(@"cached nickname read avoids a second Realm open",[nicknameFromCachedRealm(url,testCachedRealm) isEqual:@"Existing Manic Player"]&&realmOpens==0&&[cachedPath isEqual:url]);
+            check(@"missing cached Realm boundary safely falls back",nicknameFromCachedRealm(url,nullptr)==nil&&realmOpens==0);
+        });
+        check(@"nickname lookup refuses the emulator thread",configuredNickname()==nil&&realmOpens==0);
+        auto idleBegin=std::chrono::steady_clock::now();MDS_waitForPackets(1000);
+        check(@"prelink receive wait yields without an existing protocol",std::chrono::steady_clock::now()-idleBegin>=std::chrono::microseconds(500));
         memset(testBattery,0x51,sizeof(testBattery));memset(testState,0x73,sizeof(testState));
         NSString *path=[[docs URLByAppendingPathComponent:@"synthetic.srm"] path];
         NSData *before=[NSData dataWithBytes:testBattery length:sizeof(testBattery)];[before writeToFile:path atomically:YES];

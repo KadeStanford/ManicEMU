@@ -1,6 +1,6 @@
 # Nintendo DS local wireless candidate work
 
-The v0.3 revision addresses the user-reported v0.2 HGSS phone slowdown and
+The v0.3/v0.4 revisions address the user-reported v0.2 HGSS phone slowdown and
 communication failure. It replaces CPU-clock receive spinning with a 25ms
 wall-clock deadline and bounded, packet-notified waits. The encrypted reliable
 transport batches up to 16 already queued frames without collection delay,
@@ -10,10 +10,14 @@ Both phones must use the revised candidate (`ds131-mds4`, native marker 3).
 Connection setup retains bounded early handshake data, waits for both Ready
 fences before advancing the game, resolves crossed invitations, and clears
 failed pending invitations. The peer label prefers Manic's existing configured
-nickname, read from its existing Realm on the main thread in read-only dynamic
-mode, with cache and format upgrades disabled. It falls back to the device name
+nickname. v0.4 first reads the already-open main-thread Realm through its
+exported cache lookup, without a second database open or configuration change.
+If no cache is available, it may read the existing file in read-only dynamic
+mode, with format upgrades disabled. It falls back to the device name
 available from iOS; no entitlement is added. The exact selectors exist in the
 R7 RealmSwift binary. Actual nickname behavior still needs phone verification.
+v0.4 also yields during native receive waits before a protocol has been paired,
+so waiting for initial discovery cannot fall back to a tight polling loop.
 
 `Documents/ManicDSDiagnostics/current.json` contains local frame/wait/queue
 counts, not cartridge, firmware, save contents, usernames or credentials. It is

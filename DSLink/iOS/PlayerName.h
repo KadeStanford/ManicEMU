@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <dlfcn.h>
 // These selectors belong to the app's already-loaded Realm framework. The
 // optional boundary is checked before use; no new framework or app build.
 @interface NSObject (MDSRealmNaming)
@@ -12,12 +13,26 @@
 -(void)setCache:(BOOL)value;
 -(void)setDisableFormatUpgrade:(BOOL)value;
 -(id)objectWithClassName:(NSString*)name forPrimaryKey:(id)key;
++(id)dispatchQueue:(dispatch_queue_t)queue;
 @end
+using MDSCachedRealm=id(*)(id,id);
 static NSString *nicknameFromExtras(NSData *extras){
     if(![extras isKindOfClass:NSData.class]||extras.length>1024*1024)return nil;
     id json=[NSJSONSerialization JSONObjectWithData:extras options:0 error:nil];
     id name=[json isKindOfClass:NSDictionary.class]?json[@"nickname"]:nil;
     return [name isKindOfClass:NSString.class]?name:nil;
+}
+static NSString *nicknameFromCachedRealm(NSURL *url,MDSCachedRealm cached){
+    Class configClass=NSClassFromString(@"RLMRealmConfiguration"),schedulerClass=NSClassFromString(@"RLMScheduler");
+    if(!cached||![configClass respondsToSelector:@selector(defaultConfiguration)]||![schedulerClass respondsToSelector:@selector(dispatchQueue:)])return nil;
+    id config=[configClass defaultConfiguration];if(![config respondsToSelector:@selector(setFileURL:)])return nil;
+    [config setFileURL:url];
+    // RLMGetCachedRealm performs a lookup for this scheduler without opening,
+    // migrating, writing or changing the app's existing Realm configuration.
+    id realm=cached(config,[schedulerClass dispatchQueue:nil]);
+    if(![realm respondsToSelector:@selector(objectWithClassName:forPrimaryKey:)])return nil;
+    id settings=[realm objectWithClassName:@"Settings" forPrimaryKey:@"SettingsDefault"];
+    return settings?nicknameFromExtras([settings valueForKey:@"extras"]):nil;
 }
 static NSString *configuredNickname(){
     if(!NSThread.isMainThread)return nil;
@@ -27,6 +42,8 @@ static NSString *configuredNickname(){
         NSURL *library=[NSFileManager.defaultManager URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
         NSURL *url=[[library URLByAppendingPathComponent:@"Realm" isDirectory:YES] URLByAppendingPathComponent:@"default.realm"];
         if(![NSFileManager.defaultManager fileExistsAtPath:url.path])return nil;
+        auto cached=reinterpret_cast<MDSCachedRealm>(dlsym(RTLD_DEFAULT,"RLMGetCachedRealm"));
+        if(cached){NSString *name=nicknameFromCachedRealm(url,cached);if(name.length)return name;}
         id config=[configClass defaultConfiguration];
         for(NSString *selector in @[@"setFileURL:",@"setReadOnly:",@"setDynamic:",@"setCache:",@"setDisableFormatUpgrade:"])
             if(![config respondsToSelector:NSSelectorFromString(selector)])return nil;

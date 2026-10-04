@@ -164,7 +164,7 @@ static void pollPackets(){
 void MDS_waitForPackets(uint32_t microseconds){
     if(!microseconds||microseconds>1000)return;
     auto begin=std::chrono::steady_clock::now();std::unique_lock<std::mutex> guard(lock);const auto generation=g.epoch;
-    packetsReady.wait_for(guard,std::chrono::microseconds(microseconds),[generation]{return g.epoch!=generation||!g.protocol||g.protocol->hasIncoming()||g.protocol->paused()||g.protocol->phase()==Phase::Ended;});
+    packetsReady.wait_for(guard,std::chrono::microseconds(microseconds),[generation]{return g.epoch!=generation||(g.protocol&&g.protocol->hasIncoming());});
     g.waits++;g.waitMilliseconds+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
 }
 void MDS_netpacket(const retro_netpacket_callback *cb){if(cb){std::lock_guard<std::mutex> guard(lock);g.net=*cb;}}
@@ -209,7 +209,7 @@ void MDS_afterFrame(double nativeMilliseconds){
     {std::lock_guard<std::mutex> guard(lock);generation=g.epoch;save=g.prepared&&g.protocol&&((++g.frames%60)==0);
         if(g.protocol&&nativeMilliseconds>0){g.nativeMilliseconds+=nativeMilliseconds;g.measuredFrames++;}
         if(g.protocol&&CACurrentMediaTime()-g.lastMetrics>=5){g.lastMetrics=CACurrentMediaTime();
-            metrics=@{@"format":@1,@"candidate":@"DS-v0.3",@"phase":@(int(g.protocol->phase())),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.protocol->sentCount()),@"received":@(g.protocol->receivedCount()),@"acknowledged":@(g.protocol->acknowledged()),@"pending":@(g.protocol->pendingCount()),@"duplicates":@(g.protocol->duplicateCount()),@"rejected":@(g.protocol->rejectedCount()),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970)};
+            metrics=@{@"format":@1,@"candidate":@"DS-v0.4",@"phase":@(int(g.protocol->phase())),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.protocol->sentCount()),@"received":@(g.protocol->receivedCount()),@"acknowledged":@(g.protocol->acknowledged()),@"pending":@(g.protocol->pendingCount()),@"duplicates":@(g.protocol->duplicateCount()),@"rejected":@(g.protocol->rejectedCount()),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970)};
         }
     }
     if(metrics){dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
