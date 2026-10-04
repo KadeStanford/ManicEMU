@@ -119,7 +119,11 @@ static void imageAdded(const struct mach_header *header,intptr_t slide) {
     for(uint32_t i=0;i<_dyld_image_count();i++)if(_dyld_get_image_header(i)==header){
         const char *path=_dyld_get_image_name(i),*slash=strrchr(path,'/');name=slash?slash+1:path;break;
     }
-    if(!strcmp(name,"azahar.libretro"))__atomic_store_n(&azaharTextBase,(uintptr_t)header,__ATOMIC_RELEASE);
+    if(!strcmp(name,"azahar.libretro")
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+        ||!strcmp(name,"game-probe-core.dylib")
+#endif
+        )__atomic_store_n(&azaharTextBase,(uintptr_t)header,__ATOMIC_RELEASE);
     char line[512];int n=snprintf(line,sizeof(line),"%llx %llx %s\n",
         (unsigned long long)(uintptr_t)header,(unsigned long long)textSize,name);
     if(n>0){write(imageFD,line,MIN((size_t)n,sizeof(line)-1));fsync(imageFD);}
@@ -148,7 +152,7 @@ __attribute__((constructor)) static void enableDiagnostic(void) {
     @autoreleasepool {
         NSString *docs=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSString *directory=[docs stringByAppendingPathComponent:@"ManicNativeDiagnostics"];
-#ifdef MANIC_NATIVE_RECORDER_SELF_TEST
+#if defined(MANIC_NATIVE_RECORDER_SELF_TEST) || defined(MANIC_NATIVE_RECORDER_HOST_PROBE)
         directory=@(getenv("MANIC_NATIVE_RECORDER_DIRECTORY"));
 #endif
         if(![[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil])return;

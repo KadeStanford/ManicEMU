@@ -1,1 +1,1 @@
-{"iteration":2,"purpose":"Native host comparison of Software, R4 Vulkan, R5 Vulkan and loader-off control; exact shared core hash guard"}
+{"iteration":3,"purpose":"Capture bounded own-process guest registers during the reproduced native Vulkan plugin hang"}

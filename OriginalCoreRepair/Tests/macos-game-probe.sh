@@ -48,7 +48,7 @@ xcrun lipo "$driver" -thin arm64 -output "$resource/moltenvk-probe.dylib"
 codesign --force --sign - "$resource/moltenvk-probe.dylib"
 codesign --force --sign - "$resource/game-probe-core.dylib"
 set +e
-MANIC_PROBE_RESOURCE_DIR="$resource" MANIC_PROBE_DATA_DIR="$data" \
+MANIC_PROBE_RESOURCE_DIR="$resource" MANIC_PROBE_DATA_DIR="$data" MANIC_NATIVE_RECORDER_DIRECTORY="$data/native-diagnostics" \
   python3 run_bounded.py 180 "$build/GameProbe"
 status=$?
 set -e
@@ -59,6 +59,9 @@ for name in ['game-probe.json','core-runtime.log','fatal-signal.bin']:
     p=data/name
     if p.exists():shutil.copyfile(p,build/('private-'+name))
 for p in data.glob('private-frame-*.png'):shutil.copyfile(p,build/p.name)
+for p in (data/'native-diagnostics').glob('*'):
+    if '.hang-' in p.name or p.suffix=='.images':
+        shutil.copyfile(p,build/('private-native-'+p.name))
 state=build/'private-game-probe.json'
 if state.exists():
     report=json.loads(state.read_text());report['native_process_exit_status']=status

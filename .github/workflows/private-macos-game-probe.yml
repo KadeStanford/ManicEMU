@@ -70,7 +70,7 @@ jobs:
           include="$(dirname "$(dirname "$header")")"
           extra=()
           if [[ "$PROBE_RENDERER" == Vulkan ]]; then extra=(-DMANIC_GAME_VULKAN=1); fi
-          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror -Wno-unused-parameter -DMANIC_GAME_MACOS=1 "${extra[@]}" -I "$include" -I OriginalCoreRepair/Tests/vendor OriginalCoreRepair/Tests/simulator_game_probe.m -framework AppKit -framework Foundation -framework CoreGraphics -o OriginalCoreRepair/Tests/build-probe/GameProbe
+          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror -Wno-unused-parameter -DMANIC_GAME_MACOS=1 -DMANIC_NATIVE_RECORDER_HOST_PROBE=1 "${extra[@]}" -I "$include" -I OriginalCoreRepair/Tests/vendor OriginalCoreRepair/Tests/simulator_game_probe.m OriginalCoreRepair/Diagnostics/ManicNativeFaultRecorder.m -framework AppKit -framework Foundation -framework CoreGraphics -o OriginalCoreRepair/Tests/build-probe/GameProbe
       - name: Fetch the hash-guarded original core for the Vulkan runtime test
         run: |
           curl --fail --location --retry 3 --silent --show-error \
@@ -124,6 +124,7 @@ jobs:
           root=pathlib.Path('OriginalCoreRepair/Tests/build-probe')
           records=[root/'private-core-runtime.log',root/'private-game-system.log',root/'private-game-probe.json',root/'private-fatal-signal.bin']
           records+=list(root.glob('private-frame-*.png'))
+          records+=list(root.glob('private-native-*'))
           existing=[p for p in records if p.exists()]
           if existing:
               archive=root/'private-runtime-evidence.zip'
@@ -157,5 +158,7 @@ jobs:
               p=pathlib.Path('OriginalCoreRepair/Tests/build-probe')/name
               p.unlink(missing_ok=True)
           for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-frame-*.png'):
+              p.unlink()
+          for p in pathlib.Path('OriginalCoreRepair/Tests/build-probe').glob('private-native-*'):
               p.unlink()
           PY
