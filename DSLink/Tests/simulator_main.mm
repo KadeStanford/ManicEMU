@@ -68,6 +68,13 @@ static void tests(){@autoreleasepool{
         bool checkpoint=false;for(NSURL *folder in backups)if([[NSData dataWithContentsOfURL:[folder URLByAppendingPathComponent:@"before.srm"]] isEqual:before]&&[NSData dataWithContentsOfURL:[folder URLByAppendingPathComponent:@"before.melonstate"]].length==64)checkpoint=true;
         check(@"verified local checkpoint contains independent battery and state",checkpoint);
         Nonce peerNonce=newNonce();other=std::make_unique<manicds::Protocol>(peerNonce,"CPUE",1);other->radio(true);other->bind(g.nonce,"ADAE",5);
+        dispatch_sync(dispatch_get_main_queue(),^{
+            MDSNearby *manager=[MDSNearby shared];[manager cleanup];[manager setValue:@(g.epoch) forKey:@"generation"];[manager setValue:@YES forKey:@"prepared"];
+            [manager setValue:@{@"code":@"ADAE",@"mac":g.wirelessMAC} forKey:@"meta"];
+            NSDictionary *same=@{@"v":WireVersion,@"ready":@"1",@"code":@"CPUE",@"nonce":hexNonce(peerNonce),@"runtime":@"synthetic-B",@"mac":g.wirelessMAC};
+            [manager invite:[[MCPeerID alloc]initWithDisplayName:@"Duplicate console"] info:same];
+            check(@"duplicate firmware identity blocks pairing without mutation",manager.partner==nil&&[manager valueForKey:@"notice"]!=nil&&[g.wirelessMAC isEqual:@"0009bf010203"]);
+        });
         __block TestSession *session;dispatch_sync(dispatch_get_main_queue(),^{
             MDSNearby *manager=[MDSNearby shared];[manager cleanup];[manager setValue:@(g.epoch) forKey:@"generation"];
             MCPeerID *identity=[[MCPeerID alloc]initWithDisplayName:@"Synthetic console A"],*peer=[[MCPeerID alloc]initWithDisplayName:@"Synthetic console B"];
@@ -89,14 +96,14 @@ static void tests(){@autoreleasepool{
         @synchronized(session){for(NSData *reply in session.savedReplies)[[MDSNearby shared] session:session didReceiveData:reply fromPeer:[MDSNearby shared].partner];[session.savedReplies removeAllObjects];}
         waitUntil(settled);check(@"acknowledged resume allows core",MDS_beforeFrame());
         testBattery[0]=0x92;for(unsigned i=0;i<60;i++)MDS_afterFrame();check(@"current synthetic battery atomically persists",[NSData dataWithContentsOfFile:path].length==512&&((const uint8_t*)[NSData dataWithContentsOfFile:path].bytes)[0]==0x92);
-        MDS_signal(2,nullptr);{std::lock_guard<std::mutex> guard(peerLock);other->radio(false);}injectOther(session);waitUntil(settled);
+        Nonce oldRoomNonce=g.nonce;MDS_signal(2,nullptr);{std::lock_guard<std::mutex> guard(peerLock);other->radio(false);}injectOther(session);waitUntil(settled);
         dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *manager=[MDSNearby shared];[manager setValue:@(CACurrentMediaTime()-6) forKey:@"parkedAt"];[manager tick:nil];});
         waitUntil([]{std::lock_guard<std::mutex> guard(peerLock);return other&&other->receivedCount()>0;});
         {std::lock_guard<std::mutex> guard(peerLock);other->close();}injectOther(session);waitUntil(ended);MDS_beforeFrame();
         check(@"clean stop flushes save before lifecycle reset",stops==1&&g.finishSaved);
         dispatch_sync(dispatch_get_main_queue(),^{[[MDSNearby shared] tick:nil];});check(@"bounded bilateral room exit clears transport",!g.protocol);
         check(@"exit checkpoint kept original prelink battery",[[NSData dataWithContentsOfURL:[backups.firstObject URLByAppendingPathComponent:@"before.srm"]] isEqual:before]);
-        check(@"fresh radio creates new room nonce",g.nonce!=peerNonce);
+        check(@"fresh radio creates new room nonce",g.nonce!=oldRoomNonce);
         MDS_gameUnloading();check(@"game close clears transport and gates",!g.loaded&&!g.prepared&&!g.protocol);
     }catch(const std::exception &e){errorText=[NSString stringWithUTF8String:e.what()];}
     NSDictionary *report=@{@"checks":results,@"error":errorText?:NSNull.null,@"synthetic_save_only":@YES,@"actual_game_trade_verified":@NO,@"physical_iPhone_verified":@NO};
