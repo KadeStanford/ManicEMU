@@ -33,6 +33,15 @@ exchanged a turn with matching damage, completed two normal forfeit battles and
 left both rooms normally. This desktop TCP harness does not establish physical
 iPhone discovery, frontend save-path integration or fenced Multipeer rejoin.
 
+HeartGold IPKE / SoulSilver IPGE, both header revision 0, passed standard Union
+Room trade, bilateral newer native save checks, fresh-process battery-only cold
+reload and both normal Union exits with the final v0.2 protocol and unchanged
+default MACs. The same cores transitioned to Colosseum Single Battle / No
+Restrictions, exchanged matching damage, passed a faint/replacement flow and
+completed two forfeit battles. Both final Colosseum exits passed, and both final
+native saves retained the traded party with valid checksums. HGSS Spin Trade,
+full-party knockout and fresh transport rejoin remain under test.
+
 Radio shutdown parks a session temporarily. After five seconds with both radios
 off and all game traffic acknowledged, CLOSE fences end the transport. The next
 session uses new room nonces and discovery. Consent to the same peer runtime can

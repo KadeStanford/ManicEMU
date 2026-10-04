@@ -9,6 +9,10 @@ save without a state file and retained the exchanged identities. Both games also
 returned to the Union Room contact flow and left the room with radio shutdown.
 
 A No Restrictions single battle also ran through the Colosseum after the trade.
+This distinct-MAC Platinum battle series used the earlier v0.1 bridge revision
+with the same native engine. The final v0.2 production map's default-MAC Platinum
+trade, cold reload and exits were verified separately; its Platinum battle check
+remains pending.
 Both sides exchanged Aerial Ace / Flamethrower actions and reflected the matching
 damage: Staraptor went from 217 to 60 HP and Infernape from 210 to 82 HP. One
 player then selected Run (forfeit); both games ended the battle and returned to
@@ -26,8 +30,8 @@ and game-specific rules must be recorded with each real test.
 | Diamond | ADAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; post-trade Union exits; trade-to-Colosseum transition; matching turn damage; two completed forfeit battles in the same group |
 | Pearl | APAE revision 5 | Union Room; Colosseum battles | ADAE/APAE trade, bilateral newer valid saves and fresh-process battery-only cold reload passed with identical default MACs; post-trade Union exits; trade-to-Colosseum transition; matching turn damage; two completed forfeit battles in the same group |
 | Platinum | CPUE revision 1 | Union Room; Colosseum battles | CPUE/CPUE trade and bilateral cold reload; Union Room exit; trade-to-Colosseum transition; two battles with turn exchange and completed forfeit exits; faint/replacement passed |
-| HeartGold | IPKE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
-| SoulSilver | IPGE revision 0 | Union Room; Colosseum battles | Boots public save: 16 badges; state roundtrip passes |
+| HeartGold | IPKE header revision 0 | Union Room standard Trade; HGSS Spin Trade; Colosseum battles | IPKE/IPGE standard trade, bilateral valid saves/cold reload, both Union exits, trade-to-Colosseum transition, matching turn damage, faint/replacement, two completed forfeit battles and both final Colosseum exits passed with default MACs; Spin Trade and full-party knockout pending |
+| SoulSilver | IPGE header revision 0 | Union Room standard Trade; HGSS Spin Trade; Colosseum battles | IPKE/IPGE standard trade, bilateral valid saves/cold reload, both Union exits, trade-to-Colosseum transition, matching turn damage, faint/replacement, two completed forfeit battles and both final Colosseum exits passed with default MACs; Spin Trade and full-party knockout pending |
 | Black | IRBO revision 0 | Union Room; C-Gear IR starts a separate IR-to-wireless route | Boots public save: 8 badges; state roundtrip passes; IR unimplemented |
 | White | IRAO revision 0 | Union Room; C-Gear IR starts a separate IR-to-wireless route | Boots public save: 8 badges; state roundtrip passes; IR unimplemented |
 | Black 2 | IREO revision 0 | Union Room; C-Gear IR starts a separate IR-to-wireless route | Boots public save: 8 badges; state roundtrip passes; IR unimplemented |
@@ -101,6 +105,28 @@ The final native saves retained the traded party identities and valid checksums.
 All-party knockout completion has not been tested. Several harness timing details
 also changed during the earlier contact retest, so its timeout cause is not established.
 This does not establish all-pair or physical phone success.
+
+HeartGold IPKE header revision 0 / SoulSilver IPGE header revision 0 also passed
+native discovery and the standard Union Room Trade request/response flow on the
+final v0.2 C++ protocol and address map, with both firmware MACs unchanged at
+00:09:BF:11:22:33. HeartGold's Meganium "HDChipCard" (PID 1729677535) and
+SoulSilver's Typhlosion "Math" (PID 2483307331) exchanged party slot zero.
+Both wrote newer valid native save blocks, all party PK4 checksums passed,
+trainer IDs and the five unselected party members stayed intact, and both
+fresh processes cold-loaded their traded batteries without state input.
+Both completed normal Trade Quit confirmations, returned to the Union contact
+flow and exited the Union Room normally. The HGSS menu additionally offers
+Spin Trade; it has not yet been tested. The same cores and desktop transport
+then entered Colosseum Single Battle / No Restrictions. Both displayed Meganium's
+knockout from Flamethrower and its replacement with Espeon. In the next turn,
+Psychic changed Typhlosion's HP from 294 to 126, and Flamethrower changed
+Espeon's from 276 to 165 on both consoles. HeartGold forfeited the first battle,
+SoulSilver forfeited a second battle in the same group, and both returned to
+the arena. The normal Colosseum exit returned both to the Pokemon Center with
+both radios off; final native batteries retained the traded party, trainer IDs
+and valid checksums. Full-party knockout and fresh transport rejoin remain
+pending. These native desktop results exclude
+physical iPhone discovery, frontend save paths and Multipeer reconnect prompts.
 
 The actual Union Room battle attempt displayed the game's requirement for two
 Pokemon at level 30 or lower. The disposable parties were level 65, so that
