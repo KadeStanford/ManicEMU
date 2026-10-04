@@ -71,7 +71,9 @@ jobs:
           p=pathlib.Path('OriginalCoreRepair/private-vulkan-run.json')
           if p.exists():
               with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-                  f.write('run_id='+str(json.loads(p.read_text())['driver_run_id'])+'\n')
+                  config=json.loads(p.read_text())
+                  f.write('run_id='+str(config['driver_run_id'])+'\n')
+                  f.write('fill_repair='+('1' if config.get('fill_repair') else '0')+'\n')
           PY
       - uses: actions/download-artifact@v4
         with:
@@ -105,6 +107,7 @@ jobs:
       - name: Execute private game and supplied plugin
         env:
           MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
+          MANIC_PROBE_FILL_REPAIR: ${{ steps.driver.outputs.fill_repair || '0' }}
         run: |
           driver="$(find OriginalCoreRepair/Tests/build-probe/driver-sdk -path '*simulator*/MoltenVK.framework/MoltenVK' -type f | head -1)"
           test -n "$driver"

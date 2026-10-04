@@ -22,6 +22,10 @@ out=bytearray(b)
 for offset,expected in ([(0x524954,'29435939'),(0x52495c,'29e35939'),(0x5281ac,'a9425939'),(0x5281b4,'a9e25939')] if os.environ.get('MANIC_PROBE_PLUGIN_ENABLED','1')=='1' else []):
     assert b[offset:offset+4]==bytes.fromhex(expected)
     out[offset:offset+4]=bytes.fromhex('29008052')
+if os.environ.get('MANIC_PROBE_FILL_REPAIR','0')=='1':
+    sys.path.insert(0,str(pathlib.Path('..').resolve()))
+    from repair_vulkan_fill import patch_core
+    out=bytearray(patch_core(bytes(out)))
 pos=32;found=False
 for _ in range(struct.unpack_from('<I',b,16)[0]):
     cmd,size=struct.unpack_from('<II',b,pos)
