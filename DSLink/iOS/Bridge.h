@@ -8,6 +8,7 @@ struct MDSCore {
     size_t (*memorySize)(unsigned);
     size_t (*stateSize)();
     bool (*serialize)(void *,size_t);
+    bool (*wirelessIdentity)(uint8_t *);
 };
 void MDS_gameLoaded(const char code[4],uint8_t revision,MDSCore core);
 void MDS_gameUnloading();

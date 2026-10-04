@@ -13,7 +13,7 @@
 #include "../../TradeLink/iOS/FrontendSave.h"
 using namespace manicds;
 static NSString *const Service=@"manic-ds";
-static NSString *const WireVersion=@"ds131-mds1";
+static NSString *const WireVersion=@"ds131-mds2";
 static std::mutex lock;
 static struct {
     std::unique_ptr<manicds::Protocol> protocol;
@@ -27,6 +27,7 @@ static struct {
     Nonce nonce{};
     NSData *lastBattery=nil;
     NSString *savePath=nil;
+    NSString *wirelessMAC=nil;
 } g;
 static std::atomic<uint64_t> epoch{0};
 static void (*originalPause)(id,SEL),(*originalResume)(id,SEL);
@@ -108,6 +109,11 @@ static void prepare(){
     {std::lock_guard<std::mutex> guard(lock);if(!g.requested||g.preparing||g.prepared||g.failedPrepare||!g.loaded||!g.radio)return;g.preparing=true;generation=g.epoch;}
     // Original serialization functions execute here, between original frames.
     NSData *data=battery();NSString *path=activePath();size_t size=g.core.stateSize?g.core.stateSize():0;
+    uint8_t mac[6]{};bool identity=g.core.wirelessIdentity&&g.core.wirelessIdentity(mac)&&!(mac[0]&1);bool nonzero=false;for(auto b:mac)nonzero|=b!=0;
+    // Do not alter an existing firmware/WFC identity to make a pair appear to
+    // work. Games using MAC-dependent save checks must retain that identity.
+    if(!identity||!nonzero){std::lock_guard<std::mutex> guard(lock);g.preparing=false;return;}
+    NSMutableString *macText=[NSMutableString new];for(auto b:mac)[macText appendFormat:@"%02x",b];
     NSMutableData *state=size&&size<=128*1024*1024?[NSMutableData dataWithLength:size]:nil;
     bool ok=data&&path&&state&&g.core.serialize&&g.core.serialize(state.mutableBytes,size);
     if(ok){
@@ -117,7 +123,7 @@ static void prepare(){
            [data writeToURL:[dir URLByAppendingPathComponent:@"before.srm"] options:NSDataWritingAtomic error:&error]&&
            [state writeToURL:[dir URLByAppendingPathComponent:@"before.melonstate"] options:NSDataWritingAtomic error:&error];
     }
-    {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.preparing=false;g.prepared=ok;g.failedPrepare=!ok;if(ok){g.savePath=path;g.lastBattery=data;}}
+    {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch)return;g.preparing=false;g.prepared=ok;g.failedPrepare=!ok;if(ok){g.savePath=path;g.lastBattery=data;g.wirelessMAC=macText;}}
     if(ok)dispatch_async(dispatch_get_main_queue(),^{if(generation==epoch.load())[[MDSNearby shared] prepared:generation];});
     else warning(@"Nearby play stopped because the current save path or automatic checkpoint could not be verified. Keep your current game open and save normally.",generation);
 }
@@ -182,7 +188,7 @@ void MDS_gameUnloading(){
     {std::lock_guard<std::mutex> guard(lock);flush=g.loaded&&g.prepared;cb=g.net;}
     if(flush&&!persist(true))warning(@"The current DS battery save was not verified at game close. Your pre-link backup was retained.",epoch.load());
     if(g.started&&cb.stop)cb.stop();
-    {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.loaded=g.radio=g.intent=g.requested=g.prepared=g.preparing=g.failedPrepare=g.started=g.held=false;g.warned=false;g.lastBattery=nil;g.savePath=nil;g.epoch=++epoch;}
+    {std::lock_guard<std::mutex> guard(lock);g.protocol.reset();g.loaded=g.radio=g.intent=g.requested=g.prepared=g.preparing=g.failedPrepare=g.started=g.held=false;g.warned=false;g.lastBattery=nil;g.savePath=nil;g.wirelessMAC=nil;g.epoch=++epoch;}
     uint64_t generation=epoch.load();dispatch_async(dispatch_get_main_queue(),^{if(generation==epoch.load())[[MDSNearby shared] cleanup];});
 }
 @implementation MDSNearby {
@@ -197,7 +203,7 @@ void MDS_gameUnloading(){
 -(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.packets",DISPATCH_QUEUE_SERIAL);[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
 -(BOOL)valid:(NSDictionary*)info{
     Nonce parsed;
-    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||!readNonce(info[@"nonce"],parsed)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class])return NO;
+    if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||!readNonce(info[@"nonce"],parsed)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||![info[@"mac"] isKindOfClass:NSString.class]||[info[@"mac"] length]!=12)return NO;
     NSData *a=[_meta[@"code"] dataUsingEncoding:NSASCIIStringEncoding],*b=[info[@"code"] dataUsingEncoding:NSASCIIStringEncoding];
     return a.length==4&&b.length==4&&compatible((const char*)a.bytes,(const char*)b.bytes)&&![info[@"runtime"] isEqual:_runtime];
 }
@@ -218,7 +224,7 @@ void MDS_gameUnloading(){
 }
 -(void)prepared:(uint64_t)generation{
     if(generation!=_generation)return;_prepared=YES;NSMutableDictionary *m=[_meta mutableCopy];m[@"ready"]=@"1";
-    {std::lock_guard<std::mutex> guard(lock);m[@"local"]=g.intent?@"1":@"0";}_meta=m;[self advertise];
+    {std::lock_guard<std::mutex> guard(lock);m[@"local"]=g.intent?@"1":@"0";m[@"mac"]=g.wirelessMAC;}_meta=m;[self advertise];
     NSDictionary *approved=_approvedPeer?_peers[_approvedPeer]:nil;
     if(approved&&[approved[@"runtime"] isEqual:_approvedRuntime])[self invite:_approvedPeer info:approved];else [self finder];
 }
@@ -234,7 +240,9 @@ void MDS_gameUnloading(){
     [self dismiss];_dialog=a;[presenter() presentViewController:a animated:YES completion:nil];
 }
 -(void)invite:(MCPeerID*)peer info:(NSDictionary*)info{
-    if(!_prepared||![self valid:info])return;_inviting=YES;self.partner=peer;_partnerMeta=info;
+    if(!_prepared||![self valid:info])return;
+    if([info[@"mac"] isEqual:_meta[@"mac"]]){[self warning:@"Both emulated consoles have the same wireless identity. This pair cannot use local wireless. Existing firmware and saves were preserved; changing an identity can affect Pokémon saves." generation:_generation];return;}
+    _inviting=YES;self.partner=peer;_partnerMeta=info;
     NSData *context=[NSJSONSerialization dataWithJSONObject:_meta options:0 error:nil];[_browser invitePeer:peer toSession:self.session withContext:context timeout:20];
 }
 -(void)drain{
@@ -297,6 +305,7 @@ void MDS_gameUnloading(){
 -(void)advertiser:(MCNearbyServiceAdvertiser*)advertiser didReceiveInvitationFromPeer:(MCPeerID*)peer withContext:(NSData*)context invitationHandler:(void(^)(BOOL,MCSession*))handler{
     dispatch_async(dispatch_get_main_queue(),^{NSDictionary *info=context.length<=1024?[NSJSONSerialization JSONObjectWithData:context options:0 error:nil]:nil;
         if(advertiser!=self->_advertiser||!self->_prepared||![self valid:info]||(self.partner&&![self.partner isEqual:peer])){handler(NO,nil);return;}
+        if([info[@"mac"] isEqual:self->_meta[@"mac"]]){handler(NO,nil);[self warning:@"Both emulated consoles have the same wireless identity. Existing firmware and saves were preserved. This needs an identity-preserving emulator solution before this pair can connect." generation:self->_generation];return;}
         auto accept=^{self.partner=peer;self->_partnerMeta=info;self->_approvedPeer=peer;self->_approvedRuntime=info[@"runtime"];[self dismiss];handler(YES,self.session);};
         if([peer isEqual:self->_approvedPeer]&&[info[@"runtime"] isEqual:self->_approvedRuntime]){accept();return;}
         UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Nearby player" message:[NSString stringWithFormat:@"Connect to %@ playing %@?",peer.displayName,titleName(info[@"code"])] preferredStyle:UIAlertControllerStyleAlert];

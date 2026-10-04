@@ -19,6 +19,7 @@ static void *memory(unsigned n){return n==RETRO_MEMORY_SAVE_RAM?testBattery:null
 static size_t memorySize(unsigned n){return n==RETRO_MEMORY_SAVE_RAM?sizeof(testBattery):0;}
 static size_t stateSize(){return sizeof(testState);}
 static bool serialize(void *p,size_t n){if(n!=sizeof(testState))return false;memcpy(p,testState,n);return true;}
+static bool wirelessIdentity(uint8_t *out){const uint8_t mac[]{0,9,191,1,2,3};memcpy(out,mac,6);return true;}
 static void startCore(uint16_t id,retro_netpacket_send_t send,retro_netpacket_poll_receive_t poll){(void)id;(void)send;(void)poll;starts++;wrongThread|=NSThread.isMainThread;}
 static void receiveCore(const void *p,size_t n,uint16_t id){(void)p;(void)n;(void)id;received++;wrongThread|=NSThread.isMainThread;}
 static void stopCore(){stops++;wrongThread|=NSThread.isMainThread;}
@@ -54,7 +55,7 @@ static void tests(){@autoreleasepool{
         NSString *path=[[docs URLByAppendingPathComponent:@"synthetic.srm"] path];
         NSData *before=[NSData dataWithBytes:testBattery length:sizeof(testBattery)];[before writeToFile:path atomically:YES];
         static std::string pathStorage;pathStorage=path.UTF8String;testEntry.data=pathStorage.data();testEntry.attr.i=RETRO_MEMORY_SAVE_RAM;testFiles={&testEntry,1,1};
-        MDSCore core{memory,memorySize,stateSize,serialize};MDS_gameLoaded("ADAE",5,core);
+        MDSCore core{memory,memorySize,stateSize,serialize,wirelessIdentity};MDS_gameLoaded("ADAE",5,core);
         retro_netpacket_callback callbacks{};callbacks.start=startCore;callbacks.receive=receiveCore;callbacks.stop=stopCore;MDS_netpacket(&callbacks);
         uint8_t infra[48]{};infra[13]=1;check(@"WFC infrastructure excluded",!localFrame(infra,sizeof(infra),2));
         uint8_t local[48]{};local[16]=3;local[17]=9;local[18]=191;check(@"Nintendo local destination recognized",localFrame(local,sizeof(local),0));
