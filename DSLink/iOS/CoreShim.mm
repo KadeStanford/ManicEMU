@@ -46,7 +46,7 @@ extern "C" bool retro_load_game(const retro_game_info *info){
     // A reset-capable engine is mandatory. The diagnostic binary patch lacks
     // queue reset; it cannot enable a feature IPA merely by having event hooks.
     using Revision=unsigned(*)();auto revisionFn=original<Revision>("manic_ds_protocol_revision");
-    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==3?code:disabled,revision,core);return true;
+    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==4?code:disabled,revision,core);return true;
 }
 extern "C" void retro_run(){
     if(!MDS_beforeFrame())return;

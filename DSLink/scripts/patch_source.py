@@ -53,6 +53,17 @@ bool MpState::IsReady() const noexcept {''')
         }''')
     replace('src/libretro/platform/mp.cpp','    _mpState.SetSendFn(nullptr);',
             '    _mpState.Reset();\n    _mpState.SetSendFn(nullptr);')
+    replace('src/libretro/platform/mp.cpp',
+            '    _mpState.PacketReceived(buf, len, client_id);',
+            '''    // Filter before MpState chooses a reply host. Unrelated native
+    // conversations may share a neighbourhood and reuse the same AID.
+    if (!Console || !buf || len < HeaderSize + 36 || len > HeaderSize + 2048) return;
+    const auto* wire = static_cast<const uint8_t*>(buf);
+    const auto* frame = wire + HeaderSize;
+    if (wire[9] == 2 && std::memcmp(frame + 22, Console->Wifi.GetBSSID(), 6)) return;
+    if (wire[9] == 1 && std::memcmp(frame + 16, Console->Wifi.GetMAC(), 6)) return;
+    _mpState.PacketReceived(buf, len, client_id);''')
+    replace('src/libretro/platform/mp.cpp','#include <Platform.h>','#include <Platform.h>\n#include <cstring>')
     replace('src/libretro/platform/mp.cpp','    if(!_mpState.IsReady()) {\n        return false;\n    }',
             '''    if(!_mpState.IsReady()) {
         struct Event { uint32_t event; uint32_t reserved; const void* packet; } event{3,0,&p};
@@ -72,7 +83,7 @@ bool MpState::IsReady() const noexcept {''')
     retro::environment(0x4d445301, &event);
 }''')
     replace('src/libretro/libretro.cpp','PUBLIC_SYMBOL void retro_init(void) {',
-            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 3; }
+            '''extern "C" RETRO_API unsigned manic_ds_protocol_revision(void) { return 4; }
 extern "C" RETRO_API bool manic_ds_wireless_identity(uint8_t* out) {
     const auto* console = MelonDsDs::Core.GetConsole();
     if (!out || !console) return false;

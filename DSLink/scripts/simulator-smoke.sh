@@ -6,7 +6,7 @@ mkdir -p "$app"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator clang++ -target arm64-apple-ios15.0-simulator -isysroot "$sdk" -std=c++17 -fobjc-arc \
   -O1 -Wall -Wextra -Werror -Wno-unused-parameter -I "$root/Core" -I "$root/../OriginalCoreRepair/Tests/vendor" \
-  "$root/Core/Protocol.cpp" "$root/Tests/simulator_main.mm" -framework UIKit -framework Foundation \
+  "$root/Core/Protocol.cpp" "$root/Core/Room.cpp" "$root/Tests/simulator_main.mm" -framework UIKit -framework Foundation \
   -framework MultipeerConnectivity -framework QuartzCore -Wl,-export_dynamic -o "$app/DSSmoke"
 python3 - "$app" <<'PY'
 import pathlib,plistlib,sys

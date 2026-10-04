@@ -28,7 +28,7 @@ codesign --remove-signature "$build/DSOriginal.framework/DSOriginal"
 xcrun --sdk "$sdk_name" clang++ -target "$target" -isysroot "$sdk" -std=c++17 -fobjc-arc \
   -O2 -Wall -Wextra -Werror -Wno-unused-parameter -dynamiclib \
   -I "$root/Core" -I "$root/../OriginalCoreRepair/Tests/vendor" \
-  "$root/Core/Protocol.cpp" "$root/iOS/CoreShim.mm" "$root/iOS/Nearby.mm" \
+  "$root/Core/Protocol.cpp" "$root/Core/Room.cpp" "$root/iOS/CoreShim.mm" "$root/iOS/Nearby.mm" \
   -framework Foundation -framework UIKit -framework MultipeerConnectivity -framework QuartzCore \
   -install_name '@rpath/melondsds.libretro.framework/melondsds.libretro' \
   -o "$build/melondsds.libretro.framework/melondsds.libretro"
@@ -53,7 +53,7 @@ p=pathlib.Path(sys.argv[1])
 files={n:hashlib.sha256((p/(n+'.framework')/n).read_bytes()).hexdigest() for n in ('DSOriginal','melondsds.libretro')}
 (p/'build-manifest.json').write_text(json.dumps({'sdk':sys.argv[2],'engine_version':'1.3.1',
  'upstream_repository':'https://github.com/JesseTG/melonds-ds',
- 'upstream_commit':'bc4e4b67d2d470d7c682810a1e892cafd6f9082b','queue_reset_marker':3,
+ 'upstream_commit':'bc4e4b67d2d470d7c682810a1e892cafd6f9082b','queue_reset_marker':4,
  'receive_wait':'25ms wall-clock deadline, bounded notification waits; no CPU-clock spin',
  'manic_compatibility_source':'Daiuno/melonds-ds@1a28e0fe2a78c9d2318f4324835ff906488299a2',
  'native_engine_source':'Daiuno/melonDS@ee7505609fcfa48946d3e0235acecf315fa322ae',
