@@ -17,9 +17,9 @@ jobs:
       matrix:
         include:
           - {label: Software-loader-on, plugin_enabled: '1', renderer: Software, fill_repair: '0'}
-          - {label: Vulkan-R4-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '4'}
           - {label: Vulkan-R5-loader-on, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5'}
-          - {label: Vulkan-R5-loader-off, plugin_enabled: '0', renderer: Vulkan, fill_repair: '5'}
+          - {label: Vulkan-R5-duplicates-off, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5', duplicate_frames: disabled}
+          - {label: Vulkan-R5-gpu-timings-off, plugin_enabled: '1', renderer: Vulkan, fill_repair: '5', gpu_timings: disabled}
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false, ref: recovery/dual-airplay-azahar}
@@ -81,7 +81,11 @@ jobs:
         env:
           MANIC_PROBE_PLUGIN_ENABLED: ${{ matrix.plugin_enabled }}
           MANIC_PROBE_FILL_REPAIR: ${{ matrix.fill_repair }}
+          DUPLICATE_FRAMES: ${{ matrix.duplicate_frames }}
+          GPU_TIMINGS: ${{ matrix.gpu_timings }}
         run: |
+          if [[ -n "$DUPLICATE_FRAMES" ]]; then export MANIC_PROBE_DUPLICATE_FRAMES="$DUPLICATE_FRAMES"; fi
+          if [[ -n "$GPU_TIMINGS" ]]; then export MANIC_PROBE_GPU_TIMINGS="$GPU_TIMINGS"; fi
           driver="$(find "$RUNNER_TEMP/host-moltenvk" -path '*/dynamic/dylib/macOS/libMoltenVK.dylib' -type f | head -1)"
           test -n "$driver"
           bash OriginalCoreRepair/Tests/macos-game-probe.sh "$RUNNER_TEMP/manic-private-inputs/game.cxi" "$RUNNER_TEMP/manic-private-inputs/sdmc/luma/plugins/0004000000198E00/Vapecord_Public.3gx" "$driver"

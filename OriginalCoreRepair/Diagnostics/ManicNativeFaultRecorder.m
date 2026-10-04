@@ -59,6 +59,18 @@ static NSDictionary *guestExecutionState(uintptr_t address) {
 #endif
     return result;
 }
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+static NSDictionary *activeInterpreterState(void) {
+    uintptr_t base=__atomic_load_n(&azaharTextBase,__ATOMIC_ACQUIRE),cpu=0,vtable=0,run=0,state=0;
+    vm_size_t copied=0;
+    if(!base)return nil;
+    if(vm_read_overwrite(mach_task_self(),base+0x8cf4be0+0xe0,8,(vm_address_t)&cpu,&copied)!=KERN_SUCCESS||copied!=8||!cpu)return nil;
+    if(vm_read_overwrite(mach_task_self(),cpu,8,(vm_address_t)&vtable,&copied)!=KERN_SUCCESS||copied!=8||!vtable)return nil;
+    if(vm_read_overwrite(mach_task_self(),vtable+0x10,8,(vm_address_t)&run,&copied)!=KERN_SUCCESS||copied!=8||run!=base+0x4ffa04)return nil;
+    if(vm_read_overwrite(mach_task_self(),cpu+0x28,8,(vm_address_t)&state,&copied)!=KERN_SUCCESS||copied!=8)return nil;
+    return guestExecutionState(state);
+}
+#endif
 #ifdef MANIC_NATIVE_RECORDER_SELF_TEST
 int ManicVerifyGuestStateSampler(void) {
     uint8_t state[0x380]={0};uint32_t pc=0x07001234,cpsr=0x60000010;uint64_t budget=10000;
@@ -125,9 +137,13 @@ void ManicCaptureHangSnapshot(unsigned index) {
             }
             vm_deallocate(mach_task_self(),(vm_address_t)threads,count*sizeof(thread_t));
         }
-        NSDictionary *sample=@{@"format_version":@1,@"pid":@(getpid()),@"sample_index":@(index),
+        NSMutableDictionary *sample=[@{@"format_version":@1,@"pid":@(getpid()),@"sample_index":@(index),
             @"capture_epoch":@(NSDate.date.timeIntervalSince1970),@"task_threads_result":@(result),
-            @"thread_count":@(count),@"thread_limit":@64,@"thread_suspension_performed":@NO,@"threads":rows};
+            @"thread_count":@(count),@"thread_limit":@64,@"thread_suspension_performed":@NO,@"threads":rows} mutableCopy];
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+        NSDictionary *active=activeInterpreterState();
+        if(active)sample[@"active_guest_execution"]=active;
+#endif
         NSData *data=[NSJSONSerialization dataWithJSONObject:sample options:0 error:nil];
         NSString *path=[diagnosticPrefix stringByAppendingFormat:@".hang-%u.json",index];
         [data writeToFile:path options:NSDataWritingWithoutOverwriting error:nil];
@@ -196,8 +212,12 @@ __attribute__((constructor)) static void enableDiagnostic(void) {
         const int signals[]={SIGSEGV,SIGBUS,SIGABRT,SIGILL,SIGTRAP};
         for(unsigned i=0;i<sizeof(signals)/sizeof(signals[0]);i++)sigaction(signals[i],&action,NULL);
 #ifndef MANIC_NATIVE_RECORDER_SELF_TEST
+#ifdef MANIC_NATIVE_RECORDER_HOST_PROBE
+        const unsigned delays[]={2,5,10,15,20,25,30,35,40,45,50,60};
+#else
         const unsigned delays[]={2,10,25,50};
-        for(unsigned i=0;i<4;i++){
+#endif
+        for(unsigned i=0;i<sizeof(delays)/sizeof(delays[0]);i++){
             unsigned sampleIndex=i;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)delays[i]*NSEC_PER_SEC),
                 dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{ManicCaptureHangSnapshot(sampleIndex);});

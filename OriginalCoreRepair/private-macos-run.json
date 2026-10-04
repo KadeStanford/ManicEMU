@@ -1,1 +1,1 @@
-{"iteration":4,"purpose":"Native-only direct page-table sampling of the observed guest recursive lock and filtered possible return addresses"}
+{"iteration":5,"purpose":"Capture the active interpreter state independently of host PC; compare one frame-skipping and GPU-timing option at a time"}

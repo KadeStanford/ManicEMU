@@ -83,6 +83,12 @@ static bool environment(unsigned command,void *data) {
             else if(!strcmp(v->key,"citra_use_cpu_jit"))v->value="disabled";
             else if(!strcmp(v->key,"citra_is_new_3ds"))v->value="New 3DS";
             else if(!strcmp(v->key,"citra_resolution_factor"))v->value="1";
+#ifdef MANIC_GAME_MACOS
+            else if(!strcmp(v->key,"citra_use_skip_duplicate_frames")){
+                v->value=getenv("MANIC_PROBE_DUPLICATE_FRAMES");return v->value!=NULL;}
+            else if(!strcmp(v->key,"citra_simulate_3ds_gpu_timings")){
+                v->value=getenv("MANIC_PROBE_GPU_TIMINGS");return v->value!=NULL;}
+#endif
             else {v->value=NULL;return false;}return true;}
         case 17:*(bool *)data=false;return true;
         case 7:shutdownRequested=true;return true;
