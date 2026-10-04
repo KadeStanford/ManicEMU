@@ -5,7 +5,9 @@ def decode(path):
     path=pathlib.Path(path);sample=json.loads(path.read_text())
     prefix=re.sub(r'\.hang-\d+\.json$','',path.name)
     images=[]
-    for line in path.with_name(prefix+'.images').read_text().splitlines():
+    maps=[path.with_name(prefix+'.images')]+list(path.parent.glob(prefix+'.images.*'))
+    latest=max((p for p in maps if p.exists()),key=lambda p:p.stat().st_mtime_ns)
+    for line in latest.read_text().splitlines():
         b,n,name=line.split(' ',2);images.append((int(b,16),int(n,16),name))
     def address(raw):
         for candidate in (raw,raw&0x0000ffffffffffff):
