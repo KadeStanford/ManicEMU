@@ -152,10 +152,14 @@ static void logPerformance(MASPlan *p) {
 @property BOOL dual,threeDS,swapped,disabled;
 @property CGRect inputRegion;
 @property CGRect liveViewport;
+@property CGSize liveSourceSize;
+@property(weak) CAMetalLayer *liveViewportSource;
+@property unsigned liveViewportSequence;
 @property(strong) NSTimer *timer;
 + (instancetype)shared;
 - (void)layout:(NSString *)layout threeDS:(BOOL)threeDS;
 - (void)refresh;
+- (void)updateProducerGeometry;
 - (void)reset;
 - (void)touch:(CGPoint)p;
 - (void)releaseTouch;
@@ -271,6 +275,8 @@ static NSString *effectiveLayout(MASManager *m) {
     if(old)old.source.framebufferOnly=old.originalFramebufferOnly;
     BOOL hadSurfaces=self.phoneSurface!=nil;
     self.plan=nil;
+    self.liveViewport=CGRectZero;self.liveSourceSize=CGSizeZero;
+    self.liveViewportSource=nil;self.liveViewportSequence=0;
     UIView *source=self.coreView;
     if(old)source.transform=self.originalProducerTransform;
     if(source.superview==self.producerHost&&self.externalSourceParent) {
@@ -288,7 +294,8 @@ static NSString *effectiveLayout(MASManager *m) {
 - (void)reset {
     [self removeSurfaces]; self.dual=NO;self.disabled=NO;self.swapped=NO;
     self.phoneParent=nil;self.phoneLayout=nil;self.requestedLayout=nil;self.coreView=nil;
-    self.inputRegion=CGRectZero;self.liveViewport=CGRectZero;self.appliedLayout=nil;self.resolutionFactor=1;
+    self.inputRegion=CGRectZero;self.liveViewport=CGRectZero;self.liveSourceSize=CGSizeZero;
+    self.liveViewportSource=nil;self.liveViewportSequence=0;self.appliedLayout=nil;self.resolutionFactor=1;
 }
 - (void)layout:(NSString *)layout threeDS:(BOOL)threeDS {
     NSAssert(NSThread.isMainThread,@"Layout must run on the UI thread");
@@ -336,6 +343,40 @@ static NSString *effectiveLayout(MASManager *m) {
     // Reconcile after frontend scene delegates finish their current main-thread
     // reparenting work. No rendering thread waits for this notification handler.
     dispatch_async(dispatch_get_main_queue(),^{[self refresh];});
+}
+- (void)updateProducerGeometry {
+    NSAssert(NSThread.isMainThread,@"Producer geometry must run on the UI thread");
+    UIView *view=self.coreView;CAMetalLayer *source=findLayer(view.layer);
+    if(!source||view.superview!=self.producerHost||CGRectIsEmpty(self.phoneSurface.frame))return;
+    CGSize pixels=source.drawableSize;CGRect viewport=(CGRect){CGPointZero,pixels};
+    if(self.liveViewportSource==source && self.liveSourceSize.width>0 && self.liveSourceSize.height>0 &&
+       !CGRectIsEmpty(self.liveViewport)) {pixels=self.liveSourceSize;viewport=self.liveViewport;}
+    if(pixels.width<=0||pixels.height<=0||CGRectIsEmpty(source.bounds))return;
+    // Use the same completed-frame viewport as the TV sink. RetroArch can put
+    // the composite inside an offset/letterboxed drawable; the root view's full
+    // bounds are not necessarily the rendered composite. Convert the selected
+    // pixel rectangle through the actual Metal layer, including nested views.
+    CGRect crop=viewport;crop.size.height*=0.5;
+    if(!self.swapped){crop.origin.y+=crop.size.height;
+        if(self.threeDS){crop.origin.x+=crop.size.width*0.1;crop.size.width*=0.8;}}
+    CGRect layerCrop=CGRectMake(source.bounds.origin.x+crop.origin.x/pixels.width*source.bounds.size.width,
+        source.bounds.origin.y+crop.origin.y/pixels.height*source.bounds.size.height,
+        crop.size.width/pixels.width*source.bounds.size.width,crop.size.height/pixels.height*source.bounds.size.height);
+    CGRect localCrop=[source convertRect:layerCrop toLayer:view.layer];
+    if(CGRectIsEmpty(localCrop)||!isfinite(localCrop.origin.x)||!isfinite(localCrop.origin.y))return;
+    CGSize aspect=self.threeDS?CGSizeMake(self.swapped?400:320,240):CGSizeMake(256,192);
+    CGRect fit=MASFit(aspect,self.phoneSurface.bounds.size);
+    // Clip exactly at the fitted screen, not at the larger skin slot. Otherwise
+    // the other half of the composite can appear in the letterbox margins.
+    self.producerHost.frame=CGRectOffset(fit,self.phoneSurface.frame.origin.x,self.phoneSurface.frame.origin.y);
+    CGFloat sx=fit.size.width/localCrop.size.width,sy=fit.size.height/localCrop.size.height;
+    if(!isfinite(sx)||!isfinite(sy)||sx<=0||sy<=0)return;
+    view.transform=CGAffineTransformMakeScale(sx,sy);
+    view.center=CGPointMake((CGRectGetMidX(view.bounds)-localCrop.origin.x)*sx,
+                            (CGRectGetMidY(view.bounds)-localCrop.origin.y)*sy);
+    CGRect visible=[self.producerHost convertRect:self.producerHost.bounds toView:self.phoneParent.window];
+    visible=CGRectIntersection(visible,self.phoneParent.window.bounds);
+    self.plan.producerVisibleArea=CGRectIsNull(visible)?0:visible.size.width*visible.size.height;
 }
 - (void)refresh {
     logPerformance(self.plan);
@@ -436,16 +477,7 @@ static NSString *effectiveLayout(MASManager *m) {
     // Keep the real producer visible as the intended phone crop. Render bounds
     // retain native pixels; only UIKit display geometry scales and crops them.
     // The phone surface only supplies touch/letterboxing beneath the live source.
-    self.producerHost.frame=self.phoneSurface.frame;
-    CGRect crop=CGRectMake(0,self.swapped?0:0.5,1,0.5);
-    CGSize cropAspect=self.threeDS?CGSizeMake(self.swapped?400:320,240):CGSizeMake(256,192);
-    if(self.threeDS&&!self.swapped){crop.origin.x=0.1;crop.size.width=0.8;}
-    CGRect fit=MASFit(cropAspect,self.producerHost.bounds.size);
-    CGFloat scale=fit.size.width/(producerSize.width*crop.size.width);
-    if(!isfinite(scale)||scale<=0)scale=1;
-    view.transform=CGAffineTransformMakeScale(scale,scale);
-    view.center=CGPointMake(fit.origin.x+(0.5-crop.origin.x)*producerSize.width*scale,
-                            fit.origin.y+(0.5-crop.origin.y)*producerSize.height*scale);
+    [self updateProducerGeometry];
     [self.phoneParent bringSubviewToFront:self.producerHost];
     self.externalSurface.frame=external.bounds;
     self.swapButton.frame=CGRectMake(MAX(0,CGRectGetMaxX(self.phoneSurface.frame)-164),
@@ -454,7 +486,7 @@ static NSString *effectiveLayout(MASManager *m) {
     [self.phoneSurface setNeedsLayout];[self.externalSurface setNeedsLayout];
     [self.phoneParent bringSubviewToFront:self.swapButton];
     MASPlan *old=self.plan;
-    CGRect visible=[self.producerHost convertRect:fit toView:self.phoneParent.window];
+    CGRect visible=[self.producerHost convertRect:self.producerHost.bounds toView:self.phoneParent.window];
     visible=CGRectIntersection(visible,self.phoneParent.window.bounds);
     double visibleArea=CGRectIsNull(visible)?0:visible.size.width*visible.size.height;
     if(old.source==source&&old.swapped==self.swapped&&old.threeDS==self.threeDS){old.compositeSize=composite;old.producerVisibleArea=visibleArea;return;}
@@ -469,7 +501,7 @@ static NSString *effectiveLayout(MASManager *m) {
     p.producerVisibleArea=visibleArea;
     p.snapshotSlots=dispatch_semaphore_create(3);p.freeSnapshots=[NSMutableArray new];
     p.originalFramebufferOnly=old.source==source?old.originalFramebufferOnly:source.framebufferOnly;
-    self.plan=p;
+    self.plan=p;self.liveViewportSequence=0;
 }
 - (void)touch:(CGPoint)p {
     if(!self.plan||CGRectIsEmpty(self.liveViewport)||!originalTouch)return;
@@ -684,8 +716,14 @@ static void captureFrameTexture(id<CAMetalDrawable> drawable,CAMetalLayer *layer
             @synchronized(plan){plan.directPhoneCaptures++;}
             dispatch_async(dispatch_get_main_queue(),^{
                 MASManager *manager=MASManager.shared;
-                if(manager.plan!=plan)return;
-                manager.liveViewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
+                if(manager.plan!=plan||sequence<manager.liveViewportSequence)return;
+                CGRect viewport=CGRectMake(vp.x,vp.y,vp.width,vp.height);
+                CGSize sourceSize=CGSizeMake(snapshot.width,snapshot.height);
+                BOOL changed=manager.liveViewportSource!=layer||!CGRectEqualToRect(manager.liveViewport,viewport)||
+                    !CGSizeEqualToSize(manager.liveSourceSize,sourceSize);
+                manager.liveViewportSequence=sequence;
+                manager.liveViewport=viewport;manager.liveSourceSize=sourceSize;manager.liveViewportSource=layer;
+                if(changed)[manager updateProducerGeometry];
                 manager.phoneSurface.hidden=NO;
 #ifdef MAS_TESTING
                 masPresentedPhonePixel=*(uint32_t *)nativePhonePixel.contents;

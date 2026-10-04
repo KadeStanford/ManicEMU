@@ -88,3 +88,23 @@ the visible phone crop, lower portrait placement, native dimensions, forbidden
 post-present texture lookup, blocked TV, foreground recovery and already-connected
 game start. They still do not prove physical presentation callbacks or receiver
 latency. A focused iPhone wired/wireless check remains required.
+
+The R9 crop correction follows physical screenshots of Animal Crossing: New
+Leaf with AirPlay R8: the TV displayed the intended top screen, while the phone
+showed a small stacked composite in its portrait touchscreen slot. Those still
+images establish the layout defect; they do not establish advancing frames or
+latency. R8 mapped the phone crop against the whole producer view, while the TV
+used the renderer's actual viewport. R9 maps the same completed-frame viewport
+and texture dimensions through the actual Metal layer into the native view,
+including nested or offset rendering layers. The visible producer host clips
+at the fitted selected screen so the other screen cannot leak into skin
+letterbox margins. It keeps the native producer on the phone screen.
+
+Focused synthetic regressions inject an offset composite in a larger completed
+source texture, with a nested Metal layer whose bounds origin and position are
+nonzero. They check the exact displayed crop, fit and clipping, bottom/top swaps,
+repeated swaps, foreground reconciliation and viewport reset on disconnect.
+Existing lower portrait, rotation, already-connected launch, bounded capture,
+blocked TV and pre-presentation texture retention checks remain in the suite.
+Physical portrait crop, touch alignment, continuing video, reconnect behavior
+and wired/wireless receiver latency require testing on the R9 candidate.

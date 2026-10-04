@@ -9,6 +9,12 @@
 static NSString *lastLayout;
 static unsigned loads,stops,ends,touches,releases,storedConfigCalls;
 static CGPoint touchPoint;
+static MASViewport testViewport;
+static BOOL useTestViewport;
+bool video_driver_get_viewport_info(MASViewport *viewport) {
+    if(useTestViewport)*viewport=testViewport;
+    return true;
+}
 float cocoa_screen_get_native_scale(void){return UIScreen.mainScreen.nativeScale;}
 const char *video_driver_get_ident(void){return "vulkan";}
 static void check(NSString *key,BOOL passed);
@@ -119,6 +125,93 @@ static void presentWithoutContext(CAMetalLayer *layer) {
 
 static NSMutableDictionary *report;
 static void check(NSString *key,BOOL passed){report[key]=@(passed);NSLog(@"%@ = %d",key,passed);}
+static BOOL closeRect(CGRect a,CGRect b) {
+    return fabs(a.origin.x-b.origin.x)<0.001&&fabs(a.origin.y-b.origin.y)<0.001&&
+        fabs(a.size.width-b.size.width)<0.001&&fabs(a.size.height-b.size.height)<0.001;
+}
+static void checkViewportGeometry(MASManager *m,NSString *prefix) {
+    CAMetalLayer *layer=m.plan.source;CGSize pixels=m.liveSourceSize;CGRect vp=m.liveViewport;
+    CGRect selected=vp;selected.size.height*=0.5;
+    if(!m.swapped){selected.origin.y+=selected.size.height;
+        if(m.threeDS){selected.origin.x+=selected.size.width*0.1;selected.size.width*=0.8;}}
+    CGRect local=CGRectMake(layer.bounds.origin.x+selected.origin.x/pixels.width*layer.bounds.size.width,
+        layer.bounds.origin.y+selected.origin.y/pixels.height*layer.bounds.size.height,
+        selected.size.width/pixels.width*layer.bounds.size.width,selected.size.height/pixels.height*layer.bounds.size.height);
+    CGRect displayed=[layer convertRect:local toLayer:m.producerHost.layer];
+    check([prefix stringByAppendingString:@"_selected_actual_layer_crop_fills_phone_host"],closeRect(displayed,m.producerHost.bounds));
+    CGSize aspect=m.threeDS?CGSizeMake(m.swapped?400:320,240):CGSizeMake(256,192);
+    CGRect fit=MASFit(aspect,m.phoneSurface.bounds.size);
+    check([prefix stringByAppendingString:@"_host_clips_at_fitted_crop_not_skin_letterbox"],
+        m.producerHost.clipsToBounds&&closeRect(m.producerHost.frame,CGRectOffset(fit,m.phoneSurface.frame.origin.x,m.phoneSurface.frame.origin.y)));
+    check([prefix stringByAppendingString:@"_producer_remains_native_visible"],
+        m.producerHost.window==m.phoneParent.window&&m.plan.producerVisibleArea>10000&&m.plan.directPhone);
+}
+static void viewportCaptureCheck(MASManager *m,dispatch_block_t completion) {
+    // Model the reported phone symptom: the rendered composite is inset in a
+    // larger source texture, and the Metal layer itself is nested/offset. The
+    // actual completed texture dimensions differ from requested drawableSize.
+    [LibretroCore.sharedInstance set3DSCustomLayout:canonicalScaled(YES,1)];
+    if(m.swapped)[m swap];
+    CAMetalLayer *layer=m.plan.source;layer.device=MTLCreateSystemDefaultDevice();
+    CGRect savedBounds=layer.bounds;CGPoint savedPosition=layer.position;
+    layer.bounds=CGRectMake(7,11,150,220);layer.position=CGPointMake(95,130);
+    unsigned width=800,height=1000;MASViewport vp={80,180,600,720,800,1000};
+    MTLTextureDescriptor *desc=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:width height:height mipmapped:NO];
+    desc.usage=MTLTextureUsageShaderRead|MTLTextureUsageRenderTarget;desc.storageMode=MTLStorageModeShared;
+    TestSourceDrawable *drawable=[TestSourceDrawable new];drawable.texture=[layer.device newTextureWithDescriptor:desc];
+    NSMutableData *data=[NSMutableData dataWithLength:width*height*4];uint8_t *p=data.mutableBytes;
+    for(unsigned y=0;y<height;y++)for(unsigned x=0;x<width;x++) {
+        unsigned i=(y*width+x)*4;p[i+3]=255;
+        if(x>=(unsigned)vp.x&&x<(unsigned)vp.x+vp.width&&y>=(unsigned)vp.y&&y<(unsigned)vp.y+vp.height)
+            p[i+(y<(unsigned)vp.y+vp.height/2?2:1)]=255;
+    }
+    [drawable.texture replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:p bytesPerRow:width*4];
+    testViewport=vp;useTestViewport=YES;
+    id<MTLCommandBuffer> buffer=[[layer.device newCommandQueue] commandBuffer];
+    captureFrameTexture((id)drawable,layer,buffer,drawable.texture);
+    useTestViewport=NO;
+    // The production completion handler queues geometry on main before this
+    // sentinel. No driver viewport is injected into manager state directly.
+    [buffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+        dispatch_async(dispatch_get_main_queue(),^{
+            check(@"completed_frame_records_offset_viewport_and_actual_source_dimensions",
+                finished.status==MTLCommandBufferStatusCompleted&&closeRect(m.liveViewport,CGRectMake(80,180,600,720))&&
+                CGSizeEqualToSize(m.liveSourceSize,CGSizeMake(800,1000)));
+            checkViewportGeometry(m,@"offset_nested_bottom");
+            CGRect bottomShown=[layer convertRect:CGRectMake(layer.bounds.origin.x+0.175*layer.bounds.size.width,
+                layer.bounds.origin.y+0.54*layer.bounds.size.height,0.6*layer.bounds.size.width,0.36*layer.bounds.size.height) toLayer:m.producerHost.layer];
+            check(@"completed_frame_uses_viewport_before_timer_refresh",closeRect(bottomShown,m.producerHost.bounds));
+            CGRect topShown=[layer convertRect:CGRectMake(layer.bounds.origin.x+0.1*layer.bounds.size.width,
+                layer.bounds.origin.y+0.18*layer.bounds.size.height,0.75*layer.bounds.size.width,0.36*layer.bounds.size.height) toLayer:m.producerHost.layer];
+            check(@"phone_bottom_crop_excludes_other_screen_even_in_letterbox",CGRectIsEmpty(CGRectIntersection(topShown,m.producerHost.bounds)));
+            [m touch:CGPointMake(0.25,0.75)];
+            check(@"offset_completed_viewport_preserves_native_bottom_touch_coordinates",
+                fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-260)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-810)<0.001);
+            [m swap];checkViewportGeometry(m,@"offset_nested_swapped_top");
+            [m swap];checkViewportGeometry(m,@"offset_nested_repeated_bottom");
+            layer.bounds=savedBounds;layer.position=savedPosition;
+            // Reconcile the same remembered viewport against current UIKit
+            // geometry after a foreground/skin refresh.
+            [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+            [m refresh];checkViewportGeometry(m,@"offset_viewport_foreground");
+            CGRect parentBounds=m.phoneParent.bounds;
+            UIView *touchArea=findTouchArea(m.phoneParent);CGRect touchFrame=touchArea.frame;
+            m.phoneParent.bounds=CGRectMake(0,0,900,400);
+            GameView *large=[[GameView alloc] initWithFrame:CGRectMake(180,10,500,380)];
+            [m.phoneParent addSubview:large];[m refresh];
+            checkViewportGeometry(m,@"offset_viewport_landscape");
+            check(@"offset_viewport_rotation_uses_existing_large_skin_slot",closeRect(m.phoneSurface.frame,large.frame));
+            [large removeFromSuperview];m.phoneParent.bounds=parentBounds;
+            touchArea.frame=CGRectMake(40,CGRectGetHeight(parentBounds)-200,260,180);[m refresh];
+            checkViewportGeometry(m,@"offset_viewport_lower_portrait");
+            touchArea.frame=touchFrame;
+            m.liveViewport=CGRectZero;m.liveSourceSize=CGSizeZero;m.liveViewportSource=nil;[m refresh];
+            [LibretroCore.sharedInstance setNDSCustomLayout:canonicalScaled(NO,1)];
+            completion();
+        });
+    }];
+    [buffer commit];
+}
 static void slowTVCheck(MASManager *manager,dispatch_block_t completion) {
     MASPlan *plan=manager.plan;unsigned phoneBefore=plan.directPhoneCaptures,tvBefore=plan.tvSink.presentations;
     dispatch_semaphore_t entered=dispatch_semaphore_create(0),resume=dispatch_semaphore_create(0);
@@ -283,7 +376,8 @@ static void gpu(void) {
         CGRect nativeBottom=CGRectMake(0,vc.view.bounds.size.height/2,vc.view.bounds.size.width,vc.view.bounds.size.height/2);
         CGRect shown=[vc.view convertRect:nativeBottom toView:m.producerHost];
         CGRect fitted=MASFit(CGSizeMake(256,192),m.producerHost.bounds.size);
-        check(@"lower_portrait_slot_keeps_native_producer_visible",m.plan.producerVisibleArea>10000&&CGRectEqualToRect(m.producerHost.frame,m.phoneSurface.frame));
+        check(@"lower_portrait_slot_keeps_native_producer_visible",m.plan.producerVisibleArea>10000&&
+            closeRect(m.producerHost.frame,CGRectOffset(MASFit(CGSizeMake(256,192),m.phoneSurface.bounds.size),m.phoneSurface.frame.origin.x,m.phoneSurface.frame.origin.y)));
         check(@"phone_display_crops_native_bottom_without_changing_render_bounds",
             fabs(shown.origin.x-fitted.origin.x)<0.001&&fabs(shown.origin.y-fitted.origin.y)<0.001&&
             fabs(shown.size.width-fitted.size.width)<0.001&&fabs(shown.size.height-fitted.size.height)<0.001);
@@ -296,6 +390,7 @@ static void gpu(void) {
         check(@"landscape_touch_maps_into_bottom_screen",fabs(touchPoint.x*UIScreen.mainScreen.nativeScale-51.2)<0.001&&fabs(touchPoint.y*UIScreen.mainScreen.nativeScale-345.6)<0.001);
         root.view.bounds=portraitBounds;[mainSlot removeFromSuperview];touchArea.frame=CGRectMake(50,200,250,180);[m refresh];
         check(@"return_to_portrait_restores_touch_slot",CGRectEqualToRect(m.phoneSurface.frame,touchArea.frame));
+        viewportCaptureCheck(m,^{
         [m.phoneSurface layoutIfNeeded];[m.externalSurface layoutIfNeeded];
         Context *context=[Context new];id<MTLCommandBuffer> frame=[context prepare:m.plan.source];
         [context nextDrawable];[context end];
@@ -392,6 +487,7 @@ static void gpu(void) {
         self.external.hidden=YES;[root.view addSubview:vc.view];[m refresh];
         check(@"disconnect_restores_phone_layout_and_removes_overlays",!m.plan&&!m.phoneSurface&&!m.externalSurface&&[lastLayout isEqual:m.phoneLayout]&&loads==1);
         check(@"disconnect_removes_producer_host_without_reparenting_host_phone_view",!m.producerHost&&vc.view.superview==root.view);
+        check(@"disconnect_discards_completed_viewport_before_new_session",CGRectIsEmpty(m.liveViewport)&&CGSizeEqualToSize(m.liveSourceSize,CGSizeZero)&&!m.liveViewportSource);
         check(@"disconnect_restores_original_producer_dimensions",CGSizeEqualToSize(vc.view.bounds.size,CGSizeMake(320,480)));
         check(@"disconnect_restores_original_framebuffer_mode",findLayer(vc.view.layer).framebufferOnly);
         check(@"disconnect_restores_source_transform",CGAffineTransformIsIdentity(vc.view.transform));
@@ -417,6 +513,7 @@ static void gpu(void) {
         NSString *dir=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         [data writeToFile:[dir stringByAppendingPathComponent:@"smoke.json"] atomically:YES];
+        });
         });
         });
         });
