@@ -248,3 +248,5 @@ PUBLIC_SYMBOL void retro_init(void) {''')
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('checkout');a=p.parse_args()
     for file in patch(a.checkout):print(file)
+    import patch_async
+    for file in patch_async.patch(a.checkout):print('default-OFF async experiment:',file)
