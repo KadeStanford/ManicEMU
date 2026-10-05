@@ -11,7 +11,9 @@ struct AsyncExchange {
     std::chrono::steady_clock::time_point deadline, nextPoll;
     AsyncExchange(u8* data,u64 time,u16 aidmask)
         : buffer(data),timestamp(time),mask(aidmask),replies(time,aidmask),
-          deadline(std::chrono::steady_clock::now()+std::chrono::milliseconds(25)),nextPoll{} {}
+          // Isolated experiment: tolerate frame-paced polls and the captured
+          // 110.8ms tail while CPU/audio continue. Never a blocking wait.
+          deadline(std::chrono::steady_clock::now()+std::chrono::milliseconds(125)),nextPoll{} {}
 };
 inline std::optional<AsyncExchange> AsyncReply;
 inline std::chrono::steady_clock::time_point AsyncHostPoll{};
@@ -30,7 +32,7 @@ u16 AsyncReceiveReplies(u8* packets,u64 timestamp,u16 aidmask) {
     }
     auto& state=*AsyncReply;const auto now=std::chrono::steady_clock::now();
     // A conservative hard deadline: no newly polled reply is accepted after
-    // expiry. Poll scheduling may miss a timely queued reply, never extend25ms.
+    // expiry. This 125ms prototype window is not enabled in a production build.
     if(!state.replies.complete() && now<state.deadline && now>=state.nextPoll){
         state.nextPoll=now+std::chrono::microseconds(500);
         auto packet=MelonDsDs::Core.MpNextPacketBlock(0); // flush/poll, zero wait
