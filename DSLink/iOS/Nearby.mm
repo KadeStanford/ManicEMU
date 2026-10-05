@@ -18,6 +18,7 @@
 #include "PlayerName.h"
 #include "DiagnosticRecorder.h"
 #include "LocalRF.h"
+#include "LANPresence.h"
 #include <sys/resource.h>
 #include <unistd.h>
 #include "../../TradeLink/iOS/FrontendSave.h"
@@ -114,12 +115,16 @@ static UIViewController *presenter(){
 @interface MDSNearby:NSObject<MCSessionDelegate,MCNearbyServiceAdvertiserDelegate,MCNearbyServiceBrowserDelegate>
 @property(atomic,strong) MCSession *session;
 @property(atomic,strong) MDSLocalRF *localRF;
+@property(strong) MDSLANPresence *lanPresence;
 +(instancetype)shared;
 -(void)radio:(BOOL)on generation:(uint64_t)generation;
 -(void)prepared:(uint64_t)generation;
 -(BOOL)candidate:(NSDictionary*)info;
 -(MCNearbyServiceBrowser*)newBrowser;
 -(MCNearbyServiceAdvertiser*)newAdvertiser;
+-(MDSLANPresence*)newLANPresence;
+-(void)refreshDiscovery;
+-(NSDictionary*)discoveryMetrics;
 -(void)drain;
 -(void)cleanup;
 -(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation ipTime:(uint64_t)received callbackTime:(uint64_t)callback;
@@ -291,7 +296,8 @@ void MDS_afterFrame(double nativeMilliseconds,bool finalSnapshot){
         if(g.loaded&&(finalSnapshot||CACurrentMediaTime()-g.lastMetrics>=5)){g.lastMetrics=CACurrentMediaTime();
             metrics=@{@"format":@6,@"candidate":@"DS-v0.10-R3",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"native_radio_sent":@(g.room?g.room->radioSentCount():0),@"native_radio_received":@(g.room?g.room->radioReceivedCount():0),@"native_radio_dropped":@(g.room?g.room->radioDroppedCount():0),@"fragment_dropped":@(g.room?g.room->fragmentDroppedCount():0),@"unreliable_send_failures":@(g.unreliableSendFailures),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"receive_scope":@(g.receive.scope),@"host_receive_calls":@(g.receive.hostCalls),@"reply_receive_calls":@(g.receive.replyCalls),@"host_wait_calls":@(g.receive.hostWaits),@"reply_wait_calls":@(g.receive.replyWaits),@"host_wait_ms":@(g.receive.hostWaitMilliseconds),@"reply_wait_ms":@(g.receive.replyWaitMilliseconds),@"host_timeouts":@(g.receive.hostTimeouts),@"reply_timeouts":@(g.receive.replyTimeouts),@"host_empty":@(g.receive.hostEmpty),@"reply_complete":@(g.receive.replyComplete),@"reply_incomplete":@(g.receive.replyIncomplete),@"reply_payload":@(g.receive.replyResults[0]),@"reply_empty":@(g.receive.replyResults[1]),@"reply_stale":@(g.receive.replyResults[2]),@"reply_unknown_aid":@(g.receive.replyResults[3]),@"reply_unexpected_aid":@(g.receive.replyResults[4]),@"reply_duplicate_aid":@(g.receive.replyResults[5]),@"reply_malformed":@(g.receive.replyResults[6]),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
             NSMutableDictionary *detail=[metrics mutableCopy];
-            detail[@"candidate"]=@"DS-v0.10-R3";detail[@"local_rf"]=[[MDSNearby shared].localRF metrics]?:@{};
+            detail[@"candidate"]=@"DS-v0.10-R4";detail[@"local_rf"]=[[MDSNearby shared].localRF metrics]?:@{};
+            detail[@"lan_discovery"]=[[MDSNearby shared] discoveryMetrics];
             detail[@"rf_room_lock_max_us"]=@(g.rfRoomLockMax/1000);detail[@"rf_callback_to_room_max_us"]=@(g.rfCallbackToRoomMax/1000);
             const uint64_t anchorBegin=rfClockNanoseconds();
             detail[@"trace_wall_anchor_us"]=@(uint64_t(std::max(0.0,CACurrentMediaTime()-g.diagnosticStart)*1000000));
@@ -348,6 +354,7 @@ void MDS_gameUnloading(){
 @implementation MDSNearby {
     MCNearbyServiceAdvertiser *_advertiser;MCNearbyServiceBrowser *_browser;MCPeerID *_identity;
     NSMutableDictionary<MCPeerID*,NSDictionary*> *_peers;
+    NSMutableDictionary<MCPeerID*,NSDictionary*> *_attachedMetadata;
     NSMutableDictionary<MCPeerID*,NSNumber*> *_attempts,*_retryAt;
     // Access these only while holding the same mutex as the native room.
     NSMutableDictionary<MCPeerID*,NSString*> *_wirePeers;
@@ -355,9 +362,11 @@ void MDS_gameUnloading(){
     NSDictionary *_meta;NSString *_runtime;UIAlertController *_notice;
     NSTimer *_timer;uint64_t _generation;BOOL _prepared,_browsing;
     dispatch_queue_t _sendQueue;
+    std::atomic<bool> _discoveryQuiet;
+    std::atomic<uint64_t> _discoveryQuiets,_discoveryWakes;
 }
 +(instancetype)shared{static MDSNearby *v;static dispatch_once_t once;dispatch_once(&once,^{v=[self new];});return v;}
--(instancetype)init{if((self=[super init])){_sendQueue=dispatch_queue_create("org.manicemu.ds.room",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
+-(instancetype)init{if((self=[super init])){_discoveryQuiet.store(false);_discoveryQuiets.store(0);_discoveryWakes.store(0);_sendQueue=dispatch_queue_create("org.manicemu.ds.room",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];}return self;}
 -(BOOL)candidate:(NSDictionary*)info{
     Nonce n;MAC mac,alias;
     if(![info isKindOfClass:NSDictionary.class]||![info[@"v"] isEqual:WireVersion]||![info[@"ready"] isEqual:@"1"]||![info[@"local"] isEqual:@"1"]||!readNonce(info[@"nonce"],n)||![info[@"code"] isKindOfClass:NSString.class]||![info[@"runtime"] isKindOfClass:NSString.class]||!readMAC(info[@"mac"],mac)||!readMAC(info[@"alias"],alias))return NO;
@@ -375,6 +384,39 @@ void MDS_gameUnloading(){
 -(MCNearbyServiceAdvertiser*)newAdvertiser{
     return [[MCNearbyServiceAdvertiser alloc]initWithPeer:_identity discoveryInfo:_meta serviceType:Service];
 }
+-(MDSLANPresence*)newLANPresence{
+    __weak MDSNearby *weak=self;const uint64_t generation=_generation;
+    return [[MDSLANPresence alloc]initWithMetadata:_meta changed:^{
+        MDSNearby *owner=weak;if(owner&&generation==epoch.load())[owner refreshDiscovery];
+    }];
+}
+-(NSDictionary*)discoveryMetrics{
+    return @{@"quiet":@(_discoveryQuiet.load()),@"quiets":@(_discoveryQuiets.load()),@"wakes":@(_discoveryWakes.load())};
+}
+-(void)refreshDiscovery{
+    bool radio;NSArray *attached;
+    {std::lock_guard<std::mutex> guard(lock);radio=g.radio;attached=[_wirePeers.allValues copy];}
+    if(!_prepared||!radio)return;
+    // Stop redundant peer-to-peer discovery only after every admitted console
+    // has a ready DTLS path AND matching LAN presence. A new compatible LAN
+    // announcement wakes MC discovery automatically for encrypted admission.
+    // Room control remains on the original encrypted/ordered MCSession.
+    BOOL quiet=self.lanPresence.available&&attached.count>0&&_attempts.count==0;
+    NSArray *presence=self.lanPresence.peers;
+    for(NSString *nonce in attached){
+        NSDictionary *info=nil;for(NSDictionary *record in _attachedMetadata.allValues)
+            if([record[@"nonce"] isEqual:nonce]){info=record;break;}
+        BOOL announced=NO;for(NSDictionary *record in presence)
+            if([self valid:record]&&[record isEqual:info]){announced=YES;break;}
+        if(!announced||![info[@"lan"] isEqual:@"1"]||![self.localRF readyForPeer:nonce])quiet=NO;
+    }
+    for(NSDictionary *record in presence)
+        if([self valid:record]&&![attached containsObject:record[@"nonce"]])quiet=NO;
+    if(quiet){
+        if(!_discoveryQuiet.exchange(true)){[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];
+            _browsing=NO;_discoveryQuiets++;}
+    }else if(_discoveryQuiet.load())[self startDiscovery];
+}
 -(void)advertise{
     // Bonjour may cache an initial discoveryInfo for this MCPeerID. Never
     // publish the temporary ready=0 record while the core checkpoints.
@@ -383,12 +425,13 @@ void MDS_gameUnloading(){
 }
 -(void)startDiscovery{
     if(!_prepared)return;
+    if(_discoveryQuiet.exchange(false))_discoveryWakes++;
     if(!_browser){_browser=[self newBrowser];_browser.delegate=self;}
     if(!_browsing){[_browser startBrowsingForPeers];_browsing=YES;}
     [self advertise];[self connectReadyPeers];
 }
 -(void)radio:(BOOL)on generation:(uint64_t)generation{
-    if(!on){[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];_browsing=NO;return;}
+    if(!on){[self.lanPresence stop];self.lanPresence=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];_browsing=NO;_discoveryQuiet.store(false);return;}
     if(generation!=_generation){[self cleanup];_generation=generation;_runtime=NSUUID.UUID.UUIDString;_identity=[[MCPeerID alloc]initWithDisplayName:localPlayerName()];_peers=[NSMutableDictionary new];_attempts=[NSMutableDictionary new];_retryAt=[NSMutableDictionary new];
         std::lock_guard<std::mutex> guard(lock);_wirePeers=[NSMutableDictionary new];_early=[NSMutableDictionary new];}
     if(!_meta){char code[4];uint8_t rev;Nonce n;{std::lock_guard<std::mutex> guard(lock);std::memcpy(code,g.code,4);rev=g.revision;n=g.nonce;}
@@ -405,15 +448,15 @@ void MDS_gameUnloading(){
             dispatch_async(owner->_sendQueue,^{if(current==epoch.load()&&session==owner.session)[session sendData:wire toPeers:@[target] withMode:MCSessionSendDataReliable error:nil];});
         } receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){MDSNearby *owner=weak;if(owner)[owner receiveRadio:data nonce:nonce generation:current ipTime:received callbackTime:callback];}];
     }
-    if(_prepared)[self startDiscovery];
+    if(_prepared){if(!self.lanPresence){self.lanPresence=[self newLANPresence];[self.lanPresence start];}[self startDiscovery];}
 }
 -(void)prepared:(uint64_t)generation{
-    if(generation!=_generation)return;_prepared=YES;NSMutableDictionary *m=[_meta mutableCopy];m[@"ready"]=@"1";
+    if(generation!=_generation)return;_prepared=YES;NSMutableDictionary *m=[_meta mutableCopy];m[@"ready"]=@"1";m[@"lan"]=@"1";
     {std::lock_guard<std::mutex> guard(lock);m[@"local"]=g.intent?@"1":@"0";m[@"mac"]=g.wirelessMAC;MAC native;if(!readMAC(g.wirelessMAC,native))return;
         if(!g.room){g.room=std::make_unique<Room>(g.nonce,g.code,g.revision,native);g.room->radio(g.radio);}
         NSMutableString *alias=[NSMutableString new];for(auto b:g.room->alias())[alias appendFormat:@"%02x",b];m[@"alias"]=alias;}
     _meta=m;bool radio;{std::lock_guard<std::mutex> guard(lock);radio=g.radio;}
-    if(radio)[self startDiscovery];
+    if(radio){if(!self.lanPresence){self.lanPresence=[self newLANPresence];[self.lanPresence start];}[self startDiscovery];}
 }
 -(void)connectReadyPeers{
     bool radio;{std::lock_guard<std::mutex> guard(lock);radio=g.radio;}if(!_prepared||!radio)return;
@@ -443,7 +486,8 @@ void MDS_gameUnloading(){
             else if(data.length>=4&&!memcmp(data.bytes,"MDR1",4))g.room->receiveRadio(other,data.bytes,data.length);
             else {std::vector<Bytes> frames;if(unbatchWire(data.bytes,data.length,frames))for(const auto &frame:frames)g.room->receive(other,frame.data(),frame.size());}
         }
-        [_early removeObjectForKey:peer];}
+    [_early removeObjectForKey:peer];}
+    if(!_attachedMetadata)_attachedMetadata=[NSMutableDictionary new];_attachedMetadata[peer]=[info copy];
     [self.localRF add:info[@"nonce"]];for(NSDictionary *metadata in setups)[self.localRF connect:info[@"nonce"] metadata:metadata];
     packetsReady.notify_all();[self drain];
 }
@@ -479,18 +523,20 @@ void MDS_gameUnloading(){
 -(void)remove:(MCPeerID*)peer{
     NSString *nonce=nil;{std::lock_guard<std::mutex> guard(lock);nonce=_wirePeers[peer];}if(nonce)[self.localRF remove:nonce];
     {std::lock_guard<std::mutex> guard(lock);Nonce n;if(readNonce(_wirePeers[peer],n)&&g.room)g.room->remove(n);[_wirePeers removeObjectForKey:peer];[_early removeObjectForKey:peer];}
-    [_attempts removeObjectForKey:peer];_retryAt[peer]=@(CACurrentMediaTime()+2);packetsReady.notify_all();
+    [_attachedMetadata removeObjectForKey:peer];[_attempts removeObjectForKey:peer];_retryAt[peer]=@(CACurrentMediaTime()+2);packetsReady.notify_all();
 }
 -(void)tick:(NSTimer*)timer{
     (void)timer;for(MCPeerID *peer in [_attempts.allKeys copy])if(CACurrentMediaTime()-[_attempts[peer] doubleValue]>9){
         [_attempts removeObjectForKey:peer];_retryAt[peer]=@(CACurrentMediaTime()+2);[self.session cancelConnectPeer:peer];}
-    [self connectReadyPeers];[self drain];
+    [self refreshDiscovery];[self connectReadyPeers];[self drain];
 }
 -(void)warning:(NSString*)message generation:(uint64_t)generation{
     if(generation!=epoch.load()||_notice)return;_notice=[UIAlertController alertControllerWithTitle:@"DS nearby play" message:message preferredStyle:UIAlertControllerStyleAlert];
     [_notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){}]];[presenter() presentViewController:_notice animated:YES completion:nil];
 }
 -(void)cleanup{
+    [self.lanPresence stop];self.lanPresence=nil;_attachedMetadata=nil;_discoveryQuiet.store(false);
+    _discoveryQuiets.store(0);_discoveryWakes.store(0);
     [self.localRF stop];self.localRF=nil;
     [_timer invalidate];_timer=nil;[_advertiser stopAdvertisingPeer];[_browser stopBrowsingForPeers];_advertiser=nil;_browser=nil;
     [self.session disconnect];self.session=nil;_meta=nil;_peers=nil;_attempts=nil;_retryAt=nil;_prepared=_browsing=NO;

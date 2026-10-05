@@ -117,11 +117,28 @@ static MCPeerID *peers[3];
 -(void)startAdvertisingPeer{self.starts++;}
 -(void)stopAdvertisingPeer{self.stops++;}
 @end
+@interface TestLANPresence:MDSLANPresence
+@property BOOL mockAvailable,stopped;
+@property(strong) NSArray *mockPeers;
+@end
+@implementation TestLANPresence
+-(void)start{}
+-(BOOL)available{return self.mockAvailable&&!self.stopped;}
+-(NSArray*)peers{return self.mockPeers?:@[];}
+-(void)stop{self.stopped=YES;[super stop];}
+@end
+@interface TestRF:MDSLocalRF
+@property(strong) NSSet *readyNames;
+@end
+@implementation TestRF
+-(BOOL)readyForPeer:(NSString*)nonce{return [self.readyNames containsObject:nonce];}
+@end
 @interface TestNearby:MDSNearby
 @property unsigned advertised;
 @property(strong) NSDictionary *published;
 @end
 @implementation TestNearby
+-(MDSLANPresence*)newLANPresence{return [[TestLANPresence alloc]initWithMetadata:[self valueForKey:@"meta"] changed:^{}];}
 -(MCNearbyServiceBrowser*)newBrowser{
     return [[TestBrowser alloc]initWithPeer:[self valueForKey:@"identity"] serviceType:Service];
 }
@@ -286,7 +303,66 @@ static void tests(){@autoreleasepool{
             {std::lock_guard<std::mutex> guard(lock);g.radio=true;}
             [discovery radio:YES generation:g.epoch];
             check(@"ready native reentry restarts discovery with same identity",pendingBrowser.starts==2&&[discovery.published[@"mac"] isEqual:@"0009bf010203"]);
+            TestLANPresence *presence=(TestLANPresence*)discovery.lanPresence;
+            NSMutableDictionary *info=[metadata(0,@"B") mutableCopy];info[@"lan"]=@"1";
+            [discovery setValue:[NSMutableDictionary dictionaryWithObject:info forKey:earlyPeer] forKey:@"attachedMetadata"];
+            [discovery setValue:[NSMutableDictionary dictionaryWithObject:info[@"nonce"] forKey:earlyPeer] forKey:@"wirePeers"];
+            [[discovery valueForKey:@"attempts"] removeAllObjects];
+            TestSession *admitted=[[TestSession alloc]initWithPeer:[discovery valueForKey:@"identity"] securityIdentity:nil encryptionPreference:MCEncryptionRequired];
+            admitted.mockPeers=@[earlyPeer];discovery.session=admitted;
+            [discovery.localRF stop];TestRF *ready=[TestRF new];discovery.localRF=ready;ready.readyNames=[NSSet setWithObject:info[@"nonce"]];
+            presence.mockPeers=@[info];[discovery refreshDiscovery];
+            check(@"unavailable LAN presence retains nearby discovery",![discovery.discoveryMetrics[@"quiet"] boolValue]);
+            presence.mockAvailable=YES;ready.readyNames=[NSSet new];[discovery refreshDiscovery];
+            check(@"incomplete direct path retains nearby discovery",![discovery.discoveryMetrics[@"quiet"] boolValue]);
+            ready.readyNames=[NSSet setWithObject:info[@"nonce"]];[discovery refreshDiscovery];
+            check(@"ready direct peers with LAN presence quiet redundant nearby discovery",[discovery.discoveryMetrics[@"quiet"] boolValue]&&pendingBrowser.stops==2);
+            [discovery refreshDiscovery];
+            check(@"quiet discovery transition is idempotent",[discovery.discoveryMetrics[@"quiets"] unsignedIntValue]==1&&pendingBrowser.stops==2);
+            check(@"quiet discovery preserves encrypted session and native routing",discovery.session!=nil&&[[discovery valueForKey:@"wirePeers"] count]==1&&starts==0);
+            NSMutableDictionary *third=[metadata(1,@"C") mutableCopy];third[@"lan"]=@"1";presence.mockPeers=@[info,third];
+            [discovery refreshDiscovery];
+            check(@"new compatible LAN arrival wakes discovery without pairing prompt",![discovery.discoveryMetrics[@"quiet"] boolValue]&&pendingBrowser.starts==3&&[discovery.discoveryMetrics[@"wakes"] unsignedIntValue]==1&&[discovery valueForKey:@"notice"]==nil);
+            presence.mockPeers=@[info];[discovery refreshDiscovery];
+            check(@"remaining direct room quiets after unjoined LAN departure",[discovery.discoveryMetrics[@"quiet"] boolValue]);
+            NSMutableDictionary *gen5=[third mutableCopy];gen5[@"code"]=@"IRBO";presence.mockPeers=@[info,gen5];[discovery refreshDiscovery];
+            check(@"incompatible generation presence does not disturb direct room",[discovery.discoveryMetrics[@"quiet"] boolValue]);
+            presence.mockAvailable=NO;[discovery refreshDiscovery];
+            check(@"LAN discovery failure restores existing automatic discovery",![discovery.discoveryMetrics[@"quiet"] boolValue]&&pendingBrowser.starts==4);
+            presence.mockAvailable=YES;presence.mockPeers=@[];[discovery refreshDiscovery];
+            check(@"missing admitted peer presence keeps discovery active",![discovery.discoveryMetrics[@"quiet"] boolValue]);
+            [discovery radio:NO generation:g.epoch];
+            check(@"native radio exit stops LAN presence",presence.stopped&&discovery.lanPresence==nil);
             [discovery cleanup];discovery=nil;
+        });
+        __block MDSLANPresence *lanA,*lanB;__block NSDictionary *lanInfoA,*lanInfoB;
+        dispatch_sync(dispatch_get_main_queue(),^{
+            MDSLANPresence *unprepared=[[MDSLANPresence alloc]initWithMetadata:@{@"code":@"ADAE"} changed:^{}];
+            [unprepared start];check(@"unprepared LAN metadata cannot publish or crash discovery",!unprepared.available&&[unprepared valueForKey:@"announcement"]==nil);[unprepared stop];
+            NSMutableDictionary *a=[metadata(0,NSUUID.UUID.UUIDString) mutableCopy],*b=[metadata(1,NSUUID.UUID.UUIDString) mutableCopy];
+            a[@"lan"]=@"1";b[@"lan"]=@"1";lanInfoA=a;lanInfoB=b;
+            lanA=[[MDSLANPresence alloc]initWithMetadata:a changed:^{}];lanB=[[MDSLANPresence alloc]initWithMetadata:b changed:^{}];
+            [lanA start];[lanB start];
+        });
+        __block bool lanReady=false;
+        for(unsigned attempt=0;attempt<1200&&!lanReady;attempt++){
+            dispatch_sync(dispatch_get_main_queue(),^{lanReady=lanA.available&&lanB.available&&[lanA.peers containsObject:lanInfoB]&&[lanB.peers containsObject:lanInfoA];});
+            if(!lanReady)std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(@"actual bilateral LAN Bonjour discovers bounded native presence",lanReady);
+        dispatch_sync(dispatch_get_main_queue(),^{
+            NSNetService *ann=[lanA valueForKey:@"announcement"];NSNetServiceBrowser *browse=[lanA valueForKey:@"browser"];
+            check(@"LAN presence excludes peer-to-peer participation",!ann.includesPeerToPeer&&!browse.includesPeerToPeer);
+            NSDictionary *txt=[NSNetService dictionaryFromTXTRecordData:ann.TXTRecordData];
+            check(@"LAN advertisement contains identity metadata only",txt.count==10&&txt[@"key"]==nil&&ann.port==9&&ann.TXTRecordData.length<=1024);
+            NSNetService *invalid=[[NSNetService alloc]initWithDomain:@"local." type:MDSLANService name:@"mds-invalid" port:9];
+            NSMutableDictionary *services=[lanA valueForKey:@"services"];services[invalid.name]=invalid;
+            NSMutableDictionary *bad=[txt mutableCopy];bad[@"key"]=[@"synthetic-forbidden-field" dataUsingEncoding:NSUTF8StringEncoding];
+            [lanA update:invalid record:[NSNetService dataFromTXTRecordDictionary:bad]];
+            [lanA update:invalid record:[NSMutableData dataWithLength:1025]];
+            [lanA update:invalid record:[@"malformed" dataUsingEncoding:NSUTF8StringEncoding]];
+            check(@"invalid oversized or secret-bearing LAN records never become peers",[[lanA valueForKey:@"peers"] objectForKey:invalid.name]==nil);
+            [lanA stop];[lanB stop];check(@"LAN stop clears publishers browsers and cached records",!lanA.available&&!lanB.available&&lanA.peers.count==0&&lanB.peers.count==0);
         });
         __block TestSession *session;__block TestBrowser *browser;__block MCNearbyServiceAdvertiser *advertiser;
         dispatch_sync(dispatch_get_main_queue(),^{MDSNearby *m=[MDSNearby shared];[m cleanup];[m setValue:@(g.epoch) forKey:@"generation"];[m setValue:@YES forKey:@"prepared"];[m setValue:@"A" forKey:@"runtime"];

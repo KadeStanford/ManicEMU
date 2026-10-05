@@ -149,3 +149,31 @@ Simulator tests exercise real bilateral DTLS, valid callback/completion clocks,
 explicit IP availability, a controlled 75ms callback-queue blockage and ring
 wrapping under encrypted bursts. They cannot establish iPhone Wi-Fi performance
 or completed physical trades. R3 is a diagnostic candidate, not a proven fix.
+
+R4 keeps a bounded, LAN-only `_manic-ds-lan._tcp` presence announcement while
+native wireless is enabled. It contains the existing public console metadata;
+no game bytes, save, transport key, address or credential is advertised. The
+record is discovery-only and opens no new socket. Both publication and browsing
+explicitly exclude peer-to-peer Wi-Fi. Add this type to the app's existing
+Bonjour service declarations; the bundle identity and local-network permission
+remain the same.
+
+Once every admitted console has matching LAN presence and a ready direct DTLS
+path, continuous MC nearby advertising/browsing stops. A new compatible LAN
+participant automatically reopens it for the existing encrypted admission
+process. There is no pairing chooser, one-peer limit or game invitation change.
+Missing/failed LAN discovery, older connected peers, incomplete direct paths
+and pending admission retain the existing discovery behavior. Connected
+encrypted MC sessions and ordered room controls remain untouched. Native radio
+exit stops LAN presence and reentry republishes it. The recorder additionally
+retains bounded quiet/wake transition counters.
+
+This targets redundant nearby discovery during latency-sensitive LAN exchanges.
+It does not disable the system's peer-to-peer interface or other nearby services;
+an idle connected MC session may still participate in peer-to-peer networking.
+Phone latency benefit and completed physical trades require verification. All
+participants should use R4 for automatic arrival into an already quiet room.
+Simulator coverage includes real bilateral Bonjour discovery, exclusion of
+peer-to-peer participation, bounded/invalid metadata and automatic third-peer
+wake/fallback/exit. Native packet bytes, 25ms deadlines and stale/AID checks are
+unchanged.

@@ -7,6 +7,8 @@
 		<string>_manicemu._tcp</string>
 		<string>_ra_netplay._tcp</string>
 		<string>_manic-trade._tcp</string>
+		<string>_manic-ds._tcp</string>
+		<string>_manic-ds-lan._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Manic EMU needs access to your local network to find and connect with other devices for online gaming.</string>

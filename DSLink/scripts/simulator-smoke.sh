@@ -15,7 +15,7 @@ p=pathlib.Path(sys.argv[1]);p.joinpath('Info.plist').write_bytes(plistlib.dumps(
 'CFBundleVersion':'1','CFBundleShortVersionString':'1','MinimumOSVersion':'15.0','UIDeviceFamily':[1],
 'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,
 'UISceneConfigurations':{'UIWindowSceneSessionRoleApplication':[{'UISceneConfigurationName':'Test','UISceneDelegateClassName':'TestScene'}]}},
-'NSLocalNetworkUsageDescription':'Synthetic local bridge tests.','NSBonjourServices':['_manic-ds._tcp']}))
+'NSLocalNetworkUsageDescription':'Synthetic local bridge tests.','NSBonjourServices':['_manic-ds._tcp','_manic-ds-lan._tcp']}))
 PY
 codesign --force --sign - "$app"
 device="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["name"].startswith("iPhone")))')"

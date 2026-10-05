@@ -120,6 +120,7 @@ static nw_parameters_t rfParameters(NSData *key){
 -(void)stop;
 -(NSDictionary*)metrics;
 -(void)sampleQueue;
+-(BOOL)readyForPeer:(NSString*)nonce;
 #ifdef MDS_RF_TESTING
 -(void)testQueueBlock:(dispatch_block_t)block;
 #endif
@@ -160,6 +161,10 @@ static nw_parameters_t rfParameters(NSData *key){
         if(!strong->_stopped&&strong->_peers.count&&queued&&entered>=queued){const auto delay=entered-queued;
             strong->_probeSamples++;strong->_probeDelayMax=std::max(strong->_probeDelayMax,delay);rfDurationBins(strong->_probeDelayBins,delay);}
     });
+}
+-(BOOL)readyForPeer:(NSString*)nonce{
+    std::lock_guard<std::mutex> guard(_mutex);MDSRFPeer *peer=_peers[nonce];
+    return !_stopped&&peer&&!peer.stopped&&peer.ready&&peer.outgoing;
 }
 #ifdef MDS_RF_TESTING
 -(void)testQueueBlock:(dispatch_block_t)block{dispatch_async(_queue,block);}

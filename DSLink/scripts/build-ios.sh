@@ -59,7 +59,7 @@ files={n:hashlib.sha256((p/(n+'.framework')/n).read_bytes()).hexdigest() for n i
  'receive_diagnostics':'numeric scoped host/reply waits, timeouts, empty/stale/unexpected/duplicate/malformed reply outcomes; no packet bytes',
  'sdk_timing_diagnostics':'format 6: fixed512 SHA256 datagram fingerprints with send-entry/receive-callback/completion CLOCK_MONOTONIC_RAW; bounded RF queue probes, completion histograms, room-lock wait and trace clock anchors; IP metadata opportunistic and explicitly missing; no new packets/deadline changes',
  'native_radio_carrier':'unreliable/unsequenced, pair and bilateral radio-epoch isolation, <=1000-byte fragments, no RF ACKs; reliable room lifecycle controls',
- 'discovery':'ready-only Bonjour advertisement; retained ready remote candidates during local preparation',
+ 'discovery':'ready-only nearby bootstrap; bounded LAN-only presence quiets redundant nearby discovery after all direct peers are ready and wakes on compatible arrival',
  'manic_compatibility_source':'Daiuno/melonds-ds@1a28e0fe2a78c9d2318f4324835ff906488299a2',
  'native_engine_source':'Daiuno/melonDS@ee7505609fcfa48946d3e0235acecf315fa322ae',
  'manic_custom_screen_layout_preserved':True,'optional_jit_compiled':True,

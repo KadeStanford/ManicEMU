@@ -52,6 +52,7 @@ def package(source,build,output,audit):
         if required-symbols(files['DSOriginal']['DSOriginal']):raise ValueError('DS engine loses frontend ABI exports')
         updated=dict(info);services=list(info.get('NSBonjourServices',[]))
         if '_manic-ds._tcp' not in services:services.append('_manic-ds._tcp')
+        if '_manic-ds-lan._tcp' not in services:services.append('_manic-ds-lan._tcp')
         updated['NSBonjourServices']=services
         if not updated.get('NSLocalNetworkUsageDescription'):updated['NSLocalNetworkUsageDescription']='Find nearby players for local game trading and battles.'
         replacements={ds+'melondsds.libretro':files['melondsds.libretro']['melondsds.libretro'],plist_path:plistlib.dumps(updated,fmt=plistlib.FMT_BINARY,sort_keys=False)}
