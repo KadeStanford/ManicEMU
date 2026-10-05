@@ -34,6 +34,7 @@ static unsigned replayCalls=3600;
 static double replaySeconds=120;
 static uint64_t audioSamples;
 static double runSeconds,maximumRunSeconds,runCPUSeconds,maximumRunCPUSeconds;
+static unsigned (*activeBackend)(void);
 static unsigned wallBins[8],cpuBins[8];
 static const double timeLimits[]={0.001,0.004,0.008,0.016667,0.033333,0.066667,0.125};
 static double threadCPUSeconds(void) {
@@ -156,6 +157,7 @@ static bool environment(unsigned command,void *data) {
                 "Software";
 #endif
             else if(!strcmp(v->key,"citra_use_cpu_jit"))v->value="disabled";
+            else if(!strcmp(v->key,"citra_use_shader_jit"))v->value="disabled";
             else if(!strcmp(v->key,"citra_use_fastinterp")){
                 const char *mode=getenv("MANIC_COMPARE_FASTINTERP");
                 if(!mode||(strcmp(mode,"enabled")&&strcmp(mode,"disabled")))abort();
@@ -292,6 +294,8 @@ static void runProbe(void) {
         // never reuse preserved-binary logging pointers or function offsets.
         report[@"requested_cpu_backend"]=@(getenv("MANIC_COMPARE_FASTINTERP") ?: "unset");
         report[@"uses_preserved_binary_offsets"]=@NO;
+        activeBackend=(void *)dlsym(h,"retro_azahar_cpu_backend");
+        if(!activeBackend){checkpoint(@"missing_entrypoint");return;}
         checkpoint(@"retro_load_game");
         NSString *gamePath=[root stringByAppendingPathComponent:@"input/game.cxi"];
         Game game={gamePath.fileSystemRepresentation,NULL,0,NULL};
@@ -317,6 +321,11 @@ static void runProbe(void) {
                 if(!replayEvents||runCalls==1||runCalls%120==0)checkpoint(@"retro_run");
                 double cpuStart=threadCPUSeconds(),callStart=monotonicSeconds();
                 run();double elapsed=monotonicSeconds()-callStart,cpuElapsed=threadCPUSeconds()-cpuStart;
+                if(runCalls==1||runCalls%120==0){
+                    unsigned backend=activeBackend();report[@"actual_cpu_backend"]=@(backend);
+                    unsigned expected=!strcmp(getenv("MANIC_COMPARE_FASTINTERP"),"enabled")?2:1;
+                    if(backend!=expected){report[@"backend_selection_mismatch"]=@YES;break;}
+                }
                 runCPUSeconds+=cpuElapsed;maximumRunCPUSeconds=MAX(maximumRunCPUSeconds,cpuElapsed);
                 addBin(wallBins,elapsed);addBin(cpuBins,cpuElapsed);
                 runSeconds+=elapsed;maximumRunSeconds=MAX(maximumRunSeconds,elapsed);

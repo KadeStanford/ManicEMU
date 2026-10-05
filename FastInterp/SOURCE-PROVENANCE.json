@@ -119,16 +119,110 @@
   "game_scene_verified": false,
   "physical_performance_verified": false,
   "preferred_build_source": "azahar-emu/azahar@98932aeeb7d81ba08715a3e6eff57d47c2d1a65d",
-  "preferred_integration_patch_sha256": "9c4e2ec2764b1408ce1b140c68525ee55bafd79e6e41c01c0c80d777df81aa5c",
+  "preferred_integration_patch_sha256": "f67b3541ae72dd67ab2ec25aeb3d40a1ced62ad7fafedbb5b256661b32f8cec1",
   "legacy_public_backport_selection": "compiler/ABI feasibility control only; historical boot failure prevents promotion",
   "preferred_interpreter_source_unchanged": true,
   "preferred_extensions": [
     "Manic keyboard, CIA installation and amiibo ABI version 1",
-    "Existing microphone and camera bridges",
+    "Upstream microphone factory retained; Manic camera bridge restored",
     "No-JIT permission gate retained",
     "Plugin loader and lowercase title path",
     "Demonstrated zero-framebuffer black clear and lazy color-fill texture allocation",
     "Plugin-aware duplicate-presentation bypass",
-    "Actual runtime CPU backend query for comparison evidence"
+    "Actual runtime CPU backend query for comparison evidence",
+    "Separate azahar-fastinterp.libretro image enforces FastInterp and disables CPU/shader JIT; mismatched actual CPU rejects game load"
+  ],
+  "preferred_source_commit": "e8cfd06652b75db52ef35e2a6e80333f5bd61b86",
+  "preferred_interpreter_files": [
+    {
+      "path": "src/core/arm/fastinterp/fastinterp.cpp",
+      "sha256": "126621be5bea8e0c5f15cc90c5192e3e9022e4933b486b86e53c02a81f2c3346",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp.h",
+      "sha256": "7147d3f7ca2e7c38ea27ff1b9f6d0f876e5de4a93ecc267204c8a37ecd0e8653",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp_arm64.inc",
+      "sha256": "d69d41b8a794a3ae1a09f0261c9a0c27b82cf24fc43ace591eb4269d7489ac6e",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp_cache.h",
+      "sha256": "e4ff66502b69913072ed4e693326663252859ffab6697936ff7d4d4a82b66db9",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp_decode.cpp",
+      "sha256": "4f7dfd90680ddf489c1a03dd4f92d42269c7667500767ea96d0a6e88baf10fbe",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp_flags.h",
+      "sha256": "5cb23e645e608c942e99dec4e059722c5fcb25aad5aba746ba43cf3f08dd35a3",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/fastinterp_types.h",
+      "sha256": "b190461c25ef7aa0e4b6c6019ce611bf55d0637a2ed4935509fa1bbc770b591a",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_alu.inc",
+      "sha256": "0b5efbf1ab798febb6731e58eb32e8e202f68235991571f24a3577d114a65802",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_alu_s.inc",
+      "sha256": "46230913bb979c161b272be0fb1ea9ef49d2309b28d97c45332a9158e9594983",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_branch.inc",
+      "sha256": "a3320f3e79f4f0ab5f8c6a72f69b1d63140fe8db5625c622f8f7ac1aaeb2391e",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_loadstore.inc",
+      "sha256": "4d70f5112bbd6a50f2a20f33f2532768f2affe7eec811356521d25e1bcf3fc0c",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_misc.inc",
+      "sha256": "42b4b1b5de2900abcb3af013f36f770db1252219a03a1779f9adadd47ef83a95",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_multiply.inc",
+      "sha256": "537fba534f804f640e657c601eb4e32187af6a291d0aa9912532371c6e1233db",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/arm_vfp.inc",
+      "sha256": "cdf541ff412504e8127b232400ec714266d48f3cff51a1013c30f5804f6be3f6",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/fused.inc",
+      "sha256": "8cc6b33ebb60f520cc65aeec71c49317d8eb3e5c894d7efec39fe05a5367fa5e",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/special.inc",
+      "sha256": "9196247f6f7fd402a44f962c1e9fd0bf93b94ed2c33c7171029f0969dc272eda",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/thumb16.inc",
+      "sha256": "6931ab1c7acf91aa04cb6b9d90943739c74dd22c1030443c8ee987a6daa2be5c",
+      "unchanged": true
+    },
+    {
+      "path": "src/core/arm/fastinterp/handlers/thumb32.inc",
+      "sha256": "750de9156aa485c9fb88479bc8ffb152ff27c277521c2fbd311b2bb03c4dba88",
+      "unchanged": true
+    }
   ]
 }

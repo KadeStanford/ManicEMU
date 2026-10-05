@@ -49,11 +49,15 @@ jobs:
           for s in retro_api_version retro_run retro_serialize retro_unserialize \
             retro_azahar_set_keyboard_callback retro_azahar_keyboard_input retro_azahar_install_cia \
             retro_azahar_extension_version retro_azahar_load_amiibo \
-            retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo retro_azahar_cpu_backend; do
+            retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo retro_azahar_cpu_backend \
+            retro_azahar_fastinterp_required; do
             nm -gU "$core" | grep -F "_$s" > /dev/null
           done
           strings "$core" | grep -F 'FastInterp ARM interpreter created for core' > /dev/null
           cp "$core" deliverables/azahar-fastinterp-iphoneos.dylib
+          cp "$core" deliverables/azahar-fastinterp.libretro
+          install_name_tool -id '@rpath/azahar-fastinterp.libretro.framework/azahar-fastinterp.libretro' deliverables/azahar-fastinterp.libretro
+          shasum -a 256 deliverables/azahar-fastinterp.libretro > deliverables/fastinterp-framework-sha256.txt
           file "$core" > deliverables/iphoneos-abi.txt
           otool -l "$core" >> deliverables/iphoneos-abi.txt
           otool -L "$core" >> deliverables/iphoneos-abi.txt
@@ -73,14 +77,26 @@ jobs:
           cp "$core" deliverables/azahar-fastinterp-macos.dylib
           shasum -a 256 "$core" > deliverables/native-sha256.txt
           python3 - <<'PY'
-          import ctypes,json
+          import ctypes,json,pathlib,shutil
           c=ctypes.CDLL('build-native/bin/azahar_libretro.dylib')
           c.retro_api_version.restype=ctypes.c_uint
           c.retro_azahar_extension_version.restype=ctypes.c_uint
           assert c.retro_api_version()==1
           assert c.retro_azahar_extension_version()==1
           assert c.retro_azahar_cpu_backend()==0
+          assert c.retro_azahar_fastinterp_required()==0
+          variant=pathlib.Path('build-native/bin/azahar-fastinterp.libretro')
+          shutil.copyfile('build-native/bin/azahar_libretro.dylib',variant)
+          v=ctypes.CDLL(str(variant))
+          assert v.retro_azahar_fastinterp_required()==1
+          class Info(ctypes.Structure):
+              _fields_=[('name',ctypes.c_char_p),('version',ctypes.c_char_p),('extensions',ctypes.c_char_p),('fullpath',ctypes.c_bool),('block_extract',ctypes.c_bool)]
+          info=Info();v.retro_get_system_info(ctypes.byref(info))
+          assert info.name==b'Azahar FastInterp'
+          info=Info();c.retro_get_system_info(ctypes.byref(info))
+          assert info.name==b'Azahar'
           print(json.dumps({'native_dylib_load':True,'libretro_api':1,'manic_extension_api':1,
+                            'separate_variant_required':True,'distinct_library_name':True,
                             'private_game_run':False,'phone_scene_verified':False}))
           PY
       - name: Run actual interpreter cache regression on Apple ARM64
