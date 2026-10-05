@@ -1,6 +1,17 @@
 # Nintendo DS local wireless candidate
 
-DS v0.9 follows confirmed v0.8 phone feedback. HeartGold/SoulSilver trading and
+DS v0.10 adds an encrypted local RF path to the v0.9 diagnostic baseline.
+Admitted peers exchange fresh, per-peer DTLS keys and local IPv4 listener
+addresses only over the existing encrypted MCSession. Direct RF is restricted
+to connected local subnets, keeps the same native fragments and epoch gates,
+and has at most 32 outstanding sends per peer. Unavailable LAN routes fall back
+to the existing encrypted MCSession; datagrams admitted to DTLS are never sent
+again over MPC on completion failure. Discovery, names, compatibility boundaries,
+room controls and native 25ms reply validation are preserved. No credentials,
+keys or addresses are stored in diagnostics. The native core is unchanged.
+Simulator DTLS tests are loopback-only; they cannot prove physical Wi-Fi latency.
+
+The earlier phone feedback reports HeartGold/SoulSilver trading and
 battling are reported working with slowdown; Black/White show trainers but
 interaction/trade fail with communication errors. Native receive waits consumed
 68% of measured active Black/White stalls on one trusted USB phone. Two proven

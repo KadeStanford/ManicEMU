@@ -164,7 +164,7 @@ static void tests(){@autoreleasepool{
     try{
         // Exercise Network.framework DTLS itself, not a mocked sendData call.
         std::mutex rfMutex;unsigned rfArrivals=0;bool rfWrong=false;
-        __block MDSLocalRF *rfA=nil,*rfB=nil;__block NSDictionary *setupA=nil,*setupB=nil;
+        MDSLocalRF *rfA=nil,*rfB=nil;NSDictionary *setupA=nil,*setupB=nil;
         auto setup=[&](bool side,NSString *nonce,NSDictionary *metadata){
             (void)nonce;std::lock_guard<std::mutex> guard(rfMutex);if(side)setupA=metadata;else setupB=metadata;
         };

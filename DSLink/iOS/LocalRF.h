@@ -66,7 +66,9 @@ static nw_parameters_t rfParameters(NSData *key){
     return nw_parameters_create_secure_udp(^(nw_protocol_options_t options){
         sec_protocol_options_t security=nw_tls_copy_sec_protocol_options(options);
         sec_protocol_options_add_pre_shared_key(security,rfData(key),rfData([@"ManicDS-RF-1" dataUsingEncoding:NSASCIIStringEncoding]));
-        sec_protocol_options_append_tls_ciphersuite(security,tls_ciphersuite_PSK_WITH_AES_128_GCM_SHA256);
+        // RFC 5487 cipher 0x00a8. Apple's modern enum omits this DTLS PSK
+        // name although its public cipher configuration accepts the wire ID.
+        sec_protocol_options_append_tls_ciphersuite(security,static_cast<tls_ciphersuite_t>(0x00a8));
         sec_protocol_options_set_min_tls_protocol_version(security,tls_protocol_version_DTLSv12);
         sec_protocol_options_set_max_tls_protocol_version(security,tls_protocol_version_DTLSv12);
     },NW_PARAMETERS_DEFAULT_CONFIGURATION);
