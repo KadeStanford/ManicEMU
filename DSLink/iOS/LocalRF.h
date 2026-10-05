@@ -121,11 +121,12 @@ static nw_parameters_t rfParameters(NSData *key){
     BOOL _stopped;
     uint64_t _sent,_received,_dropped,_failures;
     uint64_t _kernelSamples,_kernelMissing,_kernelInvalid,_callbackDelayMax,_sendCompletionSamples,_sendCompletionMax;
-    std::array<uint64_t,8> _callbackDelayBins{},_sendCompletionBins{};
+    std::array<uint64_t,8> _callbackDelayBins,_sendCompletionBins;
     unsigned _pendingMax;
 }
 -(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*,uint64_t,uint64_t))receive{
     if((self=[super init])){_queue=dispatch_queue_create("org.manicemu.ds.local-rf",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));
+        _callbackDelayBins.fill(0);_sendCompletionBins.fill(0);
         _peers=[NSMutableDictionary new];_interfaces=rfInterfaces();_setup=[setup copy];_receive=[receive copy];}return self;
 }
 -(void)read:(nw_connection_t)connection peer:(MDSRFPeer*)peer{
