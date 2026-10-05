@@ -29,7 +29,7 @@ xcrun --sdk "$sdk_name" clang++ -target "$target" -isysroot "$sdk" -std=c++17 -f
   -O2 -Wall -Wextra -Werror -Wno-unused-parameter -dynamiclib \
   -I "$root/Core" -I "$root/../OriginalCoreRepair/Tests/vendor" \
   "$root/Core/Protocol.cpp" "$root/Core/Room.cpp" "$root/iOS/CoreShim.mm" "$root/iOS/Nearby.mm" \
-  -framework Foundation -framework UIKit -framework MultipeerConnectivity -framework QuartzCore \
+  -framework Foundation -framework UIKit -framework MultipeerConnectivity -framework QuartzCore -framework Network -framework Security \
   -install_name '@rpath/melondsds.libretro.framework/melondsds.libretro' \
   -o "$build/melondsds.libretro.framework/melondsds.libretro"
 for name in DSOriginal melondsds.libretro; do

@@ -1,7 +1,7 @@
 name: DS local wireless candidate
 on:
   push:
-    branches: [feature/ds-local-wireless]
+    branches: [feature/ds-local-wireless, fix/ds-v010-delivery-pacing]
     paths: ['DSLink/**', '.github/workflows/ds-local-wireless.yml']
   workflow_dispatch:
 permissions:

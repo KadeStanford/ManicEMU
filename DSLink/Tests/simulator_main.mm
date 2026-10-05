@@ -1,4 +1,5 @@
 // Synthetic UIKit/frontend boundary test. No game, firmware or real save input.
+#define MDS_RF_TESTING 1
 #include "../iOS/Nearby.mm"
 #include "../iOS/GeneratedConsole.h"
 #include <stdexcept>
@@ -161,6 +162,31 @@ static NSDictionary *metadata(unsigned i,NSString *runtime){MAC alias=peerMAC(i)
 static void tests(){@autoreleasepool{
     results=[NSMutableDictionary new];NSString *errorText=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     try{
+        // Exercise Network.framework DTLS itself, not a mocked sendData call.
+        std::mutex rfMutex;unsigned rfArrivals=0;bool rfWrong=false;
+        __block MDSLocalRF *rfA=nil,*rfB=nil;__block NSDictionary *setupA=nil,*setupB=nil;
+        auto setup=[&](bool side,NSString *nonce,NSDictionary *metadata){
+            (void)nonce;std::lock_guard<std::mutex> guard(rfMutex);if(side)setupA=metadata;else setupB=metadata;
+        };
+        auto rfReceive=[&](NSString *nonce,NSData *data){std::lock_guard<std::mutex> guard(rfMutex);
+            rfWrong|=data.length!=73||((const uint8_t*)data.bytes)[72]!=0x51||(![nonce isEqual:@"A"]&&![nonce isEqual:@"B"]);rfArrivals++;
+        };
+        rfA=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(true,nonce,metadata);} receive:^(NSString *nonce,NSData *data){rfReceive(nonce,data);}];
+        rfB=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(false,nonce,metadata);} receive:^(NSString *nonce,NSData *data){rfReceive(nonce,data);}];
+        [rfA add:@"B"];[rfB add:@"A"];
+        waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return setupA&&setupB;});
+        check(@"DTLS peer setup uses independent ephemeral keys",![setupA[@"key"] isEqual:setupB[@"key"]]);
+        check(@"DTLS setup refuses public and multicast routes",!rfLocalAddress(@"8.8.8.8",rfInterfaces())&&!rfLocalAddress(@"224.0.0.1",rfInterfaces()));
+        [rfA connect:@"B" metadata:setupB];[rfB connect:@"A" metadata:setupA];
+        waitUntil([&]{return [[rfA metrics][@"ready_peers"] unsignedIntValue]==1&&[[rfB metrics][@"ready_peers"] unsignedIntValue]==1;});
+        uint8_t rfBytes[73]{};memcpy(rfBytes,"MDR1",4);rfBytes[72]=0x51;NSData *rfPacket=[NSData dataWithBytes:rfBytes length:sizeof(rfBytes)];
+        check(@"real encrypted UDP bilateral sends admitted",[rfA send:rfPacket peer:@"B"]&&[rfB send:rfPacket peer:@"A"]);
+        waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==2;});
+        check(@"real DTLS preserves bilateral datagrams",!rfWrong&&[[rfA metrics][@"received"] unsignedIntValue]==1&&[[rfB metrics][@"received"] unsignedIntValue]==1);
+        check(@"unknown direct RF peer falls back",![rfA send:rfPacket peer:@"C"]);
+        [rfA remove:@"B"];[rfB remove:@"A"];
+        check(@"direct RF removal prevents old-session sends",![rfA send:rfPacket peer:@"B"]&&![rfB send:rfPacket peer:@"A"]);
+        [rfA stop];[rfB stop];
         MDSGeneratedConsole first{1,{},{}},second{1,{},{}};
         check(@"generated console identity provided",generatedConsole(&first));
         check(@"generated console identity stable across calls",generatedConsole(&second)&&!memcmp(first.mac,second.mac,6));
@@ -281,7 +307,7 @@ static void tests(){@autoreleasepool{
                 waitUntil([]{return diagnosticJobs.load()==0;});
                 NSURL *capture=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics/current.json"];
                 NSDictionary *record=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:capture] options:0 error:nil];
-                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==5&&[record[@"candidate"] isEqual:@"DS-v0.9"]&&[record[@"trace"] count]==2);
+                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==5&&[record[@"candidate"] isEqual:@"DS-v0.10"]&&[record[@"trace"] count]==2);
                 NSString *pinned=[NSString stringWithFormat:@"ManicDSDiagnostics/capture-%02u-incomplete.json",g.diagnosticSession];
                 check(@"incomplete exchange remains pinned after room recovery",[NSData dataWithContentsOfURL:[docs URLByAppendingPathComponent:pinned]]!=nil&&g.lastIncomplete->size()==2);
                 check(@"slow frame snapshot and recorder cost recorded",g.lastSlow->size()==2&&g.frameOver50==1&&g.writerFailures==0);
