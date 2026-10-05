@@ -357,11 +357,12 @@ static void tests(){@autoreleasepool{
             check(@"LAN advertisement contains identity metadata only",txt.count==10&&txt[@"key"]==nil&&ann.port==9&&ann.TXTRecordData.length<=1024);
             NSNetService *invalid=[[NSNetService alloc]initWithDomain:@"local." type:MDSLANService name:@"mds-invalid" port:9];
             NSMutableDictionary *services=[lanA valueForKey:@"services"];services[invalid.name]=invalid;
+            const NSUInteger validPeers=lanA.peers.count;
             NSMutableDictionary *bad=[txt mutableCopy];bad[@"key"]=[@"synthetic-forbidden-field" dataUsingEncoding:NSUTF8StringEncoding];
             [lanA update:invalid record:[NSNetService dataFromTXTRecordDictionary:bad]];
             [lanA update:invalid record:[NSMutableData dataWithLength:1025]];
             [lanA update:invalid record:[@"malformed" dataUsingEncoding:NSUTF8StringEncoding]];
-            check(@"invalid oversized or secret-bearing LAN records never become peers",[[lanA valueForKey:@"peers"] objectForKey:invalid.name]==nil);
+            check(@"invalid oversized or secret-bearing LAN records never become peers",lanA.peers.count==validPeers&&[lanA.peers containsObject:lanInfoB]);
             [lanA stop];[lanB stop];check(@"LAN stop clears publishers browsers and cached records",!lanA.available&&!lanB.available&&lanA.peers.count==0&&lanB.peers.count==0);
         });
         __block TestSession *session;__block TestBrowser *browser;__block MCNearbyServiceAdvertiser *advertiser;
