@@ -702,10 +702,10 @@ index 000000000..3fe904cab
 +
 +} // namespace LibRetro::Camera
 diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
-index 8a65f9da8..a0872f122 100644
+index 8a65f9da8..aad9d0c20 100644
 --- a/src/citra_libretro/citra_libretro.cpp
 +++ b/src/citra_libretro/citra_libretro.cpp
-@@ -29,6 +29,14 @@
+@@ -29,6 +29,15 @@
  #include "video_core/video_core.h"
  
  #include "citra_libretro/citra_libretro.h"
@@ -714,13 +714,14 @@ index 8a65f9da8..a0872f122 100644
 +#include "citra_libretro/camera/libretro_camera.h"
 +#include "citra_libretro/camera/libretro_camera_factory.h"
 +#include "core/hle/service/nfc/nfc.h"
++#include "core/hle/service/nfc/nfc_u.h"
 +#include "core/hle/service/am/am.h"
 +#include "core/arm/dyncom/arm_dyncom.h"
 +#include "core/arm/fastinterp/fastinterp.h"
  #include "citra_libretro/core_settings.h"
  #include "citra_libretro/environment.h"
  #include "citra_libretro/input/input_factory.h"
-@@ -66,6 +74,8 @@ public:
+@@ -66,6 +75,8 @@ public:
  };
  
  CitraLibRetro* emu_instance;
@@ -729,7 +730,7 @@ index 8a65f9da8..a0872f122 100644
  
  void retro_init() {
      emu_instance = new CitraLibRetro();
-@@ -86,6 +96,8 @@ void retro_init() {
+@@ -86,6 +97,8 @@ void retro_init() {
      Core::System::GetInstance().RegisterImageInterface(
          std::make_shared<Frontend::ImageInterface>());
  
@@ -738,7 +739,7 @@ index 8a65f9da8..a0872f122 100644
      LibRetro::Input::Init();
  }
  
-@@ -404,6 +416,14 @@ static bool do_load_game() {
+@@ -404,6 +417,14 @@ static bool do_load_game() {
          return false;
      }
  
@@ -753,7 +754,7 @@ index 8a65f9da8..a0872f122 100644
      u64 program_id{};
      Core::System::GetInstance().GetAppLoader().ReadProgramId(program_id);
      Core::System::GetInstance().GPU().ApplyPerProgramSettings(program_id);
-@@ -516,6 +536,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+@@ -516,6 +537,7 @@ bool retro_load_game(const struct retro_game_info* info) {
  
      // If using HW rendering, don't actually load the game here. azahar wants
      // the graphics context ready and available before calling System::Load.
@@ -761,7 +762,7 @@ index 8a65f9da8..a0872f122 100644
      LibRetro::settings.file_path = info->path;
  
      // Early validation: check that the ROM can be loaded before committing to
-@@ -634,6 +655,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+@@ -634,6 +656,7 @@ bool retro_load_game(const struct retro_game_info* info) {
  
  void retro_unload_game() {
      LOG_DEBUG(Frontend, "Unloading game...");
@@ -769,7 +770,7 @@ index 8a65f9da8..a0872f122 100644
      Core::System::GetInstance().Shutdown();
  }
  
-@@ -750,3 +772,145 @@ size_t retro_get_memory_size(unsigned id) {
+@@ -750,3 +773,145 @@ size_t retro_get_memory_size(unsigned id) {
  void retro_cheat_reset() {}
  
  void retro_cheat_set(unsigned index, bool enabled, const char* code) {}

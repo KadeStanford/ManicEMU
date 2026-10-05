@@ -20,6 +20,17 @@ jobs:
           path: azahar-source
           lfs: false
           submodules: recursive
+      - name: Select installed Xcode 26 toolchain
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,re
+          choices=[]
+          for p in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+              choices.append((tuple(int(x) for x in re.findall(r'\d+',p.name)),p))
+          if not choices:raise RuntimeError('Installed Xcode 26 required')
+          selected=max(choices)[1]/'Contents/Developer'
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('DEVELOPER_DIR='+str(selected)+'\n')
+          PY
       - name: Apply full interpreter and audited Manic integration source
         run: |
           set -euo pipefail

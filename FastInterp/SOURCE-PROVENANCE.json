@@ -119,7 +119,7 @@
   "game_scene_verified": false,
   "physical_performance_verified": false,
   "preferred_build_source": "azahar-emu/azahar@98932aeeb7d81ba08715a3e6eff57d47c2d1a65d",
-  "preferred_integration_patch_sha256": "f67b3541ae72dd67ab2ec25aeb3d40a1ced62ad7fafedbb5b256661b32f8cec1",
+  "preferred_integration_patch_sha256": "e66b6eec87f26b321fef88ed62d46c77df1f326f815dd34d8bccc8de5f5d2843",
   "legacy_public_backport_selection": "compiler/ABI feasibility control only; historical boot failure prevents promotion",
   "preferred_interpreter_source_unchanged": true,
   "preferred_extensions": [
@@ -130,9 +130,10 @@
     "Demonstrated zero-framebuffer black clear and lazy color-fill texture allocation",
     "Plugin-aware duplicate-presentation bypass",
     "Actual runtime CPU backend query for comparison evidence",
+    "Separate azahar-fastinterp.libretro image enforces FastInterp and disables CPU/shader JIT; mismatched actual CPU rejects game load",
     "Separate azahar-fastinterp.libretro image enforces FastInterp and disables CPU/shader JIT; mismatched actual CPU rejects game load"
   ],
-  "preferred_source_commit": "e8cfd06652b75db52ef35e2a6e80333f5bd61b86",
+  "preferred_source_commit": "8cba20065c682e6fde96b760af4658941c8bc0ef",
   "preferred_interpreter_files": [
     {
       "path": "src/core/arm/fastinterp/fastinterp.cpp",
