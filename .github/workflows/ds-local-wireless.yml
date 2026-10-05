@@ -74,13 +74,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {lfs: false, submodules: false}
+      - name: Bounded macOS public API reproduction
+        run: |
+          mkdir -p DSLink/build-simulator
+          xcrun clang++ -std=c++17 -fobjc-arc -O1 -Wall -Wextra -Werror -Wno-unused-parameter DSLink/Tests/rf_metadata_probe.mm -framework Foundation -framework Network -framework Security -o rf-metadata-probe
+          ./rf-metadata-probe DSLink/build-simulator/rf-metadata-macos.json
       - name: Verify bridge callbacks, checkpoints and session lifecycle
         run: bash DSLink/scripts/simulator-smoke.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: DS-simulator-evidence
-          path: DSLink/build-simulator/smoke.json
+          path: |
+            DSLink/build-simulator/smoke.json
+            DSLink/build-simulator/rf-metadata-macos.json
   windows-engine:
     if: github.ref != 'refs/heads/test/ds-ip-metadata-probe'
     runs-on: windows-latest
