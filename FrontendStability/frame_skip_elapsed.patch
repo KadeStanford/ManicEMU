@@ -1,0 +1,9 @@
+--- a/gfx/video_driver.c
++++ b/gfx/video_driver.c
+@@ -3741,2 +3741,5 @@
+-      uint16_t frame_time_delta            = new_time - last_time;
++      uint64_t elapsed_frame_time           = (uint64_t)new_time - (uint64_t)last_time;
++      uint16_t frame_time_delta             = elapsed_frame_time > UINT16_MAX
++                                           ? UINT16_MAX
++                                           : (uint16_t)elapsed_frame_time;
+       uint16_t frame_time_target           = video_info.frame_time_target;

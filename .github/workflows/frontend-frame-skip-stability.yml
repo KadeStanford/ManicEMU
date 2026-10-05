@@ -1,0 +1,32 @@
+name: Frontend frame-skip stability regression
+on:
+  push:
+    branches: [fix/frontend-frame-skip-stability-20261005]
+    paths: ['FrontendStability/**', '.github/workflows/frontend-frame-skip-stability.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-and-simulator:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Install isolated ARM64 regression tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/frame-gate-tools"
+          echo "$RUNNER_TEMP/frame-gate-tools/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/frame-gate-tools/bin/python" -m pip install 'keystone-engine==0.9.2' 'capstone==5.0.9' 'unicorn==2.1.4'
+      - name: Execute shipped and corrected ARM64 gates
+        run: python3 FrontendStability/test_frame_skip_elapsed.py --output FrontendStability/build/native-frame-skip-regression.json
+      - name: Execute relocated native timing gates on iPhone Simulator
+        run: bash FrontendStability/simulator-regression.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-frame-skip-stability-results
+          path: |
+            FrontendStability/build/native-frame-skip-regression.json
+            FrontendStability/build-simulator/frame-skip-simulator.json
+            FrontendStability/build-simulator/frame-skip-gates.S
