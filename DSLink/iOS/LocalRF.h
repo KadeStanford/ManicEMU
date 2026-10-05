@@ -10,6 +10,9 @@
 #include <array>
 #include <algorithm>
 #include <time.h>
+static bool rfProbePlain=false;
+static std::mutex rfProbeMutex;
+static NSMutableArray *rfProbeReceives;
 
 static uint64_t rfClockNanoseconds(){
     timespec now{};if(clock_gettime(CLOCK_MONOTONIC_RAW,&now))return 0;
@@ -79,7 +82,7 @@ static dispatch_data_t rfData(NSData *bytes){
     return dispatch_data_create(bytes.bytes,bytes.length,nullptr,^{(void)bytes;});
 }
 static nw_parameters_t rfParameters(NSData *key){
-    nw_parameters_t parameters=nw_parameters_create_secure_udp(^(nw_protocol_options_t options){
+    nw_parameters_t parameters=nw_parameters_create_secure_udp(rfProbePlain?NW_PARAMETERS_DISABLE_PROTOCOL:^(nw_protocol_options_t options){
         sec_protocol_options_t security=nw_tls_copy_sec_protocol_options(options);
         sec_protocol_options_add_pre_shared_key(security,rfData(key),rfData([@"ManicDS-RF-1" dataUsingEncoding:NSASCIIStringEncoding]));
         // RFC 5487 cipher 0x00a8. Apple's modern enum omits this DTLS PSK
@@ -135,6 +138,14 @@ static nw_parameters_t rfParameters(NSData *key){
         const uint64_t callback=rfClockNanoseconds();uint64_t received=0;
         if(context){nw_protocol_metadata_t metadata=nw_content_context_copy_protocol_metadata(context,nw_protocol_copy_ip_definition());
             if(metadata&&nw_protocol_metadata_is_ip(metadata))received=nw_ip_metadata_get_receive_time(metadata);
+        }
+        if(content&&complete){NSMutableArray *metadataList=[NSMutableArray new];
+            if(context)nw_content_context_foreach_protocol_metadata(context,^(nw_protocol_definition_t definition,nw_protocol_metadata_t metadata){
+                (void)definition;bool ip=nw_protocol_metadata_is_ip(metadata);
+                [metadataList addObject:@{@"is_ip":@(ip),@"receive_ns":@(ip?nw_ip_metadata_get_receive_time(metadata):0)}];
+            });
+            std::lock_guard<std::mutex> guard(rfProbeMutex);if(!rfProbeReceives)rfProbeReceives=[NSMutableArray new];
+            if(rfProbeReceives.count<16)[rfProbeReceives addObject:@{@"plain":@(rfProbePlain),@"callback_ns":@(callback),@"copy_ip_ns":@(received),@"metadata":metadataList}];
         }
         MDSLocalRF *strong=weak;if(!strong)return;
         void(^receiver)(NSString*,NSData*,uint64_t,uint64_t)=nil;NSData *bytes=nil;

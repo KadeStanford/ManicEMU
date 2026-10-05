@@ -160,7 +160,7 @@ static NSDictionary *metadata(unsigned i,NSString *runtime){MAC alias=peerMAC(i)
     return @{@"v":WireVersion,@"ready":@"1",@"local":@"1",@"code":@"CPUE",@"rev":@"1",@"nonce":hexNonce(identities[i]),@"runtime":runtime,@"mac":text,@"alias":text};
 }
 static void tests(){@autoreleasepool{
-    results=[NSMutableDictionary new];NSString *errorText=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    results=[NSMutableDictionary new];NSString *errorText=nil;NSDictionary *rfTimingProbe=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     try{
         // Exercise Network.framework DTLS itself, not a mocked sendData call.
         NSData *policyKey=[NSMutableData dataWithLength:32];nw_parameters_t policy=rfParameters(policyKey);
@@ -190,7 +190,19 @@ static void tests(){@autoreleasepool{
         check(@"established DTLS survives handshake timers",[rfA send:rfPacket peer:@"B"]&&[rfB send:rfPacket peer:@"A"]);
         waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==4;});
         check(@"real bilateral RF continues beyond handshake deadline",!rfWrong&&[[rfA metrics][@"received"] unsignedIntValue]==2&&[[rfB metrics][@"received"] unsignedIntValue]==2);
-        {std::lock_guard<std::mutex> guard(rfMutex);check(@"DTLS IP receive clocks precede actual callback clocks",rfKernelTimes==4);}
+        rfTimingProbe=@{@"dtls_A":[rfA metrics],@"dtls_B":[rfB metrics]};
+        [rfA stop];[rfB stop];rfProbePlain=true;setupA=nil;setupB=nil;rfArrivals=0;
+        rfA=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(true,nonce,metadata);} receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){rfReceive(nonce,data,received,callback);}];
+        rfB=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(false,nonce,metadata);} receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){rfReceive(nonce,data,received,callback);}];
+        [rfA add:@"B"];[rfB add:@"A"];waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return setupA&&setupB;});
+        [rfA connect:@"B" metadata:setupB];[rfB connect:@"A" metadata:setupA];
+        waitUntil([&]{return [[rfA metrics][@"ready_peers"] unsignedIntValue]==1&&[[rfB metrics][@"ready_peers"] unsignedIntValue]==1;});
+        [rfA send:rfPacket peer:@"B"];[rfB send:rfPacket peer:@"A"];
+        waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==2;});
+        NSMutableDictionary *probe=[rfTimingProbe mutableCopy];probe[@"plain_A"]=[rfA metrics];probe[@"plain_B"]=[rfB metrics];
+        {std::lock_guard<std::mutex> guard(rfProbeMutex);probe[@"receive_contexts"]=[rfProbeReceives copy];}rfTimingProbe=probe;
+        [rfA stop];[rfB stop];
+        throw std::runtime_error("intentional isolated metadata probe; no IPA");
         waitUntil([&]{return [[rfA metrics][@"send_completion_samples"] unsignedIntValue]==2&&[[rfB metrics][@"send_completion_samples"] unsignedIntValue]==2;});
         bool timingBounded=true;
         for(MDSLocalRF *endpoint in @[rfA,rfB]){NSDictionary *metrics=[endpoint metrics];
@@ -349,7 +361,7 @@ static void tests(){@autoreleasepool{
         memcpy(header+12,"TEST",4);retro_game_info other{};other.data=header;other.size=sizeof(header);
         check(@"iOS shim leaves unrecognized games on original identity path",retro_load_game(&other)&&requests()==0&&!g.loaded);retro_unload_game();
     }catch(const std::exception &e){errorText=[NSString stringWithUTF8String:e.what()];}
-    NSDictionary *report=@{@"checks":results,@"error":errorText?:NSNull.null,@"synthetic_save_only":@YES,@"actual_game_trade_verified":@NO,@"physical_iPhone_verified":@NO};
+    NSDictionary *report=@{@"checks":results,@"error":errorText?:NSNull.null,@"synthetic_save_only":@YES,@"actual_game_trade_verified":@NO,@"physical_iPhone_verified":@NO,@"rf_timing_probe":rfTimingProbe?:@{}};
     [[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[docs URLByAppendingPathComponent:@"smoke.json"] atomically:YES];
 }}
 @interface TestScene:NSObject<UIWindowSceneDelegate>

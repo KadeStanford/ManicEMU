@@ -1,7 +1,7 @@
 name: DS local wireless candidate
 on:
   push:
-    branches: [feature/ds-local-wireless, fix/ds-v010-delivery-pacing]
+    branches: [feature/ds-local-wireless, fix/ds-v010-delivery-pacing, test/ds-ip-metadata-probe]
     paths: ['DSLink/**', '.github/workflows/ds-local-wireless.yml']
   workflow_dispatch:
 permissions:
@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   desktop-protocol:
+    if: github.ref != 'refs/heads/test/ds-ip-metadata-probe'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,6 +40,7 @@ jobs:
             ds-protocol-build/Testing/Temporary/LastTest.log
             ds-protocol-build/native_wait_functions.json
   ios-core:
+    if: github.ref != 'refs/heads/test/ds-ip-metadata-probe'
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -80,6 +82,7 @@ jobs:
           name: DS-simulator-evidence
           path: DSLink/build-simulator/smoke.json
   windows-engine:
+    if: github.ref != 'refs/heads/test/ds-ip-metadata-probe'
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
