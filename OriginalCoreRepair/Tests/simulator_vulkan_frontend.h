@@ -101,7 +101,7 @@ static void vulkanVideo(unsigned width,unsigned height){
     if(waitCount||commandCount)vkQueueSubmit(vkInterface.queue,1,&submit,VK_NULL_HANDLE);
     waitCount=commandCount=0;vkQueueWaitIdle(vkInterface.queue);
     if(imageSet){frames++;report[@"last_frame_dimensions"]=@[@(width),@(height)];}
-    bool snapshot=runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000||runCalls==3250;
+    bool snapshot=shouldSnapshot();
     if(snapshot&&imageSet&&width&&height&&width<=2048&&height<=2048){
         VPROC(vkCreateBuffer);VPROC(vkGetBufferMemoryRequirements);VPROC(vkGetPhysicalDeviceMemoryProperties);VPROC(vkAllocateMemory);
         VPROC(vkBindBufferMemory);VPROC(vkCreateCommandPool);VPROC(vkAllocateCommandBuffers);VPROC(vkBeginCommandBuffer);

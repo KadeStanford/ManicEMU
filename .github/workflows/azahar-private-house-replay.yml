@@ -1,0 +1,85 @@
+name: Isolated Azahar private house replay
+on:
+  workflow_dispatch:
+    inputs:
+      replay_json:
+        description: Bounded joypad replay; scene acceptance requires private image review
+        required: true
+        default: '{"max_run_calls":7200,"max_seconds":240,"events":[{"first_call":1200,"duration":6,"button":8}],"snapshots":[600,1200,1800,2400,3000,3600,4200,4800,5400,6000,6600,7200]}'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  private-replay:
+    runs-on: macos-15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        variant: [FB2, FB3, FB2-monitor-clear, FB3-monitor-clear]
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: false, submodules: false}
+      - name: Derive hash-guarded equivalent public host control
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          curl --fail --location --retry 3 --silent --show-error https://media.githubusercontent.com/media/Manic-EMU/ManicEMU/fbaeab79c214d5920bb51afa6f2d786fb2b12a58/Cores/azahar.libretro.framework/azahar.libretro -o "$RUNNER_TEMP/azahar-public-house-core.dylib"
+          python3 OriginalCoreRepair/Tests/derive_replay_core.py --input "$RUNNER_TEMP/azahar-public-house-core.dylib" --output "$RUNNER_TEMP/azahar-reviewed-house-core.dylib" --variant "$VARIANT"
+      - name: Stage only approved private game plugin and normal-save copies
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: python3 OriginalCoreRepair/Tests/private_house_ci.py fetch
+      - name: Build the isolated native Apple harness
+        run: |
+          root="$RUNNER_TEMP/azahar-private-house"
+          curl --fail --location --retry 3 --silent --show-error https://github.com/KhronosGroup/MoltenVK/releases/download/v1.2.8/MoltenVK-macos.tar -o "$root/MoltenVK-macos.tar"
+          mkdir "$root/moltenvk"
+          tar xf "$root/MoltenVK-macos.tar" -C "$root/moltenvk"
+          header="$(find "$root/moltenvk" -path '*/vulkan/vulkan.h' -type f | head -1)"
+          test -n "$header"
+          include="$(dirname "$(dirname "$header")")"
+          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror -Wno-unused-parameter -DMANIC_GAME_MACOS=1 -DMANIC_GAME_VULKAN=1 -DMANIC_NATIVE_RECORDER_HOST_PROBE=1 -I "$include" -I OriginalCoreRepair/Tests/vendor OriginalCoreRepair/Tests/simulator_game_probe.m OriginalCoreRepair/Diagnostics/ManicNativeFaultRecorder.m -framework AppKit -framework Foundation -framework CoreGraphics -o "$root/GameProbe"
+          driver="$(find "$root/moltenvk" -path '*/dynamic/dylib/macOS/libMoltenVK.dylib' -type f | head -1)"
+          test -n "$driver"
+          xcrun lipo "$driver" -thin arm64 -output "$root/case/native-resources/moltenvk-probe.dylib"
+          codesign --force --sign - "$root/case/native-resources/moltenvk-probe.dylib"
+          codesign --force --sign - "$root/case/native-resources/game-probe-core.dylib"
+      - name: Execute bounded private replay with JIT disabled and plugin enabled
+        env:
+          REPLAY_JSON: ${{ inputs.replay_json }}
+          MANIC_PROBE_DUPLICATE_FRAMES: disabled
+        run: |
+          root="$RUNNER_TEMP/azahar-private-house"
+          python3 - <<'PY'
+          import json,os,pathlib
+          r=json.loads(os.environ['REPLAY_JSON'])
+          text=json.dumps(r)
+          assert len(text)<=262144
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'azahar-private-house/replay.json').write_text(text)
+          PY
+          export MANIC_PROBE_RESOURCE_DIR="$root/case/native-resources"
+          export MANIC_PROBE_DATA_DIR="$root/case/native-data"
+          export MANIC_NATIVE_RECORDER_DIRECTORY="$root/case/native-data/native-diagnostics"
+          export MANIC_PROBE_REPLAY_SCRIPT="$root/replay.json"
+          set +e
+          python3 OriginalCoreRepair/Tests/run_bounded.py 300 "$root/GameProbe" > "$root/private-process.log" 2>&1
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$root/exit-status.txt"
+      - name: Encrypt and authenticate raw evidence; print only bounded counters
+        if: always()
+        env:
+          PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+        run: python3 OriginalCoreRepair/Tests/private_house_ci.py seal
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: azahar-house-${{ matrix.variant }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/azahar-private-house/deliverables/
+          retention-days: 1
+          if-no-files-found: ignore
+      - name: Remove ephemeral private copies on every exit path
+        if: always()
+        run: python3 OriginalCoreRepair/Tests/private_house_ci.py cleanup

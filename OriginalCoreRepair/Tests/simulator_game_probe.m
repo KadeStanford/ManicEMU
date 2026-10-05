@@ -14,6 +14,8 @@
 #import <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
+#include <math.h>
 
 typedef bool (*Environment)(unsigned,void *);
 typedef struct { const char *key,*value; } Variable;
@@ -26,6 +28,49 @@ static volatile sig_atomic_t runCalls;
 static unsigned frames,nonblackFrames;
 static bool shutdownRequested;
 static NSString *stage;
+static NSArray<NSDictionary *> *replayEvents;
+static NSSet<NSNumber *> *replaySnapshots;
+static unsigned replayCalls=3600;
+static double replaySeconds=120;
+static uint64_t audioSamples;
+static double runSeconds,maximumRunSeconds;
+static double monotonicSeconds(void) {
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    return t.tv_sec+t.tv_nsec/1000000000.0;
+}
+static bool shouldSnapshot(void) {
+    if(replaySnapshots)return [replaySnapshots containsObject:@(runCalls)];
+    return runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000||runCalls==3250;
+}
+static bool configureReplay(void) {
+    NSString *path=NSProcessInfo.processInfo.environment[@"MANIC_PROBE_REPLAY_SCRIPT"];
+    if(!path.length)return true;
+    NSData *data=[NSData dataWithContentsOfFile:path];
+    if(!data||data.length>262144)return false;
+    id value=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if(![value isKindOfClass:NSDictionary.class])return false;
+    NSDictionary *config=value;
+    NSNumber *calls=config[@"max_run_calls"],*seconds=config[@"max_seconds"];
+    if(![calls isKindOfClass:NSNumber.class]||! [seconds isKindOfClass:NSNumber.class]||
+        calls.doubleValue!=calls.unsignedIntValue||calls.unsignedIntValue<1||calls.unsignedIntValue>20000||
+        !isfinite(seconds.doubleValue)||seconds.doubleValue<1||seconds.doubleValue>600)return false;
+    NSArray *events=config[@"events"],*snapshots=config[@"snapshots"];
+    if(![events isKindOfClass:NSArray.class]||events.count>4096||
+        ![snapshots isKindOfClass:NSArray.class]||snapshots.count>64)return false;
+    for(id item in events){
+        if(![item isKindOfClass:NSDictionary.class])return false;
+        for(NSString *key in @[@"first_call",@"duration",@"button"])
+            if(![item[key] isKindOfClass:NSNumber.class])return false;
+        double first=[item[@"first_call"] doubleValue],duration=[item[@"duration"] doubleValue],button=[item[@"button"] doubleValue];
+        if(!isfinite(first)||!isfinite(duration)||!isfinite(button)||first!=floor(first)||duration!=floor(duration)||button!=floor(button)||
+            first<1||duration<1||first+duration>calls.doubleValue+1||button<0||button>15)return false;
+    }
+    for(id item in snapshots)
+        if(![item isKindOfClass:NSNumber.class]||!isfinite([item doubleValue])||[item doubleValue]!=[item unsignedIntValue]||
+            [item unsignedIntValue]<1||[item unsignedIntValue]>calls.unsignedIntValue)return false;
+    replayEvents=events;replaySnapshots=[NSSet setWithArray:snapshots];
+    replayCalls=calls.unsignedIntValue;replaySeconds=seconds.doubleValue;return true;
+}
 static NSString *probeResource(NSString *name,NSString *extension) {
 #ifdef MANIC_GAME_MACOS
     return [NSProcessInfo.processInfo.environment[@"MANIC_PROBE_RESOURCE_DIR"]
@@ -44,6 +89,9 @@ static NSData *probePNG(CGImageRef image) {
 static void checkpoint(NSString *next) {
     stage=next;report[@"stage"]=next;report[@"run_calls"]=@(runCalls);
     report[@"frames"]=@(frames);report[@"nonblack_frames"]=@(nonblackFrames);
+    report[@"audio_sample_frames"]=@(audioSamples);
+    report[@"retro_run_seconds_total"]=@(runSeconds);
+    report[@"retro_run_seconds_maximum"]=@(maximumRunSeconds);
     [[NSJSONSerialization dataWithJSONObject:report options:2 error:nil]
         writeToFile:[root stringByAppendingPathComponent:@"game-probe.json"] atomically:YES];
 }
@@ -109,7 +157,7 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
             if((((const uint32_t *)((const uint8_t *)pixels+y*pitch))[x]&0xffffff)!=0){visible=true;break;}
     if(visible)nonblackFrames++;
     report[@"last_frame_dimensions"]=@[@(width),@(height)];
-    NSString *snapshot=(runCalls==600||runCalls==1800||runCalls==2050||runCalls==3000||runCalls==3250)?
+    NSString *snapshot=shouldSnapshot()?
         [NSString stringWithFormat:@"private-frame-%d.png",runCalls]:nil;
     if(snapshot){
         CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
@@ -122,12 +170,19 @@ static void video(const void *pixels,unsigned width,unsigned height,size_t pitch
         CGColorSpaceRelease(space);
     }
 }
-static void audio(int16_t left,int16_t right){}
-static size_t audioBatch(const int16_t *samples,size_t count){return count;}
+static void audio(int16_t left,int16_t right){audioSamples++;}
+static size_t audioBatch(const int16_t *samples,size_t count){audioSamples+=count;return count;}
 static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     // A short Select press after execution has started; no save interaction.
     if(port!=0||device!=1)return 0;
+    if(replayEvents){
+        for(NSDictionary *event in replayEvents){
+            unsigned first=[event[@"first_call"] unsignedIntValue],duration=[event[@"duration"] unsignedIntValue];
+            if(id==[event[@"button"] unsignedIntValue]&&runCalls>=first&&runCalls-first<duration)return 1;
+        }
+        return 0;
+    }
     // Vapecord displays its own first-run notice before entering the menu loop.
     // Acknowledge it, then open, close and reopen the menu without selecting codes.
     if(id==8)return runCalls>=1200&&runCalls<1206;
@@ -144,6 +199,13 @@ static void runProbe(void) {
         report=[@{@"actual_game_load_attempted":@NO,@"game_execution_completed":@NO,
             @"plugin_menu_verified":@NO,@"renderer":@"Software",
             @"original_inputs_and_saves_unchanged":@YES} mutableCopy];
+        if(!configureReplay()){checkpoint(@"invalid_replay_configuration");return;}
+        report[@"replay_enabled"]=@(replayEvents!=nil);
+        report[@"Isabelle_scene_passed_verified"]=@NO;
+        report[@"physical_phone_FPS_verified"]=@NO;
+#ifdef MANIC_GAME_VULKAN
+        report[@"host_frontend_waits_GPU_every_frame"]=@YES;
+#endif
 #ifdef MANIC_GAME_VULKAN
         report[@"renderer"]=@"Vulkan";
 #endif
@@ -218,10 +280,14 @@ static void runProbe(void) {
         }
 #endif
         if(loaded){
-            NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:120];
-            while(!shutdownRequested&&runCalls<3600&&deadline.timeIntervalSinceNow>0){
-                ++runCalls;checkpoint(@"retro_run");run();
+            double start=monotonicSeconds();
+            while(!shutdownRequested&&runCalls<replayCalls&&monotonicSeconds()-start<replaySeconds){
+                ++runCalls;
+                if(!replayEvents||runCalls==1||runCalls%120==0)checkpoint(@"retro_run");
+                double callStart=monotonicSeconds();run();double elapsed=monotonicSeconds()-callStart;
+                runSeconds+=elapsed;maximumRunSeconds=MAX(maximumRunSeconds,elapsed);
             }
+            report[@"execution_wall_seconds"]=@(monotonicSeconds()-start);
             report[@"shutdown_requested"]=@(shutdownRequested);
             report[@"game_execution_completed"]=@(runCalls>0&&frames>0);
             checkpoint(@"retro_unload_game");unload();
