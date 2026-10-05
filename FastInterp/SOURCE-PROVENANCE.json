@@ -117,5 +117,18 @@
     "Implement DynCom monitor clear for identical context-switch contract in rebuilt control"
   ],
   "game_scene_verified": false,
-  "physical_performance_verified": false
+  "physical_performance_verified": false,
+  "preferred_build_source": "azahar-emu/azahar@98932aeeb7d81ba08715a3e6eff57d47c2d1a65d",
+  "preferred_integration_patch_sha256": "9c4e2ec2764b1408ce1b140c68525ee55bafd79e6e41c01c0c80d777df81aa5c",
+  "legacy_public_backport_selection": "compiler/ABI feasibility control only; historical boot failure prevents promotion",
+  "preferred_interpreter_source_unchanged": true,
+  "preferred_extensions": [
+    "Manic keyboard, CIA installation and amiibo ABI version 1",
+    "Existing microphone and camera bridges",
+    "No-JIT permission gate retained",
+    "Plugin loader and lowercase title path",
+    "Demonstrated zero-framebuffer black clear and lazy color-fill texture allocation",
+    "Plugin-aware duplicate-presentation bypass",
+    "Actual runtime CPU backend query for comparison evidence"
+  ]
 }

@@ -15,15 +15,15 @@ jobs:
         with: {path: manic-source, lfs: false, submodules: false}
       - uses: actions/checkout@v4
         with:
-          repository: Daiuno/azahar
-          ref: 03da4a354cc10012418c28a935dd0c627e37a963
+          repository: azahar-emu/azahar
+          ref: 98932aeeb7d81ba08715a3e6eff57d47c2d1a65d
           path: azahar-source
           lfs: false
           submodules: recursive
       - name: Apply full interpreter and audited Manic integration source
         run: |
           set -euo pipefail
-          git -C azahar-source apply ../manic-source/FastInterp/patches/0001-full-fastinterp-manic.patch
+          git -C azahar-source apply ../manic-source/FastInterp/patches/0002-official-core-manic-integration.patch
           git -C azahar-source apply ../manic-source/CorePatches/Azahar/0006-vulkan-string-format-ios15.patch
           test -f azahar-source/src/core/arm/fastinterp/handlers/thumb32.inc
           grep -q 'HAVE_FASTINTERP' azahar-source/src/core/CMakeLists.txt
@@ -41,7 +41,7 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
             -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON -DENABLE_OPENGL=OFF \
             -DENABLE_LTO=OFF -DENABLE_TESTS=OFF > deliverables/configure-ios.log 2>&1
-          cmake --build build-ios --target azahar_libretro --config Release --parallel 3 \
+          cmake --build build-ios --target citra_libretro --config Release --parallel 3 \
             -- CODE_SIGNING_ALLOWED=NO > deliverables/build-ios.log 2>&1
           core=build-ios/bin/Release/azahar_libretro.dylib
           test -s "$core"
@@ -49,7 +49,7 @@ jobs:
           for s in retro_api_version retro_run retro_serialize retro_unserialize \
             retro_azahar_set_keyboard_callback retro_azahar_keyboard_input retro_azahar_install_cia \
             retro_azahar_extension_version retro_azahar_load_amiibo \
-            retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo; do
+            retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo retro_azahar_cpu_backend; do
             nm -gU "$core" | grep -F "_$s" > /dev/null
           done
           strings "$core" | grep -F 'FastInterp ARM interpreter created for core' > /dev/null
@@ -66,7 +66,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON \
             -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_TESTS=OFF \
             > deliverables/configure-native.log 2>&1
-          cmake --build build-native --target azahar_libretro --parallel 3 \
+          cmake --build build-native --target citra_libretro --parallel 3 \
             > deliverables/build-native.log 2>&1
           core=build-native/bin/azahar_libretro.dylib
           test -s "$core"
@@ -79,6 +79,7 @@ jobs:
           c.retro_azahar_extension_version.restype=ctypes.c_uint
           assert c.retro_api_version()==1
           assert c.retro_azahar_extension_version()==1
+          assert c.retro_azahar_cpu_backend()==0
           print(json.dumps({'native_dylib_load':True,'libretro_api':1,'manic_extension_api':1,
                             'private_game_run':False,'phone_scene_verified':False}))
           PY
@@ -88,6 +89,14 @@ jobs:
           xcrun clang++ -std=c++20 -arch arm64 -O2 -I azahar-source/src \
             manic-source/FastInterp/Tests/boundaries.cpp -o deliverables/FastInterpBoundaries
           deliverables/FastInterpBoundaries > deliverables/boundaries.txt
+          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror \
+            -Wno-unused-parameter -DMANIC_GAME_MACOS=1 -DMANIC_GAME_VULKAN=1 \
+            -I azahar-source/externals/vulkan-headers/include \
+            -I manic-source/OriginalCoreRepair/Tests/vendor \
+            -I manic-source/OriginalCoreRepair/Tests \
+            manic-source/FastInterp/Tests/game_compare.m \
+            -framework AppKit -framework Foundation -framework CoreGraphics \
+            -o deliverables/GameCompare
       - name: Summarize public-source build failures
         if: failure()
         run: |

@@ -1,0 +1,1420 @@
+diff --git a/src/citra_libretro/CMakeLists.txt b/src/citra_libretro/CMakeLists.txt
+index e28f9941b..f7933472e 100644
+--- a/src/citra_libretro/CMakeLists.txt
++++ b/src/citra_libretro/CMakeLists.txt
+@@ -10,6 +10,14 @@ add_library(citra_libretro_common OBJECT
+         input/mouse_tracker.cpp
+         input/mouse_tracker.h
+         $<$<BOOL:${ENABLE_VULKAN}>: libretro_vk.cpp libretro_vk.h>
++        applets/swkbd_apple.cpp
++        applets/swkbd_apple.h
++        audio/libretro_input.cpp
++        audio/libretro_input.h
++        camera/libretro_camera.cpp
++        camera/libretro_camera.h
++        camera/libretro_camera_factory.cpp
++        camera/libretro_camera_factory.h
+         environment.cpp
+         environment.h
+         core_settings.cpp
+diff --git a/src/citra_libretro/applets/swkbd_apple.cpp b/src/citra_libretro/applets/swkbd_apple.cpp
+new file mode 100644
+index 000000000..56340cd60
+--- /dev/null
++++ b/src/citra_libretro/applets/swkbd_apple.cpp
+@@ -0,0 +1,96 @@
++// Copyright 2025 Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#include <chrono>
++#include <thread>
++#include "common/logging/log.h"
++#include "citra_libretro/applets/swkbd_apple.h"
++
++namespace SoftwareKeyboard {
++
++// Static member initialization
++KeyboardRequestCallback AppleKeyboard::s_keyboard_request_callback = nullptr;
++AppleKeyboard* AppleKeyboard::s_current_instance = nullptr;
++
++AppleKeyboard::AppleKeyboard() = default;
++
++AppleKeyboard::~AppleKeyboard() {
++    if (s_current_instance == this) {
++        s_current_instance = nullptr;
++    }
++}
++
++void AppleKeyboard::SetKeyboardRequestCallback(KeyboardRequestCallback callback) {
++    s_keyboard_request_callback = callback;
++}
++
++void AppleKeyboard::Execute(const Frontend::KeyboardConfig& config_) {
++    SoftwareKeyboard::Execute(config_);
++    
++    s_current_instance = this;
++    
++    // If no callback is registered, use default behavior
++    if (!s_keyboard_request_callback) {
++        LOG_WARNING(Frontend, "Apple keyboard callback not registered, using empty input");
++        Finalize("", 0);
++        return;
++    }
++    
++    // Store strings for the lifetime of the config
++    stored_hint_text = config.hint_text;
++    stored_button_texts.clear();
++    stored_button_text_ptrs.clear();
++    
++    for (const auto& text : config.button_text) {
++        stored_button_texts.push_back(text);
++    }
++    for (const auto& text : stored_button_texts) {
++        stored_button_text_ptrs.push_back(text.c_str());
++    }
++    
++    // Build the C-compatible config structure
++    AppleKeyboardConfig apple_config{};
++    apple_config.button_config = static_cast<int>(config.button_config);
++    apple_config.accept_mode = static_cast<int>(config.accept_mode);
++    apple_config.multiline_mode = config.multiline_mode;
++    apple_config.max_text_length = config.max_text_length;
++    apple_config.max_digits = config.max_digits;
++    apple_config.hint_text = stored_hint_text.c_str();
++    apple_config.button_text = stored_button_text_ptrs.data();
++    apple_config.button_text_count = static_cast<int>(stored_button_text_ptrs.size());
++    apple_config.prevent_digit = config.filters.prevent_digit;
++    apple_config.prevent_at = config.filters.prevent_at;
++    apple_config.prevent_percent = config.filters.prevent_percent;
++    apple_config.prevent_backslash = config.filters.prevent_backslash;
++    apple_config.prevent_profanity = config.filters.prevent_profanity;
++    apple_config.enable_callback = config.filters.enable_callback;
++    
++    LOG_INFO(Frontend, "Requesting Apple keyboard input, hint: {}", config.hint_text);
++    
++    // Call the callback to request keyboard from frontend
++    s_keyboard_request_callback(apple_config);
++}
++
++void AppleKeyboard::ShowError(const std::string& error) {
++    LOG_ERROR(Frontend, "Apple keyboard error: {}", error);
++}
++
++void AppleKeyboard::SubmitInput(const std::string& text, u8 button) {
++    Finalize(text, button);
++}
++
++} // namespace SoftwareKeyboard
++
++// C API for Libretro frontend to submit keyboard input
++extern "C" {
++
++void retro_apple_keyboard_submit(const char* text, int button) {
++    if (SoftwareKeyboard::AppleKeyboard::s_current_instance) {
++        std::string text_str = text ? text : "";
++        SoftwareKeyboard::AppleKeyboard::s_current_instance->SubmitInput(text_str, static_cast<u8>(button));
++    }
++}
++
++}
++
+diff --git a/src/citra_libretro/applets/swkbd_apple.h b/src/citra_libretro/applets/swkbd_apple.h
+new file mode 100644
+index 000000000..d5dc696ae
+--- /dev/null
++++ b/src/citra_libretro/applets/swkbd_apple.h
+@@ -0,0 +1,65 @@
++// Copyright 2025 Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#pragma once
++
++#include <functional>
++#include <string>
++#include "core/frontend/applets/swkbd.h"
++
++namespace SoftwareKeyboard {
++
++// C-compatible keyboard config structure for Libretro API
++struct AppleKeyboardConfig {
++    int button_config;      // ButtonConfig enum value (0=Single, 1=Dual, 2=Triple, 3=None)
++    int accept_mode;        // AcceptedInput enum value
++    bool multiline_mode;
++    int max_text_length;
++    int max_digits;
++    const char* hint_text;
++    const char** button_text;
++    int button_text_count;
++    // Filters
++    bool prevent_digit;
++    bool prevent_at;
++    bool prevent_percent;
++    bool prevent_backslash;
++    bool prevent_profanity;
++    bool enable_callback;
++};
++
++// Callback type for keyboard request
++using KeyboardRequestCallback = std::function<void(const AppleKeyboardConfig& config)>;
++
++class AppleKeyboard final : public Frontend::SoftwareKeyboard {
++public:
++    AppleKeyboard();
++    ~AppleKeyboard();
++
++    void Execute(const Frontend::KeyboardConfig& config) override;
++    void ShowError(const std::string& error) override;
++
++    // Called by frontend to submit keyboard result
++    void SubmitInput(const std::string& text, u8 button);
++
++    // Set the callback that will be called when keyboard is needed
++    static void SetKeyboardRequestCallback(KeyboardRequestCallback callback);
++
++    // Allow C API to access current instance
++    static AppleKeyboard* s_current_instance;
++
++private:
++    static KeyboardRequestCallback s_keyboard_request_callback;
++    
++    std::string pending_text;
++    u8 pending_button = 0;
++    
++    // Storage for C-string pointers
++    std::string stored_hint_text;
++    std::vector<std::string> stored_button_texts;
++    std::vector<const char*> stored_button_text_ptrs;
++};
++
++} // namespace SoftwareKeyboard
++
+diff --git a/src/citra_libretro/audio/libretro_input.cpp b/src/citra_libretro/audio/libretro_input.cpp
+new file mode 100644
+index 000000000..88730d156
+--- /dev/null
++++ b/src/citra_libretro/audio/libretro_input.cpp
+@@ -0,0 +1,197 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#include "citra_libretro/audio/libretro_input.h"
++#include "citra_libretro/environment.h"
++#include "common/logging/log.h"
++#include <cstring>
++#include <algorithm>
++#include <cmath>
++
++namespace LibRetro::Audio {
++
++// Global microphone interface
++static retro_microphone_interface g_microphone_interface = {0};
++static bool g_microphone_initialized = false;
++
++bool InitializeMicrophoneInterface() {
++    if (g_microphone_initialized) {
++        return true;
++    }
++
++    std::memset(&g_microphone_interface, 0, sizeof(g_microphone_interface));
++    g_microphone_interface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
++
++    if (!LibRetro::GetMicrophoneInterface(&g_microphone_interface)) {
++        LOG_WARNING(Service_MIC, "LibRetro: Frontend does not support microphone interface");
++        return false;
++    }
++
++    g_microphone_initialized = true;
++    LOG_INFO(Service_MIC, "LibRetro: Microphone interface initialized successfully (version {})", 
++             g_microphone_interface.interface_version);
++    return true;
++}
++
++void ShutdownMicrophoneInterface() {
++    g_microphone_initialized = false;
++    std::memset(&g_microphone_interface, 0, sizeof(g_microphone_interface));
++}
++
++LibRetroInput::LibRetroInput() {
++    LOG_INFO(Service_MIC, "LibRetro: Microphone Creating LibRetroInput");
++    
++    if (!g_microphone_initialized) {
++        InitializeMicrophoneInterface();
++    }
++    
++    if (g_microphone_initialized) {
++        std::memcpy(&microphone_interface, &g_microphone_interface, sizeof(microphone_interface));
++    }
++}
++
++LibRetroInput::~LibRetroInput() {
++    StopSampling();
++}
++
++void LibRetroInput::StartSampling(const AudioCore::InputParameters& params) {
++    if (!g_microphone_initialized || is_sampling) {
++        return;
++    }
++    LOG_INFO(Service_MIC, "LibRetro: Microphone Starting sampling - sample_rate: {}, buffer_size: {} bytes ({} samples), sample_size: {} bits", 
++             params.sample_rate, params.buffer_size, params.buffer_size / 2, params.sample_size);
++    
++    // Sanity check: if buffer_size is unreasonably large, cap it
++    AudioCore::InputParameters adjusted_params = params;
++    if (adjusted_params.buffer_size > 16384) {  // 16KB max (8192 samples at 16-bit)
++        LOG_WARNING(Service_MIC, "LibRetro: Buffer size {} is too large, capping to 16384", 
++                    adjusted_params.buffer_size);
++        adjusted_params.buffer_size = 16384;
++    }
++    
++    parameters = adjusted_params;
++
++    // Open microphone if not already open
++    if (microphone_handle == nullptr && microphone_interface.open_mic) {
++        retro_microphone_params_t mic_params = {0};
++        mic_params.rate = params.sample_rate;
++        
++        microphone_handle = microphone_interface.open_mic(&mic_params);
++        
++        if (microphone_handle) {
++            LOG_INFO(Service_MIC, "LibRetro: Microphone opened successfully (rate: {}Hz)", 
++                     params.sample_rate);
++            
++            // Activate microphone
++            if (microphone_interface.set_mic_state) {
++                microphone_interface.set_mic_state(microphone_handle, true);
++                is_sampling = true;
++                LOG_INFO(Service_MIC, "LibRetro: Microphone sampling started");
++            }
++        } else {
++            LOG_ERROR(Service_MIC, "LibRetro: Microphone Failed to open microphone");
++        }
++    }
++}
++
++void LibRetroInput::StopSampling() {
++    if (!is_sampling) {
++        return;
++    }
++    LOG_INFO(Service_MIC, "LibRetro: Microphone Stopping sampling");
++    is_sampling = false;
++
++    // Deactivate and close microphone
++    if (microphone_handle) {
++        if (microphone_interface.set_mic_state) {
++            microphone_interface.set_mic_state(microphone_handle, false);
++        }
++        
++        if (microphone_interface.close_mic) {
++            microphone_interface.close_mic(microphone_handle);
++        }
++        
++        microphone_handle = nullptr;
++        LOG_INFO(Service_MIC, "LibRetro: Microphone sampling stopped");
++    }
++}
++
++bool LibRetroInput::IsSampling() {
++    return is_sampling;
++}
++
++void LibRetroInput::AdjustSampleRate(u32 sample_rate) {
++    parameters.sample_rate = sample_rate;
++    
++    // Need to reopen microphone with new sample rate
++    if (is_sampling) {
++        StopSampling();
++        StartSampling(parameters);
++    }
++}
++
++AudioCore::Samples LibRetroInput::Read() {
++    if (!is_sampling || !microphone_handle || !microphone_interface.read_mic) {
++        return {};
++    }
++
++    // LibRetro microphone interface always returns 16-bit signed PCM samples
++    // Read a reasonable chunk size per call
++    // For 32768 Hz at ~60 fps: 32768/60 = ~546 samples per frame
++    // Use a moderate buffer size that balances latency and CPU usage
++    // 256 samples = ~7.8ms at 32768 Hz, good balance for real-time audio
++    constexpr size_t max_samples = 32;
++    std::vector<int16_t> mic_samples(max_samples);
++    
++    int samples_read = microphone_interface.read_mic(microphone_handle, 
++                                                      mic_samples.data(), 
++                                                      max_samples);
++    
++    if (samples_read <= 0) {
++        return {};
++    }
++
++    // Calculate the number of bytes needed
++    u8 sample_size_in_bytes = parameters.sample_size / 8;
++    AudioCore::Samples samples(samples_read * sample_size_in_bytes);
++    
++    if (parameters.sample_size == 8) {
++        // 8-bit output
++        if (parameters.sign == AudioCore::Signedness::Unsigned) {
++            // OpenAL format: AL_FORMAT_MONO8 (unsigned 8-bit)
++            // Convert 16-bit signed to 8-bit unsigned
++            for (int i = 0; i < samples_read; i++) {
++                // Scale from [-32768, 32767] to [0, 255]
++                int32_t temp = (int32_t)mic_samples[i] + 32768;
++                samples[i] = static_cast<u8>(temp >> 8);
++            }
++        } else {
++            // Signed 8-bit (not commonly used by OpenAL, but supported by 3DS)
++            for (int i = 0; i < samples_read; i++) {
++                samples[i] = static_cast<u8>(mic_samples[i] >> 8);
++            }
++        }
++    } else {
++        // 16-bit output
++        if (parameters.sign == AudioCore::Signedness::Signed) {
++            // OpenAL format: AL_FORMAT_MONO16 (signed 16-bit)
++            // Direct byte copy - libretro mic returns signed 16-bit PCM
++            std::memcpy(samples.data(), mic_samples.data(), samples_read * 2);
++        } else {
++            // Unsigned 16-bit (not commonly used by OpenAL, but supported by 3DS)
++            for (int i = 0; i < samples_read; i++) {
++                int16_t sample = mic_samples[i];
++                // Convert signed to unsigned
++                uint16_t unsigned_sample = static_cast<uint16_t>((int32_t)sample + 32768);
++                // Store as little-endian bytes
++                samples[i * 2] = static_cast<u8>(unsigned_sample & 0xFF);
++                samples[i * 2 + 1] = static_cast<u8>(unsigned_sample >> 8);
++            }
++        }
++    }
++
++    return samples;
++}
++
++} // namespace LibRetro::Audio
+diff --git a/src/citra_libretro/audio/libretro_input.h b/src/citra_libretro/audio/libretro_input.h
+new file mode 100644
+index 000000000..896f825a4
+--- /dev/null
++++ b/src/citra_libretro/audio/libretro_input.h
+@@ -0,0 +1,39 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#pragma once
++
++#include <vector>
++#include "audio_core/input.h"
++#include "libretro.h"
++
++namespace LibRetro::Audio {
++
++/**
++ * A microphone input implementation that receives audio from the libretro frontend's microphone driver.
++ */
++class LibRetroInput final : public AudioCore::Input {
++public:
++    LibRetroInput();
++    ~LibRetroInput() override;
++
++    void StartSampling(const AudioCore::InputParameters& params) override;
++    void StopSampling() override;
++    bool IsSampling() override;
++    void AdjustSampleRate(u32 sample_rate) override;
++    AudioCore::Samples Read() override;
++
++private:
++    bool is_sampling = false;
++    retro_microphone_t* microphone_handle = nullptr;
++    retro_microphone_interface microphone_interface = {};
++};
++
++/// Initialize the libretro microphone interface
++bool InitializeMicrophoneInterface();
++
++/// Shutdown the libretro microphone interface
++void ShutdownMicrophoneInterface();
++
++} // namespace LibRetro::Audio
+diff --git a/src/citra_libretro/camera/libretro_camera.cpp b/src/citra_libretro/camera/libretro_camera.cpp
+new file mode 100644
+index 000000000..ac460235f
+--- /dev/null
++++ b/src/citra_libretro/camera/libretro_camera.cpp
+@@ -0,0 +1,332 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#include <algorithm>
++#include <cstring>
++#include "citra_libretro/camera/libretro_camera.h"
++#include "citra_libretro/environment.h"
++#include "common/logging/log.h"
++
++namespace LibRetro::Camera {
++
++// Global camera state
++static CameraState g_camera_state;
++
++CameraState& GetCameraState() {
++    return g_camera_state;
++}
++
++// Callback function that receives frames from libretro frontend
++static void CameraFrameCallback(const uint32_t* buffer, unsigned width, unsigned height,
++                                size_t pitch) {
++    // Debug: Log callback invocation (only occasionally)
++    static int callback_count = 0;
++    if (++callback_count % 60 == 0) {}
++    LibRetroCamera::OnCameraFrame(buffer, width, height, pitch);
++}
++
++bool InitializeCameraInterface() {
++    auto& state = GetCameraState();
++
++    if (state.camera_initialized) {
++        return true;
++    }
++
++    std::memset(&state.callback, 0, sizeof(state.callback));
++    state.callback.caps = 1 << RETRO_CAMERA_BUFFER_RAW_FRAMEBUFFER;
++    state.callback.width = DEFAULT_CAMERA_WIDTH;
++    state.callback.height = DEFAULT_CAMERA_HEIGHT;
++    state.callback.frame_raw_framebuffer = CameraFrameCallback;
++
++    if (!LibRetro::GetCameraInterface(&state.callback)) {
++        LOG_WARNING(Service_CAM, "LibRetro: Frontend does not support camera interface");
++        return false;
++    }
++
++    state.camera_initialized = true;
++    LOG_INFO(Service_CAM, "LibRetro: Camera interface initialized successfully");
++    return true;
++}
++
++void ShutdownCameraInterface() {
++    auto& state = GetCameraState();
++
++    if (state.camera_initialized && state.callback.stop) {
++        state.callback.stop();
++    }
++
++    state.camera_initialized = false;
++    state.frame_available = false;
++    state.frame_buffer.clear();
++    LOG_INFO(Service_CAM, "LibRetro: Camera interface shutdown");
++}
++
++LibRetroCamera::LibRetroCamera(const Service::CAM::Flip& flip, int cam_id)
++    : flip_mode(flip), camera_id(cam_id) {
++    LOG_INFO(Service_CAM, "LibRetro: Creating LibRetroCamera (camera_id: {})", camera_id);
++}
++
++LibRetroCamera::~LibRetroCamera() {
++    StopCapture();
++}
++
++void LibRetroCamera::StartCapture() {
++    auto& state = GetCameraState();
++
++    if (!state.camera_initialized) {
++        LOG_WARNING(Service_CAM, "LibRetro: Camera not initialized, cannot start capture");
++        return;
++    }
++
++    if (capturing) {
++        return;
++    }
++
++    // Switch to appropriate camera based on 3DS camera ID before starting capture
++    // InnerCamera (1) = front camera, OuterRight/OuterLeft (0, 2) = back camera
++    if (camera_id >= 0) {
++        bool use_front = (camera_id == 1);  // InnerCamera = front
++        LOG_INFO(Service_CAM, "LibRetro: Switching to {} camera for camera_id {}",
++                 use_front ? "front" : "back", camera_id);
++        LibRetro::SwitchCamera(use_front);
++    }
++
++    if (state.callback.start && state.callback.start()) {
++        capturing = true;
++        LOG_INFO(Service_CAM, "LibRetro: Camera capture started");
++    } else {
++        LOG_ERROR(Service_CAM, "LibRetro: Failed to start camera capture");
++    }
++}
++
++void LibRetroCamera::StopCapture() {
++    auto& state = GetCameraState();
++
++    if (!capturing) {
++        return;
++    }
++
++    if (state.callback.stop) {
++        state.callback.stop();
++    }
++
++    capturing = false;
++    LOG_INFO(Service_CAM, "LibRetro: Camera capture stopped");
++}
++
++void LibRetroCamera::SetResolution(const Service::CAM::Resolution& resolution) {
++    output_width = resolution.width;
++    output_height = resolution.height;
++    LOG_DEBUG(Service_CAM, "LibRetro: SetResolution {}x{}", output_width, output_height);
++}
++
++void LibRetroCamera::SetFlip(Service::CAM::Flip flip) {
++    flip_mode = flip;
++}
++
++void LibRetroCamera::SetEffect(Service::CAM::Effect effect) {
++    // Effects not implemented
++}
++
++void LibRetroCamera::SetFormat(Service::CAM::OutputFormat format) {
++    output_rgb = (format == Service::CAM::OutputFormat::RGB565);
++}
++
++void LibRetroCamera::SetFrameRate(Service::CAM::FrameRate frame_rate) {
++    // Frame rate control not implemented
++}
++
++void LibRetroCamera::OnCameraFrame(const uint32_t* buffer, unsigned width, unsigned height,
++                                   size_t pitch) {
++    auto& state = GetCameraState();
++
++    std::lock_guard<std::mutex> lock(state.frame_mutex);
++
++    // pitch is in bytes, convert to pixel count
++    size_t pitch_pixels = pitch / sizeof(uint32_t);
++
++    // Resize buffer if needed
++    state.frame_buffer.resize(width * height);
++    state.frame_width = width;
++    state.frame_height = height;
++
++    // Copy frame data (handle pitch)
++    for (unsigned y = 0; y < height; y++) {
++        std::memcpy(state.frame_buffer.data() + y * width, buffer + y * pitch_pixels,
++                    width * sizeof(uint32_t));
++    }
++
++    state.frame_available = true;
++    
++    // Debug: Log frame reception (only occasionally to avoid spam)
++    static int frame_count = 0;
++    if (++frame_count % 60 == 0) {}
++}
++
++u16 LibRetroCamera::XRGB8888ToRGB565(u32 pixel) {
++    // Input format from avfoundation is BGRA
++    // In memory: [B, G, R, A], as uint32_t on little-endian: 0xAARRGGBB
++    // This matches the standard XRGB8888 format where X is the alpha channel
++    u8 r = (pixel >> 16) & 0xFF;
++    u8 g = (pixel >> 8) & 0xFF;
++    u8 b = pixel & 0xFF;
++
++    // Convert to RGB565
++    u16 r5 = (r >> 3) & 0x1F;
++    u16 g6 = (g >> 2) & 0x3F;
++    u16 b5 = (b >> 3) & 0x1F;
++
++    return (r5 << 11) | (g6 << 5) | b5;
++}
++
++void LibRetroCamera::XRGB8888ToYUV422(u32 pixel1, u32 pixel2, u16& yuv1, u16& yuv2) {
++    // Input format from avfoundation is BGRA
++    // In memory: [B, G, R, A], as uint32_t on little-endian: 0xAARRGGBB
++    // Extract RGB from first pixel
++    int r1 = (pixel1 >> 16) & 0xFF;
++    int g1 = (pixel1 >> 8) & 0xFF;
++    int b1 = pixel1 & 0xFF;
++
++    // Extract RGB from second pixel
++    int r2 = (pixel2 >> 16) & 0xFF;
++    int g2 = (pixel2 >> 8) & 0xFF;
++    int b2 = pixel2 & 0xFF;
++
++    // Convert to YUV
++    int y1 = ((66 * r1 + 129 * g1 + 25 * b1 + 128) >> 8) + 16;
++    int y2 = ((66 * r2 + 129 * g2 + 25 * b2 + 128) >> 8) + 16;
++
++    // Average U and V
++    int u = ((-38 * r1 - 74 * g1 + 112 * b1 + 128) >> 8) + 128;
++    u += ((-38 * r2 - 74 * g2 + 112 * b2 + 128) >> 8) + 128;
++    u /= 2;
++
++    int v = ((112 * r1 - 94 * g1 - 18 * b1 + 128) >> 8) + 128;
++    v += ((112 * r2 - 94 * g2 - 18 * b2 + 128) >> 8) + 128;
++    v /= 2;
++
++    // Clamp values
++    y1 = std::clamp(y1, 0, 255);
++    y2 = std::clamp(y2, 0, 255);
++    u = std::clamp(u, 0, 255);
++    v = std::clamp(v, 0, 255);
++
++    // Pack as YUYV (Y1 U Y2 V format, stored as two u16 values)
++    yuv1 = (u8)y1 | ((u8)u << 8);
++    yuv2 = (u8)y2 | ((u8)v << 8);
++}
++
++void LibRetroCamera::ApplyFlip(std::vector<u16>& frame, int width, int height) {
++    if (flip_mode == Service::CAM::Flip::NoFlip) {
++        return;
++    }
++
++    std::vector<u16> temp = frame;
++
++    for (int y = 0; y < height; y++) {
++        for (int x = 0; x < width; x++) {
++            int src_x = x;
++            int src_y = y;
++
++            switch (flip_mode) {
++            case Service::CAM::Flip::Horizontal:
++                src_x = width - 1 - x;
++                break;
++            case Service::CAM::Flip::Vertical:
++                src_y = height - 1 - y;
++                break;
++            case Service::CAM::Flip::Reverse:
++                src_x = width - 1 - x;
++                src_y = height - 1 - y;
++                break;
++            default:
++                break;
++            }
++
++            frame[y * width + x] = temp[src_y * width + src_x];
++        }
++    }
++}
++
++std::vector<u16> LibRetroCamera::ReceiveFrame() {
++    auto& state = GetCameraState();
++
++    // If no frame available or camera not initialized, return black frame
++    if (!state.camera_initialized || output_width == 0 || output_height == 0) {
++        LOG_DEBUG(Service_CAM, "LibRetro: ReceiveFrame - not initialized or zero size");
++        return std::vector<u16>(output_width * output_height, output_rgb ? 0 : 0x8000);
++    }
++
++    std::vector<u32> source_frame;
++    unsigned src_width, src_height;
++
++    {
++        std::lock_guard<std::mutex> lock(state.frame_mutex);
++        if (!state.frame_available || state.frame_buffer.empty()) {
++            LOG_DEBUG(Service_CAM, "LibRetro: ReceiveFrame - no frame available");
++            return std::vector<u16>(output_width * output_height, output_rgb ? 0 : 0x8000);
++        }
++
++        source_frame = state.frame_buffer;
++        src_width = state.frame_width;
++        src_height = state.frame_height;
++    }
++    
++    // Debug: Log frame processing (only occasionally)
++    static int receive_count = 0;
++    if (++receive_count % 60 == 0) {
++        LOG_DEBUG(Service_CAM, "LibRetro: ReceiveFrame {} (src: {}x{}, out: {}x{})", 
++                  receive_count, src_width, src_height, output_width, output_height);
++    }
++
++    std::vector<u16> result(output_width * output_height);
++
++    // Simple nearest-neighbor scaling
++    for (int y = 0; y < output_height; y++) {
++        int src_y = y * src_height / output_height;
++        src_y = std::min(src_y, (int)src_height - 1);
++
++        for (int x = 0; x < output_width; x++) {
++            int src_x = x * src_width / output_width;
++            src_x = std::min(src_x, (int)src_width - 1);
++
++            u32 pixel = source_frame[src_y * src_width + src_x];
++
++            if (output_rgb) {
++                result[y * output_width + x] = XRGB8888ToRGB565(pixel);
++            } else {
++                // For YUV422, we process pixels in pairs
++                if (x % 2 == 0 && x + 1 < output_width) {
++                    int src_x2 = (x + 1) * src_width / output_width;
++                    src_x2 = std::min(src_x2, (int)src_width - 1);
++                    u32 pixel2 = source_frame[src_y * src_width + src_x2];
++
++                    u16 yuv1, yuv2;
++                    XRGB8888ToYUV422(pixel, pixel2, yuv1, yuv2);
++                    result[y * output_width + x] = yuv1;
++                    result[y * output_width + x + 1] = yuv2;
++                } else if (x % 2 == 1) {
++                    // Already processed with previous pixel
++                } else {
++                    // Last odd pixel - use same pixel twice
++                    u16 yuv1, yuv2;
++                    XRGB8888ToYUV422(pixel, pixel, yuv1, yuv2);
++                    result[y * output_width + x] = yuv1;
++                }
++            }
++        }
++    }
++
++    ApplyFlip(result, output_width, output_height);
++
++    return result;
++}
++
++bool LibRetroCamera::IsPreviewAvailable() {
++    auto& state = GetCameraState();
++    return state.camera_initialized && state.frame_available;
++}
++
++} // namespace LibRetro::Camera
++
+diff --git a/src/citra_libretro/camera/libretro_camera.h b/src/citra_libretro/camera/libretro_camera.h
+new file mode 100644
+index 000000000..4c36c9841
+--- /dev/null
++++ b/src/citra_libretro/camera/libretro_camera.h
+@@ -0,0 +1,83 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#pragma once
++
++#include <atomic>
++#include <mutex>
++#include <vector>
++#include "common/common_types.h"
++#include "core/frontend/camera/interface.h"
++#include "core/hle/service/cam/cam.h"
++#include "libretro.h"
++
++namespace LibRetro::Camera {
++
++// Default camera dimensions (3DS inner camera resolution)
++constexpr unsigned DEFAULT_CAMERA_WIDTH = 640;
++constexpr unsigned DEFAULT_CAMERA_HEIGHT = 480;
++
++/**
++ * A camera implementation that receives frames from the libretro frontend's camera driver.
++ */
++class LibRetroCamera final : public ::Camera::CameraInterface {
++public:
++    /// @param flip The flip mode for the camera
++    /// @param camera_id The 3DS camera ID (0=OuterRight, 1=Inner, 2=OuterLeft)
++    LibRetroCamera(const Service::CAM::Flip& flip, int camera_id = -1);
++    ~LibRetroCamera() override;
++
++    void StartCapture() override;
++    void StopCapture() override;
++    void SetResolution(const Service::CAM::Resolution& resolution) override;
++    void SetFlip(Service::CAM::Flip flip) override;
++    void SetEffect(Service::CAM::Effect effect) override;
++    void SetFormat(Service::CAM::OutputFormat format) override;
++    void SetFrameRate(Service::CAM::FrameRate frame_rate) override;
++    std::vector<u16> ReceiveFrame() override;
++    bool IsPreviewAvailable() override;
++
++    /// Called by the libretro callback when a new camera frame is received
++    static void OnCameraFrame(const uint32_t* buffer, unsigned width, unsigned height, size_t pitch);
++
++private:
++    /// Converts XRGB8888 to RGB565
++    static u16 XRGB8888ToRGB565(u32 pixel);
++
++    /// Converts XRGB8888 to YUV422
++    static void XRGB8888ToYUV422(u32 pixel1, u32 pixel2, u16& yuv1, u16& yuv2);
++
++    /// Applies flip transformation to the frame
++    void ApplyFlip(std::vector<u16>& frame, int width, int height);
++
++    int output_width = 0;
++    int output_height = 0;
++    bool output_rgb = false;
++    Service::CAM::Flip flip_mode = Service::CAM::Flip::NoFlip;
++    bool capturing = false;
++    int camera_id = -1;  // 3DS camera ID: 0=OuterRight, 1=Inner, 2=OuterLeft
++};
++
++/// Global camera state management
++struct CameraState {
++    std::mutex frame_mutex;
++    std::vector<u32> frame_buffer;
++    unsigned frame_width = 0;
++    unsigned frame_height = 0;
++    bool frame_available = false;
++    bool camera_initialized = false;
++    retro_camera_callback callback = {};
++};
++
++/// Get the global camera state
++CameraState& GetCameraState();
++
++/// Initialize the libretro camera interface
++bool InitializeCameraInterface();
++
++/// Shutdown the libretro camera interface
++void ShutdownCameraInterface();
++
++} // namespace LibRetro::Camera
++
+diff --git a/src/citra_libretro/camera/libretro_camera_factory.cpp b/src/citra_libretro/camera/libretro_camera_factory.cpp
+new file mode 100644
+index 000000000..b40be3432
+--- /dev/null
++++ b/src/citra_libretro/camera/libretro_camera_factory.cpp
+@@ -0,0 +1,44 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#include "citra_libretro/camera/libretro_camera.h"
++#include "citra_libretro/camera/libretro_camera_factory.h"
++#include "common/logging/log.h"
++#include "core/frontend/camera/blank_camera.h"
++
++namespace LibRetro::Camera {
++
++std::unique_ptr<::Camera::CameraInterface> Factory::Create(const std::string& config,
++                                                           const Service::CAM::Flip& flip) {
++    auto& state = GetCameraState();
++
++    // Parse camera ID from config string
++    int camera_id = -1;
++    if (!config.empty()) {
++        try {
++            camera_id = std::stoi(config);
++        } catch (...) {
++            LOG_WARNING(Service_CAM, "LibRetro: Failed to parse camera ID from config: {}", config);
++        }
++    }
++
++    if (state.camera_initialized) {
++        LOG_INFO(Service_CAM, "LibRetro: Creating LibRetroCamera (config: {}, camera_id: {})", config, camera_id);
++        return std::make_unique<LibRetroCamera>(flip, camera_id);
++    }
++
++    // Fallback to blank camera if libretro camera interface is not available
++    LOG_INFO(Service_CAM, "LibRetro: Camera interface not available, using blank camera (config: {})", config);
++    return std::make_unique<::Camera::BlankCamera>();
++}
++
++void RegisterCameraFactory() {
++    // Register the libretro camera factory as the default for various camera types
++    ::Camera::RegisterFactory("blank", std::make_unique<Factory>());
++    ::Camera::RegisterFactory("image", std::make_unique<Factory>());
++
++    LOG_INFO(Service_CAM, "LibRetro: Camera factory registered");
++}
++
++} // namespace LibRetro::Camera
+diff --git a/src/citra_libretro/camera/libretro_camera_factory.h b/src/citra_libretro/camera/libretro_camera_factory.h
+new file mode 100644
+index 000000000..3fe904cab
+--- /dev/null
++++ b/src/citra_libretro/camera/libretro_camera_factory.h
+@@ -0,0 +1,30 @@
++// Copyright Citra Emulator Project / Azahar Emulator Project
++// Licensed under GPLv2 or any later version
++// Refer to the license.txt file included.
++
++#pragma once
++
++#include <memory>
++#include <string>
++#include "core/frontend/camera/factory.h"
++#include "core/frontend/camera/interface.h"
++
++namespace LibRetro::Camera {
++
++/**
++ * A camera factory for LibRetro that uses the frontend's camera driver.
++ * Falls back to blank camera if the frontend doesn't support camera.
++ */
++class Factory final : public ::Camera::CameraFactory {
++public:
++    std::unique_ptr<::Camera::CameraInterface> Create(const std::string& config,
++                                                      const Service::CAM::Flip& flip) override;
++};
++
++/**
++ * Registers the LibRetro camera factory.
++ * This should be called during core initialization.
++ */
++void RegisterCameraFactory();
++
++} // namespace LibRetro::Camera
+diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
+index 8a65f9da8..8174c36ea 100644
+--- a/src/citra_libretro/citra_libretro.cpp
++++ b/src/citra_libretro/citra_libretro.cpp
+@@ -29,6 +29,15 @@
+ #include "video_core/video_core.h"
+ 
+ #include "citra_libretro/citra_libretro.h"
++#include "citra_libretro/manic_keyboard_abi.h"
++#include "citra_libretro/applets/swkbd_apple.h"
++#include "citra_libretro/audio/libretro_input.h"
++#include "citra_libretro/camera/libretro_camera.h"
++#include "citra_libretro/camera/libretro_camera_factory.h"
++#include "core/hle/service/nfc/nfc.h"
++#include "core/hle/service/am/am.h"
++#include "core/arm/dyncom/arm_dyncom.h"
++#include "core/arm/fastinterp/fastinterp.h"
+ #include "citra_libretro/core_settings.h"
+ #include "citra_libretro/environment.h"
+ #include "citra_libretro/input/input_factory.h"
+@@ -66,6 +75,8 @@ public:
+ };
+ 
+ CitraLibRetro* emu_instance;
++static retro_keyboard_callback_t s_retro_keyboard_callback = nullptr;
++static std::shared_ptr<SoftwareKeyboard::AppleKeyboard> s_apple_keyboard;
+ 
+ void retro_init() {
+     emu_instance = new CitraLibRetro();
+@@ -86,6 +97,9 @@ void retro_init() {
+     Core::System::GetInstance().RegisterImageInterface(
+         std::make_shared<Frontend::ImageInterface>());
+ 
++    LibRetro::Camera::RegisterCameraFactory();
++    Core::System::GetInstance().RegisterMicPermissionCheck([]() { return true; });
++    LibRetro::Audio::InitializeMicrophoneInterface();
+     LibRetro::Input::Init();
+ }
+ 
+@@ -95,6 +109,7 @@ void retro_deinit() {
+         Core::System::GetInstance().Shutdown();
+     }
+ 
++    LibRetro::Audio::ShutdownMicrophoneInterface();
+     LibRetro::Input::Shutdown();
+ 
+     delete emu_instance;
+@@ -516,6 +531,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+ 
+     // If using HW rendering, don't actually load the game here. azahar wants
+     // the graphics context ready and available before calling System::Load.
++    LibRetro::Camera::InitializeCameraInterface();
+     LibRetro::settings.file_path = info->path;
+ 
+     // Early validation: check that the ROM can be loaded before committing to
+@@ -634,6 +650,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+ 
+ void retro_unload_game() {
+     LOG_DEBUG(Frontend, "Unloading game...");
++    LibRetro::Camera::ShutdownCameraInterface();
+     Core::System::GetInstance().Shutdown();
+ }
+ 
+@@ -750,3 +767,141 @@ size_t retro_get_memory_size(unsigned id) {
+ void retro_cheat_reset() {}
+ 
+ void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
++
++// Amiibo support functions - declared in same style as other retro_ functions
++bool retro_load_amiibo(const char* path) {
++    if (!Core::System::GetInstance().IsPoweredOn()) {
++        return false;
++    }
++    
++    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
++    if (!nfc) {
++        return false;
++    }
++    
++    return nfc->LoadAmiibo(path);
++}
++
++bool retro_is_searching_amiibo() {
++    if (!Core::System::GetInstance().IsPoweredOn()) {
++        return false;
++    }
++    
++    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
++    if (!nfc) {
++        return false;
++    }
++    
++    return nfc->IsSearchingForAmiibos();
++}
++
++void retro_remove_amiibo() {
++    if (!Core::System::GetInstance().IsPoweredOn()) {
++        return;
++    }
++    
++    auto nfc = Core::System::GetInstance().ServiceManager().GetService<Service::NFC::NFC_U>("nfc:u");
++    if (!nfc) {
++        return;
++    }
++    
++    nfc->RemoveAmiibo();
++}
++
++// Software keyboard support functions
++void retro_set_keyboard_callback(retro_keyboard_callback_t callback) {
++    s_retro_keyboard_callback = callback;
++    
++    if (callback) {
++        // Create and register AppleKeyboard if callback is set
++        if (!s_apple_keyboard) {
++            s_apple_keyboard = std::make_shared<SoftwareKeyboard::AppleKeyboard>();
++        }
++        
++        // Set up the internal callback that converts to C API
++        SoftwareKeyboard::AppleKeyboard::SetKeyboardRequestCallback(
++            [](const SoftwareKeyboard::AppleKeyboardConfig& config) {
++                if (s_retro_keyboard_callback) {
++                    retro_keyboard_config c_config{};
++                    c_config.button_config = config.button_config;
++                    c_config.accept_mode = config.accept_mode;
++                    c_config.multiline_mode = config.multiline_mode;
++                    c_config.max_text_length = config.max_text_length;
++                    c_config.max_digits = config.max_digits;
++                    c_config.hint_text = config.hint_text;
++                    c_config.button_text = config.button_text;
++                    c_config.button_text_count = config.button_text_count;
++                    c_config.prevent_digit = config.prevent_digit;
++                    c_config.prevent_at = config.prevent_at;
++                    c_config.prevent_percent = config.prevent_percent;
++                    c_config.prevent_backslash = config.prevent_backslash;
++                    c_config.prevent_profanity = config.prevent_profanity;
++                    c_config.enable_callback = config.enable_callback;
++                    
++                    s_retro_keyboard_callback(&c_config);
++                }
++            });
++        
++        // Register the AppleKeyboard with the system
++        Core::System::GetInstance().RegisterSoftwareKeyboard(s_apple_keyboard);
++        LOG_INFO(Frontend, "Apple keyboard registered");
++    } else {
++        // Unregister: restore default keyboard
++        SoftwareKeyboard::AppleKeyboard::SetKeyboardRequestCallback(nullptr);
++        Frontend::RegisterDefaultApplets(Core::System::GetInstance());
++        s_apple_keyboard.reset();
++        LOG_INFO(Frontend, "Apple keyboard unregistered, using default");
++    }
++}
++
++void retro_keyboard_input(const char* text, int button) {
++    if (SoftwareKeyboard::AppleKeyboard::s_current_instance) {
++        std::string text_str = text ? text : "";
++        SoftwareKeyboard::AppleKeyboard::s_current_instance->SubmitInput(text_str, static_cast<u8>(button));
++    }
++}
++
++// Manic's host discovers these entry points with dylib_proc.
++extern "C" RETRO_API void retro_azahar_set_keyboard_callback(retro_keyboard_callback_t callback) {
++    retro_set_keyboard_callback(callback);
++}
++
++extern "C" RETRO_API void retro_azahar_keyboard_input(const char* text, int button) {
++    retro_keyboard_input(text, button);
++}
++
++void retro_install_cia(const char* path) {
++    Service::AM::InstallCIA(path, [](std::size_t total_bytes_read, std::size_t file_size) {});
++}
++
++extern "C" RETRO_API void retro_azahar_install_cia(const char* path) {
++    retro_install_cia(path);
++}
++
++// Preserve every Manic-specific entry point from the supplied Azahar core.
++// Its extension ABI reports version 1 (mov w0, #1; ret).
++extern "C" RETRO_API unsigned retro_azahar_extension_version() {
++    return 1;
++}
++
++extern "C" RETRO_API bool retro_azahar_load_amiibo(const char* path) {
++    return retro_load_amiibo(path);
++}
++
++extern "C" RETRO_API bool retro_azahar_is_searching_amiibo() {
++    return retro_is_searching_amiibo();
++}
++
++extern "C" RETRO_API void retro_azahar_remove_amiibo() {
++    retro_remove_amiibo();
++}
++
++// Testable runtime selection evidence, obtained from the actual active CPU.
++extern "C" RETRO_API unsigned retro_azahar_cpu_backend() {
++    auto& system = Core::System::GetInstance();
++    if (!system.IsPoweredOn()) return 0;
++    auto& cpu = system.GetRunningCore();
++    if (dynamic_cast<Core::FastInterp::ARM_FastInterp*>(&cpu)) return 2;
++    if (dynamic_cast<Core::ARM_DynCom*>(&cpu)) return 1;
++    return 3;
++}
+diff --git a/src/citra_libretro/core_settings.cpp b/src/citra_libretro/core_settings.cpp
+index 45d48aab5..f6af774ec 100644
+--- a/src/citra_libretro/core_settings.cpp
++++ b/src/citra_libretro/core_settings.cpp
+@@ -844,10 +844,9 @@ void RegisterCoreOptions(void) {
+ 
+ static void ParseCpuOptions(void) {
+     Settings::values.use_cpu_jit =
+-#ifdef IOS
+-        false;
+-#else
+         LibRetro::FetchVariable(config::cpu::use_cpu_jit, config::enabled) == config::enabled;
++#ifdef IOS
++    if (!LibRetro::CanUseJIT()) Settings::values.use_cpu_jit = false;
+ #endif
+ 
+     Settings::values.use_fastinterp =
+@@ -983,11 +982,10 @@ static void ParseGraphicsOptions(void) {
+                                                              config::enabled) == config::enabled;
+ 
+     Settings::values.use_shader_jit =
+-#ifdef IOS
+-        false;
+-#else
+         LibRetro::FetchVariable(config::graphics::use_shader_jit, config::enabled) ==
+         config::enabled;
++#ifdef IOS
++    if (!LibRetro::CanUseJIT()) Settings::values.use_shader_jit = false;
+ #endif
+ 
+     Settings::values.shaders_accurate_mul =
+@@ -1155,6 +1153,8 @@ void ParseCoreOptions(void) {
+     // Override default values that aren't user-selectable and aren't correct for the core
+     Settings::values.enable_audio_stretching = false;
+     Settings::values.frame_limit = 0;
++    Settings::values.plugin_loader_enabled = true;
++    Settings::values.allow_plugin_loader = true;
+ #if defined(USING_GLES)
+     Settings::values.use_gles = true;
+ #else
+diff --git a/src/citra_libretro/environment.cpp b/src/citra_libretro/environment.cpp
+index 23c053b60..3d6707dc5 100644
+--- a/src/citra_libretro/environment.cpp
++++ b/src/citra_libretro/environment.cpp
+@@ -62,6 +62,21 @@ bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface) {
+     return environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, mic_interface);
+ }
+ 
++bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface) {
++    return environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, mic_interface);
++}
++
++bool GetCameraInterface(struct retro_camera_callback* camera_callback) {
++    return environ_cb(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, camera_callback);
++}
++
++bool SwitchCamera(bool use_front_camera) {
++    // Custom environment call to switch camera device
++    // RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = 80 | RETRO_ENVIRONMENT_EXPERIMENTAL
++    const unsigned RETRO_ENVIRONMENT_SET_CAMERA_DEVICE = (80 | 0x10000);
++    return environ_cb(RETRO_ENVIRONMENT_SET_CAMERA_DEVICE, &use_front_camera);
++}
++
+ Settings::GraphicsAPI GetPreferredRenderer() {
+     // On Android, we really want to default to Vulkan if we can, so we'll ignore the frontend's
+     // recommendation if possible...
+diff --git a/src/citra_libretro/environment.h b/src/citra_libretro/environment.h
+index d321f9531..84d744f19 100644
+--- a/src/citra_libretro/environment.h
++++ b/src/citra_libretro/environment.h
+@@ -34,6 +34,10 @@ bool GetSensorInterface(struct retro_sensor_interface* sensor_interface);
+ /// Gets the microphone interface for audio input
+ bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface);
+ 
++bool GetMicrophoneInterface(struct retro_microphone_interface* mic_interface);
++bool GetCameraInterface(struct retro_camera_callback* camera_callback);
++bool SwitchCamera(bool use_front_camera);
++
+ /// Sets the environmental variables used for settings.
+ bool SetVariables(const retro_variable vars[]);
+ 
+diff --git a/src/citra_libretro/libretro.osx.def b/src/citra_libretro/libretro.osx.def
+index 53a556a60..1a5b25cab 100644
+--- a/src/citra_libretro/libretro.osx.def
++++ b/src/citra_libretro/libretro.osx.def
+@@ -25,3 +25,18 @@ _retro_unload_game
+ _retro_get_region
+ _retro_get_memory_data
+ _retro_get_memory_size
++
++_retro_load_amiibo
++_retro_is_searching_amiibo
++_retro_remove_amiibo
++_retro_set_keyboard_callback
++_retro_keyboard_input
++_retro_install_cia
++_retro_azahar_set_keyboard_callback
++_retro_azahar_keyboard_input
++_retro_azahar_install_cia
++_retro_azahar_extension_version
++_retro_azahar_load_amiibo
++_retro_azahar_is_searching_amiibo
++_retro_azahar_remove_amiibo
++_retro_azahar_cpu_backend
+diff --git a/src/citra_libretro/manic_keyboard_abi.h b/src/citra_libretro/manic_keyboard_abi.h
+new file mode 100644
+index 000000000..5be496cfc
+--- /dev/null
++++ b/src/citra_libretro/manic_keyboard_abi.h
+@@ -0,0 +1,50 @@
++// Manic keyboard ABI copied from Daiuno/libretro-common 5e54bdae.
++// Licensed under the source project's license.
++#pragma once
++#include "libretro.h"
++extern "C" {
++struct retro_keyboard_config {
++    int button_config;      /* ButtonConfig: 0=Single, 1=Dual, 2=Triple, 3=None */
++    int accept_mode;        /* AcceptedInput: 0=Anything, 1=NotEmpty, 2=NotEmptyAndNotBlank, 3=NotBlank, 4=FixedLength */
++    bool multiline_mode;
++    int max_text_length;
++    int max_digits;
++    const char* hint_text;
++    const char** button_text;
++    int button_text_count;
++    /* Filters */
++    bool prevent_digit;
++    bool prevent_at;
++    bool prevent_percent;
++    bool prevent_backslash;
++    bool prevent_profanity;
++    bool enable_callback;
++};
++
++/**
++ * Callback invoked when the core needs keyboard input.
++ * Frontend should display a keyboard UI and call retro_keyboard_input() when done.
++ */
++typedef void (RETRO_CALLCONV *retro_keyboard_callback_t)(const struct retro_keyboard_config* config);
++
++/**
++ * Register a callback to be invoked when the core needs keyboard input.
++ * @param callback The callback function, or NULL to unregister.
++ */
++RETRO_API void retro_set_keyboard_callback(retro_keyboard_callback_t callback);
++
++/**
++ * Submit keyboard input to the core.
++ * @param text The text entered by the user, or NULL if cancelled.
++ * @param button The button pressed (0=Ok for Single, 0=Cancel/1=Ok for Dual, 0=Cancel/1=Forgot/2=Ok for Triple).
++ */
++RETRO_API void retro_keyboard_input(const char* text, int button);
++
++RETRO_API void retro_install_cia(const char* path);
++
++
++RETRO_API bool retro_load_amiibo(const char* path);
++RETRO_API bool retro_is_searching_amiibo();
++RETRO_API void retro_remove_amiibo();
++}
++static_assert(sizeof(retro_keyboard_config) == 56, "Unexpected Manic ARM64 keyboard layout");
+diff --git a/src/core/arm/dyncom/arm_dyncom.cpp b/src/core/arm/dyncom/arm_dyncom.cpp
+index d1a6c382e..66c34bea0 100644
+--- a/src/core/arm/dyncom/arm_dyncom.cpp
++++ b/src/core/arm/dyncom/arm_dyncom.cpp
+@@ -46,6 +46,10 @@ void ARM_DynCom::InvalidateCacheRange(u32, std::size_t) {
+     ClearInstructionCache();
+ }
+ 
++void ARM_DynCom::ClearExclusiveState() {
++    state->UnsetExclusiveMemoryAddress();
++}
++
+ void ARM_DynCom::SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) {
+     ClearInstructionCache();
+ }
+diff --git a/src/core/arm/dyncom/arm_dyncom.h b/src/core/arm/dyncom/arm_dyncom.h
+index 47d260655..3b1414859 100644
+--- a/src/core/arm/dyncom/arm_dyncom.h
++++ b/src/core/arm/dyncom/arm_dyncom.h
+@@ -30,7 +30,7 @@ public:
+ 
+     void ClearInstructionCache() override;
+     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
+-    void ClearExclusiveState() override {};
++    void ClearExclusiveState() override;
+ 
+     void SetPC(u32 pc) override;
+     u32 GetPC() const override;
+diff --git a/src/core/hle/service/plgldr/plgldr.cpp b/src/core/hle/service/plgldr/plgldr.cpp
+index c91309624..34812b320 100644
+--- a/src/core/hle/service/plgldr/plgldr.cpp
++++ b/src/core/hle/service/plgldr/plgldr.cpp
+@@ -128,17 +128,20 @@ void PLG_LDR::OnProcessRun(Kernel::Process& process, Kernel::KernelSystem& kerne
+     } else {
+         const std::string plugin_root =
+             FileUtil::GetUserPath(FileUtil::UserPath::SDMCDir) + "luma/plugins/";
+-        const std::string plugin_tid =
+-            plugin_root + fmt::format("{:016X}", process.codeset->program_id);
+-        FileUtil::FSTEntry entry;
+-        FileUtil::ScanDirectoryTree(plugin_tid, entry);
+-        for (const auto& child : entry.children) {
+-            if (!child.isDirectory && child.physicalName.ends_with(".3gx")) {
+-                plgldr_context.is_default_path = false;
+-                plgldr_context.plugin_path = child.physicalName;
+-                if (plugin_loader.Load(plgldr_context, process, kernel, *this) ==
+-                    Loader::ResultStatus::Success) {
+-                    return;
++        // iOS storage can preserve case. Files downloaded through Files commonly
++        // use a lowercase title-id directory, while the original probe used uppercase.
++        for (const auto& title_id : {fmt::format("{:016X}", process.codeset->program_id),
++                                     fmt::format("{:016x}", process.codeset->program_id)}) {
++            FileUtil::FSTEntry entry;
++            FileUtil::ScanDirectoryTree(plugin_root + title_id, entry);
++            for (const auto& child : entry.children) {
++                if (!child.isDirectory && child.physicalName.ends_with(".3gx")) {
++                    plgldr_context.is_default_path = false;
++                    plgldr_context.plugin_path = child.physicalName;
++                    if (plugin_loader.Load(plgldr_context, process, kernel, *this) ==
++                        Loader::ResultStatus::Success) {
++                        return;
++                    }
+                 }
+             }
+         }
+diff --git a/src/video_core/renderer_vulkan/renderer_vulkan.cpp b/src/video_core/renderer_vulkan/renderer_vulkan.cpp
+index 5221fdf15..a346dbd07 100644
+--- a/src/video_core/renderer_vulkan/renderer_vulkan.cpp
++++ b/src/video_core/renderer_vulkan/renderer_vulkan.cpp
+@@ -171,6 +171,8 @@ void RendererVulkan::PrepareRendertarget() {
+ 
+         const auto color_fill = fb_id == 0 ? regs_lcd.color_fill_top : regs_lcd.color_fill_bottom;
+         if (color_fill.is_enabled) {
++            if (!texture.image) ConfigureFramebufferTexture(texture, framebuffer);
++            screen_infos[i].texcoords = {0.f, 0.f, 1.f, 1.f};
+             screen_infos[i].image_view = texture.image_view;
+             FillScreen(color_fill.AsVector(), texture);
+             continue;
+@@ -237,7 +239,7 @@ void RendererVulkan::PrepareDraw(Frame* frame, const Layout::FramebufferLayout&
+ void RendererVulkan::RenderToWindow(PresentWindow& window, const Layout::FramebufferLayout& layout,
+                                     bool flipped) {
+     if (!Settings::values.use_skip_duplicate_frames.GetValue() ||
+-        Core::PerfStats::game_frames_updated) {
++        memory.Plugin3GXFramebufferAddress() != 0 || Core::PerfStats::game_frames_updated) {
+         Frame* frame = window.GetRenderFrame();
+ 
+         if (layout.width != frame->width || layout.height != frame->height) {
+@@ -277,6 +279,15 @@ void RendererVulkan::LoadFBToScreenInfo(const Pica::FramebufferConfig& framebuff
+               framebuffer.stride * framebuffer.height, framebuffer_addr, framebuffer.width.Value(),
+               framebuffer.height.Value(), framebuffer.format);
+ 
++    // A zero startup framebuffer has no guest surface yet. Clear the owned
++    // texture until a real address appears, matching the verified FB2 repair.
++    if (framebuffer_addr == 0) {
++        screen_info.image_view = screen_info.texture.image_view;
++        screen_info.texcoords = {0.f, 0.f, 1.f, 1.f};
++        FillScreen({0, 0, 0}, screen_info.texture);
++        return;
++    }
++
+     const u32 bpp = Pica::BytesPerPixel(framebuffer.color_format);
+     const std::size_t pixel_stride = framebuffer.stride / bpp;
+ 
