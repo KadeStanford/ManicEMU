@@ -103,3 +103,13 @@ periodic snapshots plus the last incomplete exchange and slow frame; normal
 game unload requests a final snapshot. Private captures stay local, separate
 from generic code and synthetic CI evidence. The optional Azahar recorder is
 a separate packaging variant; its trace does not establish DS protocol behavior.
+
+The v0.10 R1 physical interaction retained severe slowdown while the direct
+DTLS path was active. The R2 wrapper requests Network.framework responsive-data
+service for both outgoing connections and listeners, rather than leaving RF at
+the default service class. This targets observed command delivery/callback
+tails beyond the unchanged 25ms native deadline. It is a traffic-policy
+correction, not proof that the network honors it or that phone trades complete.
+The simulator checks the effective parameters and real bilateral DTLS traffic;
+it cannot emulate iPhone Wi-Fi scheduling. Native timestamps, packet contents,
+reply validation and the original DS engine are unchanged.

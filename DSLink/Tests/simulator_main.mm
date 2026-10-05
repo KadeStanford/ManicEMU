@@ -163,6 +163,8 @@ static void tests(){@autoreleasepool{
     results=[NSMutableDictionary new];NSString *errorText=nil;NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     try{
         // Exercise Network.framework DTLS itself, not a mocked sendData call.
+        NSData *policyKey=[NSMutableData dataWithLength:32];nw_parameters_t policy=rfParameters(policyKey);
+        check(@"DS RF parameters request responsive data service",policy&&nw_parameters_get_service_class(policy)==nw_service_class_responsive_data);
         std::mutex rfMutex;unsigned rfArrivals=0;bool rfWrong=false;
         MDSLocalRF *rfA=nil,*rfB=nil;NSDictionary *setupA=nil,*setupB=nil;
         auto setup=[&](bool side,NSString *nonce,NSDictionary *metadata){

@@ -63,7 +63,7 @@ static dispatch_data_t rfData(NSData *bytes){
     return dispatch_data_create(bytes.bytes,bytes.length,nullptr,^{(void)bytes;});
 }
 static nw_parameters_t rfParameters(NSData *key){
-    return nw_parameters_create_secure_udp(^(nw_protocol_options_t options){
+    nw_parameters_t parameters=nw_parameters_create_secure_udp(^(nw_protocol_options_t options){
         sec_protocol_options_t security=nw_tls_copy_sec_protocol_options(options);
         sec_protocol_options_add_pre_shared_key(security,rfData(key),rfData([@"ManicDS-RF-1" dataUsingEncoding:NSASCIIStringEncoding]));
         // RFC 5487 cipher 0x00a8. Apple's modern enum omits this DTLS PSK
@@ -72,6 +72,13 @@ static nw_parameters_t rfParameters(NSData *key){
         sec_protocol_options_set_min_tls_protocol_version(security,tls_protocol_version_DTLSv12);
         sec_protocol_options_set_max_tls_protocol_version(security,tls_protocol_version_DTLSv12);
     },NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    // Each RF exchange gates the emulated CPU, with a genuine 25ms reply
+    // deadline. Best-effort delivery can retain small commands beyond that
+    // deadline even when the dispatch queue is interactive and has no backlog.
+    // Apply the public latency-sensitive data policy to both listener and
+    // outgoing DTLS paths; retain authentic bytes, deadlines and encryption.
+    if(parameters)nw_parameters_set_service_class(parameters,nw_service_class_responsive_data);
+    return parameters;
 }
 
 @interface MDSLocalRF : NSObject
