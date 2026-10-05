@@ -4,7 +4,7 @@ import re,subprocess,tempfile,plistlib
 root=Path(__file__).resolve().parents[2]
 source=root/'ManicEmu/ManicEmu/Sources'
 registry=(source/'Tools/Others/EmulationCore.swift').read_text()
-types=set()
+types={'fds'}
 for array in re.findall(r'return \[([^\]]*)\]',registry):
     types.update(re.findall(r'\.([A-Za-z_][A-Za-z_0-9]*)',array))
 def fragment(text,marker):
@@ -67,4 +67,3 @@ with tempfile.TemporaryDirectory(prefix='fastinterp-selection-') as d:
     file=tmp/'Selection.swift';file.write_text(text)
     subprocess.run(['xcrun','swiftc','-DSIDE_LOAD',str(file),'-o',str(tmp/'Selection')],check=True)
     subprocess.run([str(tmp/'Selection'),str(bundle)],check=True)
-

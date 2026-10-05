@@ -23,6 +23,8 @@ typedef struct { const char *path;const void *data;size_t size;const char *meta;
 static NSString *root;
 static NSMutableDictionary *report;
 static int logFD=-1,signalFD=-1;
+static size_t writtenLogBytes;
+static unsigned droppedLogLines;
 static uintptr_t coreBase;
 static volatile sig_atomic_t runCalls;
 static unsigned frames,nonblackFrames;
@@ -116,6 +118,8 @@ static void checkpoint(NSString *next) {
     report[@"retro_run_seconds_maximum"]=@(maximumRunSeconds);
     report[@"retro_run_thread_cpu_seconds_total"]=@(runCPUSeconds);
     report[@"retro_run_thread_cpu_seconds_maximum"]=@(maximumRunCPUSeconds);
+    report[@"bounded_log_bytes"]=@(writtenLogBytes);
+    report[@"dropped_log_lines"]=@(droppedLogLines);
     NSMutableArray *wall=[NSMutableArray array],*cpu=[NSMutableArray array];
     for(unsigned i=0;i<8;++i){[wall addObject:@(wallBins[i])];[cpu addObject:@(cpuBins[i])];}
     report[@"retro_run_wall_histogram"]=wall;
@@ -134,9 +138,17 @@ static void fatalSignal(int sig,siginfo_t *info,void *rawContext) {
     _exit(128+sig);
 }
 static void logger(int level,const char *format,...) {
+    // Identical bounded logging in both modes. Per-line fsync would make the
+    // comparison measure log storage; Debug lines also exceed private evidence caps.
+    if(level<1)return;
     char line[4096];va_list args;va_start(args,format);
     int n=vsnprintf(line,sizeof(line),format,args);va_end(args);
-    if(n>0&&logFD>=0){write(logFD,line,MIN((size_t)n,sizeof(line)-1));fsync(logFD);}
+    if(n>0&&logFD>=0){
+        size_t bytes=MIN((size_t)n,sizeof(line)-1);
+        if(bytes>2*1024*1024-writtenLogBytes){++droppedLogLines;return;}
+        ssize_t written=write(logFD,line,bytes);
+        if(written>0)writtenLogBytes+=(size_t)written;
+    }
 }
 #ifdef MANIC_GAME_VULKAN
 #include "simulator_vulkan_frontend.h"

@@ -72,21 +72,21 @@ jobs:
             > deliverables/configure-native.log 2>&1
           cmake --build build-native --target citra_libretro --parallel 3 \
             > deliverables/build-native.log 2>&1
-          core=build-native/bin/azahar_libretro.dylib
+          core=build-native/bin/Release/azahar_libretro.dylib
           test -s "$core"
           cp "$core" deliverables/azahar-fastinterp-macos.dylib
           shasum -a 256 "$core" > deliverables/native-sha256.txt
           python3 - <<'PY'
           import ctypes,json,pathlib,shutil
-          c=ctypes.CDLL('build-native/bin/azahar_libretro.dylib')
+          c=ctypes.CDLL('build-native/bin/Release/azahar_libretro.dylib')
           c.retro_api_version.restype=ctypes.c_uint
           c.retro_azahar_extension_version.restype=ctypes.c_uint
           assert c.retro_api_version()==1
           assert c.retro_azahar_extension_version()==1
           assert c.retro_azahar_cpu_backend()==0
           assert c.retro_azahar_fastinterp_required()==0
-          variant=pathlib.Path('build-native/bin/azahar-fastinterp.libretro')
-          shutil.copyfile('build-native/bin/azahar_libretro.dylib',variant)
+          variant=pathlib.Path('build-native/bin/Release/azahar-fastinterp.libretro')
+          shutil.copyfile('build-native/bin/Release/azahar_libretro.dylib',variant)
           v=ctypes.CDLL(str(variant))
           assert v.retro_azahar_fastinterp_required()==1
           class Info(ctypes.Structure):

@@ -12,6 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {lfs: true, submodules: recursive}
+      - uses: actions/checkout@v4
+        with:
+          repository: azahar-emu/azahar
+          ref: 98932aeeb7d81ba08715a3e6eff57d47c2d1a65d
+          path: azahar-source
+          lfs: false
+          submodules: recursive
       - name: Select installed Xcode 26 and verify actual registry/model contract
         run: |
           set -euo pipefail
@@ -35,6 +42,46 @@ jobs:
           # This public baseline image is an embed-phase compiler fixture only.
           # It is never delivered as the new FastInterp core.
           cp Cores/azahar.libretro.framework/azahar.libretro Cores/azahar-fastinterp.libretro.framework/azahar-fastinterp.libretro
+      - name: Compile corrected native core and verify separate image identity
+        run: |
+          set -euo pipefail
+          git -C azahar-source apply ../FastInterp/patches/0002-official-core-manic-integration.patch
+          git -C azahar-source apply ../CorePatches/Azahar/0006-vulkan-string-format-ios15.patch
+          cmake -S azahar-source -B build-native -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON \
+            -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_TESTS=OFF \
+            > deliverables/configure-native.log 2>&1
+          cmake --build build-native --target citra_libretro --parallel 3 > deliverables/build-native.log 2>&1
+          core=build-native/bin/Release/azahar_libretro.dylib
+          test -s "$core"
+          cp "$core" deliverables/azahar-fastinterp-macos.dylib
+          shasum -a 256 "$core" > deliverables/native-sha256.txt
+          python3 - <<'PY' > deliverables/native-identity.json
+          import ctypes,json,pathlib,shutil
+          c=ctypes.CDLL('build-native/bin/Release/azahar_libretro.dylib')
+          c.retro_api_version.restype=ctypes.c_uint
+          c.retro_azahar_extension_version.restype=ctypes.c_uint
+          assert c.retro_api_version()==1 and c.retro_azahar_extension_version()==1
+          assert c.retro_azahar_cpu_backend()==0 and c.retro_azahar_fastinterp_required()==0
+          variant=pathlib.Path('build-native/bin/Release/azahar-fastinterp.libretro')
+          shutil.copyfile('build-native/bin/Release/azahar_libretro.dylib',variant)
+          v=ctypes.CDLL(str(variant));assert v.retro_azahar_fastinterp_required()==1
+          class Info(ctypes.Structure):
+              _fields_=[('name',ctypes.c_char_p),('version',ctypes.c_char_p),('extensions',ctypes.c_char_p),('fullpath',ctypes.c_bool),('block_extract',ctypes.c_bool)]
+          info=Info();v.retro_get_system_info(ctypes.byref(info));assert info.name==b'Azahar FastInterp'
+          info=Info();c.retro_get_system_info(ctypes.byref(info));assert info.name==b'Azahar'
+          print(json.dumps({'native_dylib_load':True,'distinct_library_names':True,'strict_variant_required':True,'game_executed':False}))
+          PY
+          xcrun clang++ -std=c++20 -arch arm64 -O2 -I azahar-source/src \
+            FastInterp/Tests/boundaries.cpp -o deliverables/FastInterpBoundaries
+          deliverables/FastInterpBoundaries > deliverables/boundaries.txt
+          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror \
+            -Wno-unused-parameter -DMANIC_GAME_MACOS=1 -DMANIC_GAME_VULKAN=1 \
+            -I azahar-source/externals/vulkan-headers/include \
+            -I OriginalCoreRepair/Tests/vendor -I OriginalCoreRepair/Tests \
+            FastInterp/Tests/game_compare.m -framework AppKit -framework Foundation \
+            -framework CoreGraphics -o deliverables/GameCompare
       - name: Build unsigned app source with explicit separate Core Select option
         run: |
           set -euo pipefail
@@ -60,4 +107,3 @@ jobs:
           name: fastinterp-selector-source-${{ github.run_id }}
           path: deliverables/
           retention-days: 1
-
