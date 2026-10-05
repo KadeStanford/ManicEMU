@@ -59,6 +59,16 @@ g.defaultCore=0
 precondition(g.isCitra3DS && !g.isAzahar3DS && g.libretroCore == nil)
 print("Actual Swift registry/model fragments: selection, separate paths, index persistence and switch-back passed. No Realm/UI/game acceptance claim.")
 '''
+special=(source/'Business/GameInfo/Models/SpecialCoreOption.swift').read_text()
+opt=fragment(special[special.index('static func getOptimizationCoreOptions'):],'else if game.isAzahar3DS')
+body=opt[opt.index('{')+1:-1]
+cases=sorted(set(re.findall(r'\.([a-zA-Z_][a-zA-Z_0-9]*)',body)) - {'isAzaharFastInterp','insert'})
+cases=[name for name in cases if name.startswith('citra_')]
+text+='\nenum SpecialCoreOption: Hashable { case '+','.join(cases)+' }\n'
+text+='func actualAzaharOptimizationOptions(game:Game)->Set<SpecialCoreOption> {'+body+'}\n'
+text+='g.defaultCore=1;precondition(!actualAzaharOptimizationOptions(game:g).contains(.citra_use_fastinterp))\n'
+text+='g.defaultCore=2;precondition(actualAzaharOptimizationOptions(game:g).contains(.citra_use_fastinterp))\n'
+text+='precondition(actualAzaharOptimizationOptions(game:g).contains(.citra_use_shader_jit))\n'
 with tempfile.TemporaryDirectory(prefix='fastinterp-selection-') as d:
     tmp=Path(d);bundle=tmp/'Test.app';(bundle/'Frameworks').mkdir(parents=True)
     (bundle/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'test.fastinterp.selection','CFBundleExecutable':'Test'}))

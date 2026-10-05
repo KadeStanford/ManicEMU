@@ -356,7 +356,7 @@ enum SpecialCoreOption: String {
                 .reicast_language
             ]
         } else if game.isAzahar3DS {
-            return [
+            var result: Set<SpecialCoreOption> = [
                 .citra_use_cpu_jit,
                 .citra_use_default_aes_key,
                 .citra_layout_option,
@@ -366,7 +366,12 @@ enum SpecialCoreOption: String {
                 .citra_large_screen_proportion,
                 .citra_custom_layout_config,
                 .citra_motion_rotation,
-            ] + (game.isAzaharFastInterp ? [.citra_use_fastinterp, .citra_use_shader_jit] : [])
+            ]
+            if game.isAzaharFastInterp {
+                result.insert(.citra_use_fastinterp)
+                result.insert(.citra_use_shader_jit)
+            }
+            return result
         } else if game.gameType == .doom {
             return [.prboom_resolution]
         } else if game.gameType == .dos {

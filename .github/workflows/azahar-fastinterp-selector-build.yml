@@ -12,13 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {lfs: true, submodules: recursive}
-      - uses: actions/checkout@v4
-        with:
-          repository: azahar-emu/azahar
-          ref: 98932aeeb7d81ba08715a3e6eff57d47c2d1a65d
-          path: azahar-source
-          lfs: false
-          submodules: recursive
       - name: Select installed Xcode 26 and verify actual registry/model contract
         run: |
           set -euo pipefail
@@ -39,6 +32,10 @@ jobs:
           xcodebuild -version > deliverables/toolchain.txt
           uname -m >> deliverables/toolchain.txt
           python3 FastInterp/Tests/selection_contract.py > deliverables/selector-contract.txt 2>&1
+          xcrun swiftc -typecheck -target arm64-apple-ios15.0 \
+            -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
+            ManicEmu/ManicEmu/Sources/Tools/Others/ARMaxDecrypt.swift \
+            > deliverables/decoder-typecheck.txt 2>&1
           # This public baseline image is an embed-phase compiler fixture only.
           # It is never delivered as the new FastInterp core.
           cp Cores/azahar.libretro.framework/azahar.libretro Cores/azahar-fastinterp.libretro.framework/azahar-fastinterp.libretro

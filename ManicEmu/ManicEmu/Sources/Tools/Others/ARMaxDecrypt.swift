@@ -193,17 +193,27 @@ enum ARMaxDecrypt {
             i += 1
             var tmp2 = val ^ seeds[i]
             i += 1
-            addr ^= table6[Int(tmp & 0x3F)] ^ table4[Int((tmp >> 8) & 0x3F)] ^ table2[Int((tmp >> 16) & 0x3F)] ^
-                table0[Int((tmp >> 24) & 0x3F)] ^ table7[Int(tmp2 & 0x3F)] ^ table5[Int((tmp2 >> 8) & 0x3F)] ^
-                table3[Int((tmp2 >> 16) & 0x3F)] ^ table1[Int((tmp2 >> 24) & 0x3F)]
+            addr ^= table6[Int(tmp & 0x3F)]
+            addr ^= table4[Int((tmp >> 8) & 0x3F)]
+            addr ^= table2[Int((tmp >> 16) & 0x3F)]
+            addr ^= table0[Int((tmp >> 24) & 0x3F)]
+            addr ^= table7[Int(tmp2 & 0x3F)]
+            addr ^= table5[Int((tmp2 >> 8) & 0x3F)]
+            addr ^= table3[Int((tmp2 >> 16) & 0x3F)]
+            addr ^= table1[Int((tmp2 >> 24) & 0x3F)]
 
             tmp = rotr(addr, 4) ^ seeds[i]
             i += 1
             tmp2 = addr ^ seeds[i]
             i += 1
-            val ^= table6[Int(tmp & 0x3F)] ^ table4[Int((tmp >> 8) & 0x3F)] ^ table2[Int((tmp >> 16) & 0x3F)] ^
-                table0[Int((tmp >> 24) & 0x3F)] ^ table7[Int(tmp2 & 0x3F)] ^ table5[Int((tmp2 >> 8) & 0x3F)] ^
-                table3[Int((tmp2 >> 16) & 0x3F)] ^ table1[Int((tmp2 >> 24) & 0x3F)]
+            val ^= table6[Int(tmp & 0x3F)]
+            val ^= table4[Int((tmp >> 8) & 0x3F)]
+            val ^= table2[Int((tmp >> 16) & 0x3F)]
+            val ^= table0[Int((tmp >> 24) & 0x3F)]
+            val ^= table7[Int(tmp2 & 0x3F)]
+            val ^= table5[Int((tmp2 >> 8) & 0x3F)]
+            val ^= table3[Int((tmp2 >> 16) & 0x3F)]
+            val ^= table1[Int((tmp2 >> 24) & 0x3F)]
         }
         unscramble2(addr: &addr, val: &val)
         setCode(&code, index, addr: val, val: addr)
