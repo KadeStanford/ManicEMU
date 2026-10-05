@@ -104,12 +104,33 @@ game unload requests a final snapshot. Private captures stay local, separate
 from generic code and synthetic CI evidence. The optional Azahar recorder is
 a separate packaging variant; its trace does not establish DS protocol behavior.
 
-The v0.10 R1 physical interaction retained severe slowdown while the direct
-DTLS path was active. The R2 wrapper requests Network.framework responsive-data
-service for both outgoing connections and listeners, rather than leaving RF at
-the default service class. This targets observed command delivery/callback
-tails beyond the unchanged 25ms native deadline. It is a traffic-policy
-correction, not proof that the network honors it or that phone trades complete.
-The simulator checks the effective parameters and real bilateral DTLS traffic;
-it cannot emulate iPhone Wi-Fi scheduling. Native timestamps, packet contents,
-reply validation and the original DS engine are unchanged.
+Both v0.10 R1 and R2 retained severe physical interaction slowdown with direct
+DTLS active. R2 requests responsive-data service on outgoing connections and
+listeners. That request did not resolve the observed phone failure. A separate
+125ms reply-recovery experiment accepted late replies but ran slower in a
+controlled native comparison; it is excluded from the production branch.
+
+R3 adds bounded receive/send timing without changing packets, transport policy,
+native reply validation or the original 25ms deadline. Public IP receive-time
+options are enabled on both connection and listener parameters. Diagnostics
+compare the IP packet timestamp with entry to the Network.framework callback
+using CLOCK_MONOTONIC_RAW nanoseconds. This includes IP/DTLS processing and
+callback scheduling; it does not measure physical radio delay. Missing and
+invalid timestamps are counted explicitly. Send completion measures content
+processing and callback latency, not remote receipt. Eight-bin histograms use
+microsecond boundaries 1000, 5000, 10000, 25000, 50000, 100000 and 250000; the
+last bin includes all larger values. Outstanding sends remain capped at 32.
+
+Recorder format 6 uses existing SDK direct-receive event 100 fields: timestamp
+is IP receive time, reference_timestamp is callback entry time, aidmask is 1
+only for a valid ordered IP/callback clock pair, payloadmask is room-lock wait
+in microseconds and answeredmask is callback-to-room-lock acquisition time in
+microseconds. The latter two saturate at 65535; aggregate maxima are also
+retained without that saturation. This interpretation applies only to direct
+SDK receive events (reason 2 for admitted RF, reason 0 if rejected); native
+events 1-8 and MCSession fallback events retain their previous meaning. No
+additional payload records reduce the existing retention window.
+
+Simulator tests exercise real bilateral DTLS, receive-clock availability and
+bounded timing accounting. They cannot establish iPhone Wi-Fi performance or
+completed physical trades. R3 is a diagnostic candidate, not a proven fix.

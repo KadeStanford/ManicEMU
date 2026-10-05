@@ -7,6 +7,22 @@
 #include <net/if.h>
 #include <mutex>
 #include <vector>
+#include <array>
+#include <algorithm>
+#include <time.h>
+
+static uint64_t rfClockNanoseconds(){
+    timespec now{};if(clock_gettime(CLOCK_MONOTONIC_RAW,&now))return 0;
+    return uint64_t(now.tv_sec)*1000000000ULL+uint64_t(now.tv_nsec);
+}
+static void rfDurationBins(std::array<uint64_t,8>& bins,uint64_t nanoseconds){
+    static constexpr uint64_t upper[]={1000,5000,10000,25000,50000,100000,250000};
+    const auto micros=nanoseconds/1000;unsigned index=0;
+    while(index<7&&micros>=upper[index])++index;++bins[index];
+}
+static NSArray *rfBinValues(const std::array<uint64_t,8>& bins){
+    NSMutableArray *values=[NSMutableArray arrayWithCapacity:8];for(auto value:bins)[values addObject:@(value)];return values;
+}
 
 // RF only. Discovery, admission and lifecycle fences still use the encrypted
 // MCSession. Each admitted peer gets a fresh DTLS PSK/listener. Keys travel only
@@ -78,11 +94,15 @@ static nw_parameters_t rfParameters(NSData *key){
     // Apply the public latency-sensitive data policy to both listener and
     // outgoing DTLS paths; retain authentic bytes, deadlines and encryption.
     if(parameters)nw_parameters_set_service_class(parameters,nw_service_class_responsive_data);
+    if(parameters){nw_protocol_stack_t stack=nw_parameters_copy_default_protocol_stack(parameters);
+        nw_protocol_options_t ip=nw_protocol_stack_copy_internet_protocol(stack);
+        if(ip)nw_ip_options_set_calculate_receive_time(ip,true);
+    }
     return parameters;
 }
 
 @interface MDSLocalRF : NSObject
--(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*))receive;
+-(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*,uint64_t,uint64_t))receive;
 -(void)add:(NSString*)nonce;
 -(void)connect:(NSString*)nonce metadata:(NSDictionary*)metadata;
 // YES = admitted to DTLS or deliberately dropped under bounded backpressure;
@@ -96,27 +116,38 @@ static nw_parameters_t rfParameters(NSData *key){
     dispatch_queue_t _queue;
     NSMutableDictionary<NSString*,MDSRFPeer*> *_peers;
     NSArray *_interfaces;
-    void(^_setup)(NSString*,NSDictionary*);void(^_receive)(NSString*,NSData*);
+    void(^_setup)(NSString*,NSDictionary*);void(^_receive)(NSString*,NSData*,uint64_t,uint64_t);
     std::mutex _mutex;
     BOOL _stopped;
     uint64_t _sent,_received,_dropped,_failures;
+    uint64_t _kernelSamples,_kernelMissing,_kernelInvalid,_callbackDelayMax,_sendCompletionSamples,_sendCompletionMax;
+    std::array<uint64_t,8> _callbackDelayBins{},_sendCompletionBins{};
+    unsigned _pendingMax;
 }
--(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*))receive{
+-(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*,uint64_t,uint64_t))receive{
     if((self=[super init])){_queue=dispatch_queue_create("org.manicemu.ds.local-rf",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));
         _peers=[NSMutableDictionary new];_interfaces=rfInterfaces();_setup=[setup copy];_receive=[receive copy];}return self;
 }
 -(void)read:(nw_connection_t)connection peer:(MDSRFPeer*)peer{
     __weak MDSLocalRF *weak=self;
     nw_connection_receive_message(connection,^(dispatch_data_t content,nw_content_context_t context,bool complete,nw_error_t error){
-        (void)context;MDSLocalRF *strong=weak;if(!strong)return;
-        void(^receiver)(NSString*,NSData*)=nil;NSData *bytes=nil;
+        const uint64_t callback=rfClockNanoseconds();uint64_t received=0;
+        if(context){nw_protocol_metadata_t metadata=nw_content_context_copy_protocol_metadata(context,nw_protocol_copy_ip_definition());
+            if(metadata&&nw_protocol_metadata_is_ip(metadata))received=nw_ip_metadata_get_receive_time(metadata);
+        }
+        MDSLocalRF *strong=weak;if(!strong)return;
+        void(^receiver)(NSString*,NSData*,uint64_t,uint64_t)=nil;NSData *bytes=nil;
         {std::lock_guard<std::mutex> guard(strong->_mutex);if(strong->_stopped||peer.stopped)return;
             if(content&&complete){const void *data=nullptr;size_t size=0;dispatch_data_t mapped=dispatch_data_create_map(content,&data,&size);
-                if(mapped&&size>=73&&size<=1000&&!memcmp(data,"MDR1",4)){bytes=[NSData dataWithBytes:data length:size];strong->_received++;receiver=strong->_receive;}
+                if(mapped&&size>=73&&size<=1000&&!memcmp(data,"MDR1",4)){bytes=[NSData dataWithBytes:data length:size];strong->_received++;receiver=strong->_receive;
+                    if(!received||!callback)strong->_kernelMissing++;
+                    else if(received>callback)strong->_kernelInvalid++;
+                    else {const auto delay=callback-received;strong->_kernelSamples++;strong->_callbackDelayMax=std::max(strong->_callbackDelayMax,delay);rfDurationBins(strong->_callbackDelayBins,delay);}
+                }
                 else strong->_dropped++;
             }if(error)strong->_failures++;
         }
-        if(receiver)receiver(peer.nonce,bytes);
+        if(receiver)receiver(peer.nonce,bytes,received,callback);
         if(!error)[strong read:connection peer:peer];
         else{nw_connection_cancel(connection);std::lock_guard<std::mutex> guard(strong->_mutex);[peer.incoming removeObject:connection];}
     });
@@ -191,10 +222,13 @@ static nw_parameters_t rfParameters(NSData *key){
     if(data.length<73||data.length>1000||memcmp(data.bytes,"MDR1",4))return NO;
     nw_connection_t connection;MDSRFPeer *peer;
     {std::lock_guard<std::mutex> guard(_mutex);peer=_peers[nonce];if(_stopped||!peer.ready||peer.stopped||!peer.outgoing)return NO;
-        if(peer.pending>=32){_dropped++;return YES;}peer.pending++;connection=peer.outgoing;_sent++;
+        if(peer.pending>=32){_dropped++;return YES;}peer.pending++;_pendingMax=std::max(_pendingMax,peer.pending);connection=peer.outgoing;_sent++;
     }
+    const uint64_t queued=rfClockNanoseconds();
     __weak MDSLocalRF *weak=self;nw_connection_send(connection,rfData(data),NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,true,^(nw_error_t error){
+        const uint64_t completed=rfClockNanoseconds();
         MDSLocalRF *strong=weak;if(!strong)return;std::lock_guard<std::mutex> guard(strong->_mutex);if(peer.pending)peer.pending--;
+        if(queued&&completed>=queued){const auto delay=completed-queued;strong->_sendCompletionSamples++;strong->_sendCompletionMax=std::max(strong->_sendCompletionMax,delay);rfDurationBins(strong->_sendCompletionBins,delay);}
         if(error){strong->_failures++;strong->_dropped++;peer.ready=NO;nw_connection_cancel(connection);}
     });return YES;
 }
@@ -212,6 +246,11 @@ static nw_parameters_t rfParameters(NSData *key){
 }
 -(NSDictionary*)metrics{
     std::lock_guard<std::mutex> guard(_mutex);unsigned ready=0;for(MDSRFPeer *peer in _peers.allValues)ready+=peer.ready&&!peer.stopped;
-    return @{@"ready_peers":@(ready),@"sent":@(_sent),@"received":@(_received),@"dropped":@(_dropped),@"failures":@(_failures)};
+    return @{@"ready_peers":@(ready),@"sent":@(_sent),@"received":@(_received),@"dropped":@(_dropped),@"failures":@(_failures),
+        @"timing_clock":@"CLOCK_MONOTONIC_RAW",@"bin_upper_us":@[@1000,@5000,@10000,@25000,@50000,@100000,@250000],
+        @"kernel_receive_samples":@(_kernelSamples),@"kernel_receive_missing":@(_kernelMissing),@"kernel_receive_invalid":@(_kernelInvalid),
+        @"ip_to_callback_max_us":@(_callbackDelayMax/1000),@"ip_to_callback_bins":rfBinValues(_callbackDelayBins),
+        @"send_completion_samples":@(_sendCompletionSamples),@"send_completion_max_us":@(_sendCompletionMax/1000),
+        @"send_completion_bins":rfBinValues(_sendCompletionBins),@"pending_max":@(_pendingMax)};
 }
 @end

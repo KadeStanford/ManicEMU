@@ -60,6 +60,7 @@ static struct {
     uint64_t videoCallbacks=0,videoDuplicates=0,audioFrames=0,audioConsumed=0;
     unsigned videoWidth=0,videoHeight=0;
     double sendQueueDelayMax=0,sendCallMax=0;
+    uint64_t rfRoomLockMax=0,rfCallbackToRoomMax=0;
     Nonce nonce{};
     NSData *lastBattery=nil;
     NSString *savePath=nil;
@@ -121,7 +122,7 @@ static UIViewController *presenter(){
 -(MCNearbyServiceAdvertiser*)newAdvertiser;
 -(void)drain;
 -(void)cleanup;
--(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation;
+-(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation ipTime:(uint64_t)received callbackTime:(uint64_t)callback;
 -(void)warning:(NSString*)message generation:(uint64_t)generation;
 @end
 static void frontendHold(bool on){
@@ -229,7 +230,7 @@ void MDS_waitForPackets(uint32_t microseconds){
 void MDS_netpacket(const retro_netpacket_callback *cb){if(cb){std::lock_guard<std::mutex> guard(lock);g.net=*cb;}}
 void MDS_gameLoaded(const char code[4],uint8_t revision,MDSCore core){
     MDS_gameUnloading();
-    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;g.nativeTimeouts=g.nativeCmd=g.nativeReply=g.nativeOther=g.filterBSSID=g.filterDestination=g.unreliableSendFailures=0;g.sendQueueDelayMax=g.sendCallMax=0;g.receive={};}
+    {std::lock_guard<std::mutex> guard(lock);g.core=core;std::memcpy(g.code,code,4);g.revision=revision;g.loaded=title(code)!=0;g.epoch=++epoch;g.nonce=newNonce();g.frames=0;g.nativeMilliseconds=g.waitMilliseconds=g.lastMetrics=0;g.measuredFrames=g.waits=g.transportMessages=0;g.nativeTimeouts=g.nativeCmd=g.nativeReply=g.nativeOther=g.filterBSSID=g.filterDestination=g.unreliableSendFailures=0;g.sendQueueDelayMax=g.sendCallMax=0;g.rfRoomLockMax=g.rfCallbackToRoomMax=0;g.receive={};}
     dispatch_async(dispatch_get_main_queue(),^{installPauseHooks();});
     {std::lock_guard<std::mutex> guard(lock);if(g.loaded){
         NSInteger next=[NSUserDefaults.standardUserDefaults integerForKey:@"ManicDSDiagnosticNextSlot"];
@@ -288,9 +289,10 @@ void MDS_afterFrame(double nativeMilliseconds,bool finalSnapshot){
         if(g.loaded&&nativeMilliseconds>0){g.nativeMilliseconds+=nativeMilliseconds;g.measuredFrames++;g.frameMax=std::max(g.frameMax,nativeMilliseconds);
             if(nativeMilliseconds>50){g.frameOver50++;if(g.traces&&CACurrentMediaTime()-g.lastSlowFreeze>=1){*g.lastSlow=*g.traces;g.lastSlowFreeze=CACurrentMediaTime();g.slowSinceSnapshot=true;}}}
         if(g.loaded&&(finalSnapshot||CACurrentMediaTime()-g.lastMetrics>=5)){g.lastMetrics=CACurrentMediaTime();
-            metrics=@{@"format":@5,@"candidate":@"DS-v0.9",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"native_radio_sent":@(g.room?g.room->radioSentCount():0),@"native_radio_received":@(g.room?g.room->radioReceivedCount():0),@"native_radio_dropped":@(g.room?g.room->radioDroppedCount():0),@"fragment_dropped":@(g.room?g.room->fragmentDroppedCount():0),@"unreliable_send_failures":@(g.unreliableSendFailures),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"receive_scope":@(g.receive.scope),@"host_receive_calls":@(g.receive.hostCalls),@"reply_receive_calls":@(g.receive.replyCalls),@"host_wait_calls":@(g.receive.hostWaits),@"reply_wait_calls":@(g.receive.replyWaits),@"host_wait_ms":@(g.receive.hostWaitMilliseconds),@"reply_wait_ms":@(g.receive.replyWaitMilliseconds),@"host_timeouts":@(g.receive.hostTimeouts),@"reply_timeouts":@(g.receive.replyTimeouts),@"host_empty":@(g.receive.hostEmpty),@"reply_complete":@(g.receive.replyComplete),@"reply_incomplete":@(g.receive.replyIncomplete),@"reply_payload":@(g.receive.replyResults[0]),@"reply_empty":@(g.receive.replyResults[1]),@"reply_stale":@(g.receive.replyResults[2]),@"reply_unknown_aid":@(g.receive.replyResults[3]),@"reply_unexpected_aid":@(g.receive.replyResults[4]),@"reply_duplicate_aid":@(g.receive.replyResults[5]),@"reply_malformed":@(g.receive.replyResults[6]),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
+            metrics=@{@"format":@6,@"candidate":@"DS-v0.10-R3",@"phase":@(g.room?(g.radio?(g.room->active()?2:1):3):0),@"native_frames":@(g.measuredFrames),@"native_ms":@(g.nativeMilliseconds),@"receive_wait_calls":@(g.waits),@"receive_wait_ms":@(g.waitMilliseconds),@"sent":@(g.room?g.room->sentCount():0),@"received":@(g.room?g.room->receivedCount():0),@"acknowledged":@(g.room?g.room->acknowledged():0),@"pending":@(g.room?g.room->pendingCount():0),@"duplicates":@(g.room?g.room->duplicateCount():0),@"rejected":@(g.room?g.room->rejectedCount():0),@"native_radio_sent":@(g.room?g.room->radioSentCount():0),@"native_radio_received":@(g.room?g.room->radioReceivedCount():0),@"native_radio_dropped":@(g.room?g.room->radioDroppedCount():0),@"fragment_dropped":@(g.room?g.room->fragmentDroppedCount():0),@"unreliable_send_failures":@(g.unreliableSendFailures),@"transport_messages":@(g.transportMessages),@"unix_time":@(NSDate.date.timeIntervalSince1970),@"receive_scope":@(g.receive.scope),@"host_receive_calls":@(g.receive.hostCalls),@"reply_receive_calls":@(g.receive.replyCalls),@"host_wait_calls":@(g.receive.hostWaits),@"reply_wait_calls":@(g.receive.replyWaits),@"host_wait_ms":@(g.receive.hostWaitMilliseconds),@"reply_wait_ms":@(g.receive.replyWaitMilliseconds),@"host_timeouts":@(g.receive.hostTimeouts),@"reply_timeouts":@(g.receive.replyTimeouts),@"host_empty":@(g.receive.hostEmpty),@"reply_complete":@(g.receive.replyComplete),@"reply_incomplete":@(g.receive.replyIncomplete),@"reply_payload":@(g.receive.replyResults[0]),@"reply_empty":@(g.receive.replyResults[1]),@"reply_stale":@(g.receive.replyResults[2]),@"reply_unknown_aid":@(g.receive.replyResults[3]),@"reply_unexpected_aid":@(g.receive.replyResults[4]),@"reply_duplicate_aid":@(g.receive.replyResults[5]),@"reply_malformed":@(g.receive.replyResults[6]),@"native_timeouts":@(g.nativeTimeouts),@"native_cmd":@(g.nativeCmd),@"native_reply":@(g.nativeReply),@"native_other":@(g.nativeOther),@"filter_bssid":@(g.filterBSSID),@"filter_destination":@(g.filterDestination),@"send_queue_delay_max_ms":@(g.sendQueueDelayMax),@"send_call_max_ms":@(g.sendCallMax),@"room_peers":@(g.room?g.room->size():0),@"identity_requests":@(g.core.identityRequests?g.core.identityRequests():0),@"local_identity_matches":@(g.core.localIdentityMatches&&g.core.localIdentityMatches()),@"firmware_identity_matches":@(g.core.firmwareIdentityMatches&&g.core.firmwareIdentityMatches()),@"prepare_failed":@(g.failedPrepare)};
             NSMutableDictionary *detail=[metrics mutableCopy];
-            detail[@"candidate"]=@"DS-v0.10-R2";detail[@"local_rf"]=[[MDSNearby shared].localRF metrics]?:@{};
+            detail[@"candidate"]=@"DS-v0.10-R3";detail[@"local_rf"]=[[MDSNearby shared].localRF metrics]?:@{};
+            detail[@"rf_room_lock_max_us"]=@(g.rfRoomLockMax/1000);detail[@"rf_callback_to_room_max_us"]=@(g.rfCallbackToRoomMax/1000);
             detail[@"code"]=[[NSString alloc]initWithBytes:g.code length:4 encoding:NSASCIIStringEncoding];detail[@"revision"]=@(g.revision);
             detail[@"session"]=[NSString stringWithFormat:@"%d-%llu",getpid(),(unsigned long long)g.epoch];
             detail[@"thermal_state"]=@(NSProcessInfo.processInfo.thermalState);detail[@"low_power_mode"]=@(NSProcessInfo.processInfo.lowPowerModeEnabled);
@@ -398,7 +400,7 @@ void MDS_gameUnloading(){
             if(!target||!session)return;
             NSMutableData *wire=[NSMutableData dataWithBytes:"MDL1" length:4];[wire appendData:[NSJSONSerialization dataWithJSONObject:metadata options:0 error:nil]];
             dispatch_async(owner->_sendQueue,^{if(current==epoch.load()&&session==owner.session)[session sendData:wire toPeers:@[target] withMode:MCSessionSendDataReliable error:nil];});
-        } receive:^(NSString *nonce,NSData *data){MDSNearby *owner=weak;if(owner)[owner receiveRadio:data nonce:nonce generation:current];}];
+        } receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){MDSNearby *owner=weak;if(owner)[owner receiveRadio:data nonce:nonce generation:current ipTime:received callbackTime:callback];}];
     }
     if(_prepared)[self startDiscovery];
 }
@@ -544,12 +546,23 @@ void MDS_gameUnloading(){
         else if(_early.count<Room::MaxPeers||_early[peer]){if(!_early[peer])_early[peer]=[NSMutableArray new];if(_early[peer].count<16)[_early[peer] addObject:data];}}
     packetsReady.notify_all();[self drain];
 }
--(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation{
+-(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation ipTime:(uint64_t)received callbackTime:(uint64_t)callback{
     if(data.length<73||data.length>RadioFragments::MaxMessage)return;
+    const uint64_t roomEntry=rfClockNanoseconds();
     {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch||!g.room||![_wirePeers.allValues containsObject:nonce])return;
         Nonce source;if(!readNonce(nonce,source))return;
+        const uint64_t acquired=rfClockNanoseconds();
+        const uint64_t roomWait=roomEntry&&acquired>=roomEntry?acquired-roomEntry:0;
+        const uint64_t callbackWait=callback&&acquired>=callback?acquired-callback:0;
+        g.rfRoomLockMax=std::max(g.rfRoomLockMax,roomWait);g.rfCallbackToRoomMax=std::max(g.rfCallbackToRoomMax,callbackWait);
         bool accepted=g.room->receiveRadio(source,data.bytes,data.length);
         NativeDiagnostic trace;trace.event=100;trace.sourceSlot=g.room->slot(source);trace.reason=accepted?2:0;
+        // Format 6, direct SDK event only: raw IP/callback nanoseconds, valid
+        // IP clock flag and saturated microsecond room-lock/callback stages.
+        // Native events 1-8 retain their original protocol meaning.
+        trace.timestamp=received;trace.referenceTimestamp=callback;trace.aidmask=received&&callback>=received?1:0;
+        trace.payloadmask=uint32_t(std::min<uint64_t>(65535,roomWait/1000));
+        trace.answeredmask=uint32_t(std::min<uint64_t>(65535,callbackWait/1000));
         trace.length=uint32_t(data.length);trace.payload=data.bytes;traceLocked(trace);
     }packetsReady.notify_all();[self drain];
 }
