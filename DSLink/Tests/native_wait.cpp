@@ -109,7 +109,8 @@ int main() {
     check(packet && packet->value == 42 && !frontendPending && timeouts == 0 && waits == 0 && polls == 1);
 
     reset(Mode::NoArrival);
-    check(!state.NextPacketBlockAfter(0) && timeouts == 1 && waits == 0 && polls == 1);
+    check(!state.NextPacketBlockAfter(0) && timeouts == 0 && waits == 0 && polls == 1);
+    check(state._timeoutCount==0); // an empty nonblocking poll is not a timeout
     reset(Mode::NoArrival); state.receivedPackets.push(Packet{43});
     packet = state.NextPacketBlockAfter(0);
     check(packet && packet->value == 43 && polls == 0 && waits == 0 && timeouts == 0);
