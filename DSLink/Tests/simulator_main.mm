@@ -313,7 +313,7 @@ static void tests(){@autoreleasepool{
                 waitUntil([]{return diagnosticJobs.load()==0;});
                 NSURL *capture=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics/current.json"];
                 NSDictionary *record=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:capture] options:0 error:nil];
-                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==5&&[record[@"candidate"] isEqual:@"DS-v0.10"]&&[record[@"trace"] count]==2);
+                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==5&&[record[@"candidate"] isEqual:@"DS-v0.10-R2"]&&[record[@"trace"] count]==2);
                 NSString *pinned=[NSString stringWithFormat:@"ManicDSDiagnostics/capture-%02u-incomplete.json",g.diagnosticSession];
                 check(@"incomplete exchange remains pinned after room recovery",[NSData dataWithContentsOfURL:[docs URLByAppendingPathComponent:pinned]]!=nil&&g.lastIncomplete->size()==2);
                 check(@"slow frame snapshot and recorder cost recorded",g.lastSlow->size()==2&&g.frameOver50==1&&g.writerFailures==0);
