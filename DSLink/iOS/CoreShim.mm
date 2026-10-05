@@ -30,6 +30,10 @@ static void *symbol(const char *name){
 #endif
 }
 template<class F> static F original(const char *name){return reinterpret_cast<F>(symbol(name));}
+static bool setAsyncRadio(bool enabled){
+    using Mode=bool(*)(bool);auto f=original<Mode>("manic_ds_async_radio_enable");
+    return f&&f(enabled);
+}
 struct Event {uint32_t number,reserved;const void *packet;};
 static bool environment(unsigned command,void *data){
     if(command==manicds::DiagnosticEnvironment){
@@ -65,6 +69,7 @@ static bool localMatches(){
     return identityRequests&&localPokemon&&generatedConsole(&expected)&&f&&f(native)&&!std::memcmp(native,expected.mac,6);
 }
 extern "C" bool retro_load_game(const retro_game_info *info){
+    setAsyncRadio(false);
     identityRequests=0;
     char code[4]{};uint8_t revision=0;
     // Read only the authorized game's standard 32-byte cartridge header.
@@ -78,15 +83,17 @@ extern "C" bool retro_load_game(const retro_game_info *info){
     // A reset-capable engine is mandatory. The diagnostic binary patch lacks
     // queue reset; it cannot enable a feature IPA merely by having event hooks.
     using Revision=unsigned(*)();auto revisionFn=original<Revision>("manic_ds_protocol_revision");
-    char disabled[4]{};MDS_gameLoaded(revisionFn&&revisionFn()==8?code:disabled,revision,core);return true;
+    bool ready=revisionFn&&revisionFn()==8;
+    if(localPokemon)ready=ready&&setAsyncRadio(true);
+    char disabled[4]{};MDS_gameLoaded(ready?code:disabled,revision,core);return true;
 }
 extern "C" void retro_run(){
     if(!MDS_beforeFrame())return;
     auto begin=std::chrono::steady_clock::now();auto f=original<decltype(&retro_run)>("retro_run");if(f)f();
     MDS_afterFrame(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count());
 }
-extern "C" void retro_unload_game(){MDS_gameUnloading();localPokemon=false;auto f=original<decltype(&retro_unload_game)>("retro_unload_game");if(f)f();}
-extern "C" void retro_deinit(){MDS_gameUnloading();localPokemon=false;auto f=original<decltype(&retro_deinit)>("retro_deinit");if(f)f();}
+extern "C" void retro_unload_game(){MDS_gameUnloading();localPokemon=false;setAsyncRadio(false);auto f=original<decltype(&retro_unload_game)>("retro_unload_game");if(f)f();}
+extern "C" void retro_deinit(){MDS_gameUnloading();localPokemon=false;setAsyncRadio(false);auto f=original<decltype(&retro_deinit)>("retro_deinit");if(f)f();}
 extern "C" bool retro_unserialize(const void *data,size_t size){
     if(!MDS_allowRestore())return false;auto f=original<decltype(&retro_unserialize)>("retro_unserialize");return f&&f(data,size);
 }
@@ -116,7 +123,10 @@ VALUE_FORWARD(size_t,retro_get_memory_size,(unsigned id),(id),0)
 VALUE_FORWARD(size_t,retro_serialize_size,(),(),0)
 VALUE_FORWARD(bool,retro_serialize,(void *data,size_t size),(data,size),false)
 // Slot-2 subsystem launching remains native and never starts the Pokemon bridge.
-VALUE_FORWARD(bool,retro_load_game_special,(unsigned type,const retro_game_info *info,size_t size),(type,info,size),false)
+extern "C" bool retro_load_game_special(unsigned type,const retro_game_info *info,size_t size){
+    MDS_gameUnloading();localPokemon=false;setAsyncRadio(false);
+    auto f=original<decltype(&retro_load_game_special)>("retro_load_game_special");return f&&f(type,info,size);
+}
 // Manic's custom layout and DNS exports must survive wrapper selection.
 extern "C" void set_melonds_custom_layout(const char *value){using F=void(*)(const char*);auto f=original<F>("set_melonds_custom_layout");if(f)f(value);}
 extern "C" void set_melonds_wfc_dns(const char *value){using F=void(*)(const char*);auto f=original<F>("set_melonds_wfc_dns");if(f)f(value);}

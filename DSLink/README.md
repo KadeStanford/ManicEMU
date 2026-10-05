@@ -177,3 +177,24 @@ Simulator coverage includes real bilateral Bonjour discovery, exclusion of
 peer-to-peer participation, bounded/invalid metadata and automatic third-peer
 wake/fallback/exit. Native packet bytes, 25ms deadlines and stale/AID checks are
 unchanged.
+
+R6 lets the guest CPU and audio continue while a genuine local radio transaction
+is pending. The existing WiFi transaction cursor pauses instead of blocking the
+entire console. Reply polling never waits; a500us gate limits empty polls and a
+125ms wall deadline bounds recovery. Source, native AID, timestamp, payload and
+empty-reply validation remain in the same ReplyCollector. Reaching the256-packet
+drain limit leaves subsequent packets queued. Cancellation covers native stop,
+reset, unload and restore; ordinary titles keep the legacy receiver.
+
+The shim explicitly enables this capability after loading one of the nine
+supported Pokemon titles, disables it for unloading and subsystem loads, and
+checks the engine capability before enabling local multiplayer. The recorder
+keeps genuine request/result timing; pending-transaction duration must not be
+interpreted as CPU-blocking wait time. Its frontend wait counters still measure
+actual blocked waits.
+
+An isolated Black/White native run with modeled3.35ms per carrier leg completed
+a trade near60FPS, verified swapped party identities and checksums, and cold
+loaded both copied saves. A25ms async prototype failed that same interaction
+and was rejected. These local tests do not model physical iPhone networking;
+the corrected physical trade and sustained phone performance remain to verify.

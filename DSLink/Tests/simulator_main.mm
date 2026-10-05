@@ -33,8 +33,11 @@ static bool identityValid=true;
 static bool identityMatches(){return identityValid;}
 static retro_environment_t engineEnvironment;
 static uint8_t mockBootIdentity[6]{};
+static bool mockAsyncEnabled=false,mockAsyncAvailable=true,mockAsyncDuringLoad=false;
+static bool mockAsyncMode(bool value){mockAsyncEnabled=value;return true;}
 static void mockSetEnvironment(retro_environment_t value){engineEnvironment=value;}
 static bool mockLoad(const retro_game_info *info){
+    mockAsyncDuringLoad=mockAsyncEnabled;
     (void)info;MDSGeneratedConsole request{1,{},{}};
     if(engineEnvironment&&engineEnvironment(0x4d445303,&request))memcpy(mockBootIdentity,request.mac,6);
     else memset(mockBootIdentity,0,6);
@@ -46,6 +49,7 @@ static unsigned mockRevision(){return 8;}
 static void mockUnload(){}
 static bool mockFrontend(unsigned command,void *data){(void)command;(void)data;return false;}
 static void *MDS_testEngineSymbol(const char *name){
+    if(!strcmp(name,"manic_ds_async_radio_enable"))return mockAsyncAvailable?reinterpret_cast<void*>(mockAsyncMode):nullptr;
     if(!strcmp(name,"retro_set_environment"))return reinterpret_cast<void*>(mockSetEnvironment);
     if(!strcmp(name,"retro_load_game"))return reinterpret_cast<void*>(mockLoad);
     if(!strcmp(name,"retro_get_memory_data"))return reinterpret_cast<void*>(memory);
@@ -408,6 +412,7 @@ static void tests(){@autoreleasepool{
         for(const char *code:{"ADAE","APAE","CPUE","IPKE","IPGE","IRBO","IRAO","IREO","IRDO"}){
             uint8_t header[32]{};memcpy(header+12,code,4);retro_game_info info{};info.data=header;info.size=sizeof(header);
             check([NSString stringWithFormat:@"iOS shim identity before engine load %.4s",code],retro_load_game(&info)&&requests()==1&&localMatches());
+            check([NSString stringWithFormat:@"bounded async radio enabled after native load %.4s",code],mockAsyncEnabled&&!mockAsyncDuringLoad);
             if(!memcmp(code,"IRBO",4)){
                 Event e{20,0,nullptr};engineEnvironment(0x4d445301,&e);
                 uint32_t wait[2]{1000,0};engineEnvironment(0x4d445302,wait);
@@ -435,7 +440,7 @@ static void tests(){@autoreleasepool{
                 waitUntil([]{return diagnosticJobs.load()==0;});
                 NSURL *capture=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics/current.json"];
                 NSDictionary *record=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:capture] options:0 error:nil];
-                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==6&&[record[@"candidate"] isEqual:@"DS-v0.10-R5"]&&[record[@"trace"] count]==2&&[record[@"lan_discovery"] count]==3);
+                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==6&&[record[@"candidate"] isEqual:@"DS-v0.10-R6"]&&[record[@"trace"] count]==2&&[record[@"lan_discovery"] count]==3);
                 NSString *pinned=[NSString stringWithFormat:@"ManicDSDiagnostics/capture-%02u-incomplete.json",g.diagnosticSession];
                 check(@"incomplete exchange remains pinned after room recovery",[NSData dataWithContentsOfURL:[docs URLByAppendingPathComponent:pinned]]!=nil&&g.lastIncomplete->size()==2);
                 check(@"slow frame snapshot and recorder cost recorded",g.lastSlow->size()==2&&g.frameOver50==1&&g.writerFailures==0);
@@ -456,7 +461,12 @@ static void tests(){@autoreleasepool{
         check(@"iOS shim path loading also installs native identity before load",retro_load_game(&pathInfo)&&requests()==1&&localMatches());
         check(@"fresh game load clears scoped diagnostics",g.receive.scope==0&&g.receive.hostCalls==0&&g.receive.replyCalls==0&&g.receive.replyResults[0]==0);retro_unload_game();
         memcpy(header+12,"TEST",4);retro_game_info other{};other.data=header;other.size=sizeof(header);
-        check(@"iOS shim leaves unrecognized games on original identity path",retro_load_game(&other)&&requests()==0&&!g.loaded);retro_unload_game();
+        check(@"iOS shim leaves unrecognized games on original identity path",retro_load_game(&other)&&requests()==0&&!g.loaded&&!mockAsyncEnabled);retro_unload_game();
+        memcpy(header+12,"IRBO",4);mockAsyncAvailable=false;
+        check(@"missing async capability cannot enable corrected local path",retro_load_game(&other)&&!g.loaded&&!mockAsyncEnabled);
+        retro_unload_game();mockAsyncAvailable=true;
+        check(@"recognized game can load again after capability failure",retro_load_game(&other)&&g.loaded&&mockAsyncEnabled);
+        retro_unload_game();check(@"unload cancels pending radio mode",!mockAsyncEnabled);
     }catch(const std::exception &e){errorText=[NSString stringWithUTF8String:e.what()];}
     NSDictionary *report=@{@"checks":results,@"error":errorText?:NSNull.null,@"synthetic_save_only":@YES,@"actual_game_trade_verified":@NO,@"physical_iPhone_verified":@NO};
     [[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[docs URLByAppendingPathComponent:@"smoke.json"] atomically:YES];

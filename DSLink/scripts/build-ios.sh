@@ -47,6 +47,7 @@ PY
   xcrun --sdk "$sdk_name" otool -L "$build/$name.framework/$name"
 done
 nm -g "$build/DSOriginal.framework/DSOriginal" | grep ' T _manic_ds_protocol_revision$'
+nm -g "$build/DSOriginal.framework/DSOriginal" | grep ' T _manic_ds_async_radio_enable$'
 python3 - "$build" "$sdk_name" <<'PY'
 import hashlib,json,pathlib,sys
 p=pathlib.Path(sys.argv[1])
@@ -55,7 +56,7 @@ files={n:hashlib.sha256((p/(n+'.framework')/n).read_bytes()).hexdigest() for n i
  'upstream_repository':'https://github.com/JesseTG/melonds-ds',
  'upstream_commit':'bc4e4b67d2d470d7c682810a1e892cafd6f9082b','queue_reset_marker':8,
  'local_console_identity':'stable per install for all nine Pokemon; applies in memory before boot for generated/imported/configured firmware; native frames unchanged',
- 'receive_wait':'single remaining 25ms budget; final nonblocking frontend poll and bounded available-reply drain; scheduler overshoot remains possible',
+ 'receive_wait':'Pokemon local path: nonblocking pending native radio transaction,125ms bounded reply window,500us poll gate; guest CPU/audio continue; source/AID/timestamp validation retained. Other titles retain legacy25ms blocking receiver.',
  'receive_diagnostics':'numeric scoped host/reply waits, timeouts, empty/stale/unexpected/duplicate/malformed reply outcomes; no packet bytes',
  'sdk_timing_diagnostics':'format 6: fixed512 SHA256 datagram fingerprints with send-entry/receive-callback/completion CLOCK_MONOTONIC_RAW; bounded RF queue probes, completion histograms, room-lock wait and trace clock anchors; IP metadata opportunistic and explicitly missing; no new packets/deadline changes',
  'native_radio_carrier':'unreliable/unsequenced, pair and bilateral radio-epoch isolation, <=1000-byte fragments, no RF ACKs; reliable room lifecycle controls',
