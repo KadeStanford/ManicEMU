@@ -27,7 +27,9 @@ def generate():
                 assert instruction=='adrp x14, #0xadf000'
                 instruction='mov x14, x10'
             if instruction.split()[0].startswith(('b','cb','tb')):
-                instruction=re.sub(r'#0x([0-9a-f]+)',lambda m:prefix+m[1],instruction)
+                # Only the final operand is a branch destination. TBZ/TBNZ also
+                # carry a bit-index immediate that must retain its numeric value.
+                instruction=re.sub(r'#0x([0-9a-f]+)$',lambda m:prefix+m[1],instruction)
             output.extend([f'{prefix}{address:x}:',instruction])
         output.extend([f'{prefix}2478a8:','str w11, [x10, #0xd10]','mov w28, #1',f'b {prefix}done',
                        f'{prefix}2478b0:',f'b {prefix}done',

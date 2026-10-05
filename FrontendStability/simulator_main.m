@@ -19,7 +19,7 @@ static NSArray *call(Gate gate,uint64_t elapsed,unsigned target,int32_t count,in
     return @[@(render),@(counter(state)),@(tracking(state))];
 }
 @interface Delegate:UIResponder<UIApplicationDelegate>
-@property(strong) UIWindow *window;
+@property(nonatomic,strong) UIWindow *window;
 @end
 @implementation Delegate
 - (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
