@@ -139,12 +139,16 @@ static nw_parameters_t rfParameters(NSData *key){
     nw_listener_set_new_connection_handler(listener,^(nw_connection_t connection){
         MDSLocalRF *strong=weak;if(!strong){nw_connection_cancel(connection);return;}
         {std::lock_guard<std::mutex> guard(strong->_mutex);if(strong->_stopped||peer.stopped||peer.incoming.count>=4){nw_connection_cancel(connection);return;}[peer.incoming addObject:connection];}
-        nw_connection_set_queue(connection,strong->_queue);
+        __block BOOL established=NO;nw_connection_set_queue(connection,strong->_queue);
         nw_connection_set_state_changed_handler(connection,^(nw_connection_state_t state,nw_error_t error){
             (void)error;MDSLocalRF *owner=weak;if(!owner)return;
-            if(state==nw_connection_state_ready)[owner read:connection peer:peer];
+            if(state==nw_connection_state_ready){established=YES;[owner read:connection peer:peer];}
             else if(state==nw_connection_state_failed||state==nw_connection_state_cancelled){std::lock_guard<std::mutex> guard(owner->_mutex);[peer.incoming removeObject:connection];if(state==nw_connection_state_failed)owner->_failures++;nw_connection_cancel(connection);}
         });nw_connection_start(connection);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),strong->_queue,^{
+            MDSLocalRF *owner=weak;if(!owner)return;std::lock_guard<std::mutex> guard(owner->_mutex);
+            if(!established&&!peer.stopped){nw_connection_cancel(connection);[peer.incoming removeObject:connection];}
+        });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),_queue,^{
             MDSLocalRF *strong=weak;if(!strong)return;std::lock_guard<std::mutex> guard(strong->_mutex);
             if(!peer.stopped&&peer.outgoing!=connection)nw_connection_cancel(connection);
@@ -169,8 +173,9 @@ static nw_parameters_t rfParameters(NSData *key){
             if(state==nw_connection_state_ready){if(!peer.outgoing){peer.outgoing=connection;peer.ready=YES;
                     for(nw_connection_t other in [peer.candidates copy])if(other!=connection)nw_connection_cancel(other);
                 }else if(peer.outgoing!=connection)nw_connection_cancel(connection);
-            }else if(state==nw_connection_state_failed||state==nw_connection_state_cancelled){
-                if(peer.outgoing==connection){peer.ready=NO;peer.outgoing=nil;}[peer.candidates removeObject:connection];if(state==nw_connection_state_failed){strong->_failures++;nw_connection_cancel(connection);}
+            }else if(state==nw_connection_state_waiting||state==nw_connection_state_failed||state==nw_connection_state_cancelled){
+                if(peer.outgoing==connection){peer.ready=NO;peer.outgoing=nil;}[peer.candidates removeObject:connection];
+                if(state!=nw_connection_state_cancelled){strong->_failures++;nw_connection_cancel(connection);}
             }
         });nw_connection_start(connection);
     }
