@@ -10,6 +10,14 @@
 #include <array>
 #include <algorithm>
 #include <time.h>
+#include <atomic>
+#include <CommonCrypto/CommonDigest.h>
+
+struct RFTimingRecord {
+    uint64_t sequence=0,entered=0,completed=0;
+    unsigned kind=0;
+    std::array<uint8_t,CC_SHA256_DIGEST_LENGTH> digest{};
+};
 
 static uint64_t rfClockNanoseconds(){
     timespec now{};if(clock_gettime(CLOCK_MONOTONIC_RAW,&now))return 0;
@@ -111,6 +119,10 @@ static nw_parameters_t rfParameters(NSData *key){
 -(void)remove:(NSString*)nonce;
 -(void)stop;
 -(NSDictionary*)metrics;
+-(void)sampleQueue;
+#ifdef MDS_RF_TESTING
+-(void)testQueueBlock:(dispatch_block_t)block;
+#endif
 @end
 @implementation MDSLocalRF {
     dispatch_queue_t _queue;
@@ -123,11 +135,42 @@ static nw_parameters_t rfParameters(NSData *key){
     uint64_t _kernelSamples,_kernelMissing,_kernelInvalid,_callbackDelayMax,_sendCompletionSamples,_sendCompletionMax;
     std::array<uint64_t,8> _callbackDelayBins,_sendCompletionBins;
     unsigned _pendingMax;
+    dispatch_source_t _probeTimer;
+    std::atomic<bool> _probePending;
+    uint64_t _probeSamples,_probeDelayMax,_timingNext,_timingOverwritten,_completionEvicted;
+    std::array<uint64_t,8> _probeDelayBins;
+    std::array<RFTimingRecord,512> _timings;
 }
 -(instancetype)initWithSetup:(void(^)(NSString*,NSDictionary*))setup receive:(void(^)(NSString*,NSData*,uint64_t,uint64_t))receive{
     if((self=[super init])){_queue=dispatch_queue_create("org.manicemu.ds.local-rf",dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,QOS_CLASS_USER_INTERACTIVE,0));
-        _callbackDelayBins.fill(0);_sendCompletionBins.fill(0);
-        _peers=[NSMutableDictionary new];_interfaces=rfInterfaces();_setup=[setup copy];_receive=[receive copy];}return self;
+        _callbackDelayBins.fill(0);_sendCompletionBins.fill(0);_probeDelayBins.fill(0);_probePending.store(false);
+        _peers=[NSMutableDictionary new];_interfaces=rfInterfaces();_setup=[setup copy];_receive=[receive copy];
+        _probeTimer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE,0));
+        __weak MDSLocalRF *weak=self;
+        dispatch_source_set_event_handler(_probeTimer,^{[weak sampleQueue];});
+        dispatch_source_set_timer(_probeTimer,dispatch_time(DISPATCH_TIME_NOW,50*NSEC_PER_MSEC),50*NSEC_PER_MSEC,5*NSEC_PER_MSEC);
+        dispatch_resume(_probeTimer);
+    }return self;
+}
+-(void)sampleQueue{
+    if(_probePending.exchange(true))return;const uint64_t queued=rfClockNanoseconds();
+    __weak MDSLocalRF *weak=self;dispatch_async(_queue,^{
+        const uint64_t entered=rfClockNanoseconds();MDSLocalRF *strong=weak;if(!strong)return;
+        strong->_probePending.store(false);std::lock_guard<std::mutex> guard(strong->_mutex);
+        if(!strong->_stopped&&strong->_peers.count&&queued&&entered>=queued){const auto delay=entered-queued;
+            strong->_probeSamples++;strong->_probeDelayMax=std::max(strong->_probeDelayMax,delay);rfDurationBins(strong->_probeDelayBins,delay);}
+    });
+}
+#ifdef MDS_RF_TESTING
+-(void)testQueueBlock:(dispatch_block_t)block{dispatch_async(_queue,block);}
+#endif
+// Caller holds _mutex. Fixed records contain times and a fingerprint only,
+// never another payload copy, peer address or DTLS key.
+-(uint64_t)timing:(NSData*)data kind:(unsigned)kind entered:(uint64_t)entered{
+    const uint64_t sequence=++_timingNext;if(sequence>_timings.size())_timingOverwritten++;
+    auto& record=_timings[(sequence-1)%_timings.size()];record=RFTimingRecord{};
+    record.sequence=sequence;record.kind=kind;record.entered=entered;
+    CC_SHA256(data.bytes,CC_LONG(data.length),record.digest.data());return sequence;
 }
 -(void)read:(nw_connection_t)connection peer:(MDSRFPeer*)peer{
     __weak MDSLocalRF *weak=self;
@@ -141,6 +184,7 @@ static nw_parameters_t rfParameters(NSData *key){
         {std::lock_guard<std::mutex> guard(strong->_mutex);if(strong->_stopped||peer.stopped)return;
             if(content&&complete){const void *data=nullptr;size_t size=0;dispatch_data_t mapped=dispatch_data_create_map(content,&data,&size);
                 if(mapped&&size>=73&&size<=1000&&!memcmp(data,"MDR1",4)){bytes=[NSData dataWithBytes:data length:size];strong->_received++;receiver=strong->_receive;
+                    [strong timing:bytes kind:2 entered:callback];
                     if(!received||!callback)strong->_kernelMissing++;
                     else if(received>callback)strong->_kernelInvalid++;
                     else {const auto delay=callback-received;strong->_kernelSamples++;strong->_callbackDelayMax=std::max(strong->_callbackDelayMax,delay);rfDurationBins(strong->_callbackDelayBins,delay);}
@@ -221,14 +265,17 @@ static nw_parameters_t rfParameters(NSData *key){
 }
 -(BOOL)send:(NSData*)data peer:(NSString*)nonce{
     if(data.length<73||data.length>1000||memcmp(data.bytes,"MDR1",4))return NO;
-    nw_connection_t connection;MDSRFPeer *peer;
+    nw_connection_t connection;MDSRFPeer *peer;uint64_t sequence=0;
+    const uint64_t queued=rfClockNanoseconds();
     {std::lock_guard<std::mutex> guard(_mutex);peer=_peers[nonce];if(_stopped||!peer.ready||peer.stopped||!peer.outgoing)return NO;
         if(peer.pending>=32){_dropped++;return YES;}peer.pending++;_pendingMax=std::max(_pendingMax,peer.pending);connection=peer.outgoing;_sent++;
+        sequence=[self timing:data kind:1 entered:queued];
     }
-    const uint64_t queued=rfClockNanoseconds();
     __weak MDSLocalRF *weak=self;nw_connection_send(connection,rfData(data),NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,true,^(nw_error_t error){
         const uint64_t completed=rfClockNanoseconds();
         MDSLocalRF *strong=weak;if(!strong)return;std::lock_guard<std::mutex> guard(strong->_mutex);if(peer.pending)peer.pending--;
+        auto& record=strong->_timings[(sequence-1)%strong->_timings.size()];
+        if(record.sequence==sequence)record.completed=completed;else strong->_completionEvicted++;
         if(queued&&completed>=queued){const auto delay=completed-queued;strong->_sendCompletionSamples++;strong->_sendCompletionMax=std::max(strong->_sendCompletionMax,delay);rfDurationBins(strong->_sendCompletionBins,delay);}
         if(error){strong->_failures++;strong->_dropped++;peer.ready=NO;nw_connection_cancel(connection);}
     });return YES;
@@ -242,16 +289,26 @@ static nw_parameters_t rfParameters(NSData *key){
     [_peers removeObjectForKey:nonce];
 }
 -(void)stop{
-    NSArray *names;{std::lock_guard<std::mutex> guard(_mutex);_stopped=YES;names=[_peers.allKeys copy];_setup=nil;_receive=nil;}
+    NSArray *names;{std::lock_guard<std::mutex> guard(_mutex);_stopped=YES;names=[_peers.allKeys copy];_setup=nil;_receive=nil;
+        if(_probeTimer){dispatch_source_cancel(_probeTimer);_probeTimer=nil;}}
     for(NSString *name in names)[self remove:name];
 }
 -(NSDictionary*)metrics{
     std::lock_guard<std::mutex> guard(_mutex);unsigned ready=0;for(MDSRFPeer *peer in _peers.allValues)ready+=peer.ready&&!peer.stopped;
+    NSMutableArray *timings=[NSMutableArray arrayWithCapacity:std::min<uint64_t>(_timingNext,_timings.size())];
+    const uint64_t first=_timingNext>_timings.size()?_timingNext-_timings.size()+1:1;
+    for(uint64_t sequence=first;sequence<=_timingNext;sequence++){const auto& record=_timings[(sequence-1)%_timings.size()];
+        char hex[CC_SHA256_DIGEST_LENGTH*2+1]{};static const char digits[]="0123456789abcdef";
+        for(unsigned i=0;i<record.digest.size();i++){hex[i*2]=digits[record.digest[i]>>4];hex[i*2+1]=digits[record.digest[i]&15];}
+        [timings addObject:@[@(record.sequence),@(record.kind),@(record.entered),@(record.completed),[NSString stringWithUTF8String:hex]]];
+    }
     return @{@"ready_peers":@(ready),@"sent":@(_sent),@"received":@(_received),@"dropped":@(_dropped),@"failures":@(_failures),
         @"timing_clock":@"CLOCK_MONOTONIC_RAW",@"bin_upper_us":@[@1000,@5000,@10000,@25000,@50000,@100000,@250000],
         @"kernel_receive_samples":@(_kernelSamples),@"kernel_receive_missing":@(_kernelMissing),@"kernel_receive_invalid":@(_kernelInvalid),
         @"ip_to_callback_max_us":@(_callbackDelayMax/1000),@"ip_to_callback_bins":rfBinValues(_callbackDelayBins),
         @"send_completion_samples":@(_sendCompletionSamples),@"send_completion_max_us":@(_sendCompletionMax/1000),
-        @"send_completion_bins":rfBinValues(_sendCompletionBins),@"pending_max":@(_pendingMax)};
+        @"send_completion_bins":rfBinValues(_sendCompletionBins),@"pending_max":@(_pendingMax),
+        @"queue_probe_samples":@(_probeSamples),@"queue_probe_max_us":@(_probeDelayMax/1000),@"queue_probe_bins":rfBinValues(_probeDelayBins),
+        @"timing_records":timings,@"timing_overwritten":@(_timingOverwritten),@"completion_record_evicted":@(_completionEvicted)};
 }
 @end

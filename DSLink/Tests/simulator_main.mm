@@ -165,7 +165,7 @@ static void tests(){@autoreleasepool{
         // Exercise Network.framework DTLS itself, not a mocked sendData call.
         NSData *policyKey=[NSMutableData dataWithLength:32];nw_parameters_t policy=rfParameters(policyKey);
         check(@"DS RF parameters request responsive data service",policy&&nw_parameters_get_service_class(policy)==nw_service_class_responsive_data);
-        std::mutex rfMutex;unsigned rfArrivals=0,rfKernelTimes=0;bool rfWrong=false;
+        std::mutex rfMutex;unsigned rfArrivals=0,rfKernelTimes=0,rfCallbackTimes=0;bool rfWrong=false;
         MDSLocalRF *rfA=nil,*rfB=nil;NSDictionary *setupA=nil,*setupB=nil;
         auto setup=[&](bool side,NSString *nonce,NSDictionary *metadata){
             (void)nonce;std::lock_guard<std::mutex> guard(rfMutex);if(side)setupA=metadata;else setupB=metadata;
@@ -173,6 +173,7 @@ static void tests(){@autoreleasepool{
         auto rfReceive=[&](NSString *nonce,NSData *data,uint64_t received,uint64_t callback){std::lock_guard<std::mutex> guard(rfMutex);
             rfWrong|=data.length!=73||((const uint8_t*)data.bytes)[72]!=0x51||(![nonce isEqual:@"A"]&&![nonce isEqual:@"B"]);rfArrivals++;
             rfKernelTimes+=received&&callback>=received;
+            rfCallbackTimes+=callback!=0;
         };
         rfA=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(true,nonce,metadata);} receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){rfReceive(nonce,data,received,callback);}];
         rfB=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){setup(false,nonce,metadata);} receive:^(NSString *nonce,NSData *data,uint64_t received,uint64_t callback){rfReceive(nonce,data,received,callback);}];
@@ -190,18 +191,49 @@ static void tests(){@autoreleasepool{
         check(@"established DTLS survives handshake timers",[rfA send:rfPacket peer:@"B"]&&[rfB send:rfPacket peer:@"A"]);
         waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==4;});
         check(@"real bilateral RF continues beyond handshake deadline",!rfWrong&&[[rfA metrics][@"received"] unsignedIntValue]==2&&[[rfB metrics][@"received"] unsignedIntValue]==2);
-        {std::lock_guard<std::mutex> guard(rfMutex);check(@"DTLS IP receive clocks precede actual callback clocks",rfKernelTimes==4);}
+        {std::lock_guard<std::mutex> guard(rfMutex);check(@"actual DTLS callback clocks and optional IP clocks are truthful",rfCallbackTimes==4&&rfKernelTimes<=4);}
         waitUntil([&]{return [[rfA metrics][@"send_completion_samples"] unsignedIntValue]==2&&[[rfB metrics][@"send_completion_samples"] unsignedIntValue]==2;});
         bool timingBounded=true;
         for(MDSLocalRF *endpoint in @[rfA,rfB]){NSDictionary *metrics=[endpoint metrics];
             uint64_t receiveBins=0,sendBins=0;for(NSNumber *n in metrics[@"ip_to_callback_bins"])receiveBins+=n.unsignedLongLongValue;
             for(NSNumber *n in metrics[@"send_completion_bins"])sendBins+=n.unsignedLongLongValue;
             timingBounded&=[metrics[@"timing_clock"] isEqual:@"CLOCK_MONOTONIC_RAW"]&&[metrics[@"ip_to_callback_bins"] count]==8&&
-                [metrics[@"send_completion_bins"] count]==8&&receiveBins==2&&sendBins==2&&
-                [metrics[@"kernel_receive_missing"] unsignedIntValue]==0&&[metrics[@"kernel_receive_invalid"] unsignedIntValue]==0&&
+                [metrics[@"send_completion_bins"] count]==8&&receiveBins==[metrics[@"kernel_receive_samples"] unsignedLongLongValue]&&sendBins==2&&
+                [metrics[@"kernel_receive_samples"] unsignedIntValue]+[metrics[@"kernel_receive_missing"] unsignedIntValue]+[metrics[@"kernel_receive_invalid"] unsignedIntValue]==2&&
                 [metrics[@"pending_max"] unsignedIntValue]<=32;
         }
         check(@"actual RF timing counters and histograms account for datagrams",timingBounded);
+        uint8_t expectedDigest[CC_SHA256_DIGEST_LENGTH]{};CC_SHA256(rfPacket.bytes,CC_LONG(rfPacket.length),expectedDigest);
+        NSMutableString *expectedHex=[NSMutableString new];for(auto byte:expectedDigest)[expectedHex appendFormat:@"%02x",byte];
+        bool fingerprints=true;
+        for(MDSLocalRF *endpoint in @[rfA,rfB]){NSArray *records=[endpoint metrics][@"timing_records"];unsigned sends=0,receives=0;
+            fingerprints&=records.count==4;
+            for(NSArray *record in records){fingerprints&=record.count==5&&[record[4] isEqual:expectedHex]&&[record[2] unsignedLongLongValue]>0;
+                unsigned kind=[record[1] unsignedIntValue];sends+=kind==1;receives+=kind==2;
+                fingerprints&=kind==1?[record[3] unsignedLongLongValue]>=[record[2] unsignedLongLongValue]:kind==2&&[record[3] unsignedLongLongValue]==0;
+            }fingerprints&=sends==2&&receives==2;
+        }
+        check(@"bounded fingerprint records preserve actual encrypted datagram identity",fingerprints);
+        std::atomic<bool> holdEntered{false},releaseHold{false};
+        auto hold=[&]{holdEntered.store(true);for(unsigned i=0;i<400&&!releaseHold.load();i++)std::this_thread::sleep_for(std::chrono::milliseconds(5));};
+        [rfA testQueueBlock:^{hold();}];waitUntil([&]{return holdEntered.load();});[rfA sampleQueue];
+        std::this_thread::sleep_for(std::chrono::milliseconds(75));releaseHold.store(true);
+        waitUntil([&]{return [[rfA metrics][@"queue_probe_max_us"] unsignedLongLongValue]>=70000;});
+        check(@"independent RF queue probe measures controlled scheduling blockage",[[rfA metrics][@"queue_probe_samples"] unsignedIntValue]>=10);
+        for(unsigned batch=0;batch<20;batch++){
+            for(unsigned message=0;message<32;message++)if(![rfA send:rfPacket peer:@"B"])throw std::runtime_error("synthetic RF burst not admitted");
+            const unsigned total=2+(batch+1)*32;
+            waitUntil([&]{return [[rfB metrics][@"received"] unsignedIntValue]==total&&[[rfA metrics][@"send_completion_samples"] unsignedIntValue]==total;});
+        }
+        bool wrapBounded=true;
+        for(MDSLocalRF *endpoint in @[rfA,rfB]){NSDictionary *metrics=[endpoint metrics];NSArray *records=metrics[@"timing_records"];
+            wrapBounded&=records.count==512&&[metrics[@"timing_overwritten"] unsignedIntValue]==132&&[metrics[@"dropped"] unsignedIntValue]==0;
+            uint64_t previous=0;for(NSArray *record in records){const uint64_t sequence=[record[0] unsignedLongLongValue];
+                wrapBounded&=(!previous||sequence==previous+1)&&[record[4] isEqual:expectedHex];previous=sequence;
+            }
+            NSData *encoded=[NSJSONSerialization dataWithJSONObject:metrics options:0 error:nil];wrapBounded&=encoded&&encoded.length<65536;
+        }
+        check(@"real encrypted RF burst keeps fingerprint retention bounded after wrapping",wrapBounded);
         check(@"unknown direct RF peer falls back",![rfA send:rfPacket peer:@"C"]);
         [rfA remove:@"B"];[rfB remove:@"A"];
         check(@"direct RF removal prevents old-session sends",![rfA send:rfPacket peer:@"B"]&&![rfB send:rfPacket peer:@"A"]);

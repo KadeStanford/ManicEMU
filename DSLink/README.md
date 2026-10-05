@@ -111,15 +111,29 @@ listeners. That request did not resolve the observed phone failure. A separate
 controlled native comparison; it is excluded from the production branch.
 
 R3 adds bounded receive/send timing without changing packets, transport policy,
-native reply validation or the original 25ms deadline. Public IP receive-time
-options are enabled on both connection and listener parameters. Diagnostics
-compare the IP packet timestamp with entry to the Network.framework callback
-using CLOCK_MONOTONIC_RAW nanoseconds. This includes IP/DTLS processing and
-callback scheduling; it does not measure physical radio delay. Missing and
-invalid timestamps are counted explicitly. Send completion measures content
-processing and callback latency, not remote receipt. Eight-bin histograms use
+native reply validation or the original 25ms deadline. A fixed 512-record ring
+retains SHA256 fingerprints and CLOCK_MONOTONIC_RAW times for RF send entry,
+receive callback entry and send completion. It stores no additional payloads,
+addresses or keys. Exact fingerprints allow retained bilateral exchanges to be
+matched when the smaller native payload ring did not retain both endpoints.
+Snapshot clock anchors bracket the mapping to native recorder wall times.
+Send completion measures content processing/callback latency, not remote receipt.
+
+An independent dispatch timer samples RF callback queue latency every 50ms,
+with at most one probe queued and no network messages. A delayed probe identifies
+queue/dispatch contention at that sample. Responsive probes cannot exclude a
+short unsampled stall or distinguish physical radio delay from processing
+inside Network.framework before a callback is dispatched. Eight-bin histograms use
 microsecond boundaries 1000, 5000, 10000, 25000, 50000, 100000 and 250000; the
 last bin includes all larger values. Outstanding sends remain capped at 32.
+
+Public IP receive-time options are requested when available. A bounded public
+API reproduction verified IP options were present, selected IPv4 and enabled
+receive time, yet ordinary UDP and DTLS loopback omitted IP metadata on both
+macOS and iOS simulator. IP timestamps are therefore opportunistic diagnostics;
+missing/invalid clocks are explicit and never treated as zero delay or proof
+of phone support. The useful queue/completion/fingerprint route is independent
+of IP metadata. No custom-IP entitlement or private API is used.
 
 Recorder format 6 uses existing SDK direct-receive event 100 fields: timestamp
 is IP receive time, reference_timestamp is callback entry time, aidmask is 1
@@ -131,6 +145,7 @@ SDK receive events (reason 2 for admitted RF, reason 0 if rejected); native
 events 1-8 and MCSession fallback events retain their previous meaning. No
 additional payload records reduce the existing retention window.
 
-Simulator tests exercise real bilateral DTLS, receive-clock availability and
-bounded timing accounting. They cannot establish iPhone Wi-Fi performance or
-completed physical trades. R3 is a diagnostic candidate, not a proven fix.
+Simulator tests exercise real bilateral DTLS, valid callback/completion clocks,
+explicit IP availability, a controlled 75ms callback-queue blockage and ring
+wrapping under encrypted bursts. They cannot establish iPhone Wi-Fi performance
+or completed physical trades. R3 is a diagnostic candidate, not a proven fix.

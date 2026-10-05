@@ -293,6 +293,9 @@ void MDS_afterFrame(double nativeMilliseconds,bool finalSnapshot){
             NSMutableDictionary *detail=[metrics mutableCopy];
             detail[@"candidate"]=@"DS-v0.10-R3";detail[@"local_rf"]=[[MDSNearby shared].localRF metrics]?:@{};
             detail[@"rf_room_lock_max_us"]=@(g.rfRoomLockMax/1000);detail[@"rf_callback_to_room_max_us"]=@(g.rfCallbackToRoomMax/1000);
+            const uint64_t anchorBegin=rfClockNanoseconds();
+            detail[@"trace_wall_anchor_us"]=@(uint64_t(std::max(0.0,CACurrentMediaTime()-g.diagnosticStart)*1000000));
+            detail[@"raw_clock_anchor_begin_ns"]=@(anchorBegin);detail[@"raw_clock_anchor_end_ns"]=@(rfClockNanoseconds());
             detail[@"code"]=[[NSString alloc]initWithBytes:g.code length:4 encoding:NSASCIIStringEncoding];detail[@"revision"]=@(g.revision);
             detail[@"session"]=[NSString stringWithFormat:@"%d-%llu",getpid(),(unsigned long long)g.epoch];
             detail[@"thermal_state"]=@(NSProcessInfo.processInfo.thermalState);detail[@"low_power_mode"]=@(NSProcessInfo.processInfo.lowPowerModeEnabled);
