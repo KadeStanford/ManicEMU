@@ -1,0 +1,19 @@
+Recorder v2 adds an optional native ARMul_State metadata snapshot when the native
+PC and caller identify the verified interpreter. Exact preserved GetPC bytes
+and the interpreter's X20 initialization gate its native layout before reads.
+Fields: sixteen emulated CPU registers, CPSR, instruction budget, exclusive tag
+and exclusive-state flag. These are 81 bytes of native interpreter state.
+No guest RAM, framebuffer pixels, process objects or pointer chains are read.
+The original 15-second/eight-slot limits, thread/stack bounds and no-suspension
+policy remain. CPU state is sampled asynchronously and is explicitly incoherent.
+Individual fields cannot be treated as a simultaneous instruction snapshot.
+Core teardown/read races produce skipped/failed reads rather than callbacks.
+The bounded metadata identifies candidate guest loop addresses; native CPU time,
+render/control evidence and repeated consistent observations are still needed.
+This component changes no CPU/plugin/renderer setting and is not a boot fix.
+The native macOS self-test verifies gates and field layout on synthetic data;
+it does not prove a physical game, plugin or iPhone GPU outcome.
+Use only through the existing sole combined-IPA packaging owner, replacing the
+optional process-lifetime recorder dependency. Keep the working FB2 core and all
+DS/GBA/AirPlay/app identity unchanged. No signal handlers, app/guest writes or
+automatic recovery are introduced. Keep captured metadata private.

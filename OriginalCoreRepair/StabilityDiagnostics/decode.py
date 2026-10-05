@@ -24,6 +24,8 @@ def decode(path):
     rows=[]
     for thread in data['threads']:
         row={key:thread[key] for key in ('thread_id','run_state','state_result','info_result','cpu_usage','user_us','system_us')}
+        for key in ('interpreter_metadata','interpreter_metadata_read_succeeded'):
+            if key in thread:row[key]=thread[key]
         if 'pc' in thread:
             row['pc']=address(thread['pc']);row['lr']=address(thread['lr'])
             stack=base64.b64decode(thread.get('stack_b64',''),validate=True)

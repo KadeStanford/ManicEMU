@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "interpreter_metadata.h"
 
 static NSString *prefix;
 static int imagesFD=-1;
@@ -78,6 +79,8 @@ static BOOL capture(unsigned number) {
         thread_act_array_t threads=NULL;mach_msg_type_number_t count=0;
         kern_return_t result=task_threads(mach_task_self(),&threads,&count);
         NSMutableArray *rows=[NSMutableArray new];
+        uintptr_t sampledCore=__atomic_load_n(&coreBase,__ATOMIC_ACQUIRE);
+        BOOL layoutSupported=sampledCore&&ManicInterpreterLayoutSupported(sampledCore);
         if(result==KERN_SUCCESS){
             for(unsigned i=0;i<count;i++){
                 thread_t thread=threads[i];
@@ -97,6 +100,21 @@ static BOOL capture(unsigned number) {
                     if(stateResult==KERN_SUCCESS){
                         row[@"pc"]=@(state.__pc);row[@"lr"]=@(state.__lr);
                         row[@"sp"]=@(state.__sp);row[@"fp"]=@(state.__fp);
+                        uintptr_t pc=state.__pc&0x0000ffffffffffffULL;
+                        uintptr_t caller=state.__lr&0x0000ffffffffffffULL;
+                        if(layoutSupported&&pc>=sampledCore&&caller>=sampledCore&&ManicInterpreterRegistersSupported(pc-sampledCore,caller-sampledCore)){
+                            ManicInterpreterMetadata metadata={0};
+                            uintptr_t nativeState=state.__x[20]&0x0000ffffffffffffULL;
+                            BOOL read=ManicReadInterpreterMetadata(pc-sampledCore,nativeState,YES,&metadata);
+                            row[@"interpreter_metadata_read_succeeded"]=@(read);
+                            if(read){
+                                NSMutableArray *registers=[NSMutableArray new];
+                                for(unsigned reg=0;reg<16;reg++)[registers addObject:@(metadata.registers[reg])];
+                                row[@"interpreter_metadata"]=@{@"registers":registers,@"cpsr":@(metadata.cpsr),
+                                    @"instruction_budget":@(metadata.instruction_budget),@"exclusive_tag":@(metadata.exclusive_tag),
+                                    @"exclusive_state":@(metadata.exclusive_state),@"coherent_snapshot":@NO};
+                            }
+                        }
                         uint8_t stack[4096];vm_size_t copied=0;
                         while(copied<sizeof(stack)){
                             vm_size_t bytes=0;
@@ -115,13 +133,14 @@ static BOOL capture(unsigned number) {
         }
         mach_timebase_info_data_t scale={0};mach_timebase_info(&scale);
         double elapsed=(double)(mach_absolute_time()-started)*scale.numer/scale.denom/1e6;
-        NSDictionary *snapshot=@{@"format_version":@1,@"sequence":@(number),
+        NSDictionary *snapshot=@{@"format_version":@2,@"sequence":@(number),
             @"pid":@(getpid()),@"capture_epoch":@(NSDate.date.timeIntervalSince1970),
             @"capture_duration_ms":@(elapsed),@"image_generation":@(__atomic_load_n(&imageGeneration,__ATOMIC_ACQUIRE)),
             @"core_base":@(__atomic_load_n(&coreBase,__ATOMIC_ACQUIRE)),
             @"task_threads_result":@(result),@"thread_count":@(count),@"thread_limit":@64,
             @"stack_limit_bytes":@4096,@"ring_slots":@8,@"thread_suspension_performed":@NO,
             @"guest_ram_read":@NO,@"thermal_state":@(NSProcessInfo.processInfo.thermalState),
+            @"interpreter_layout_supported":@(layoutSupported),@"interpreter_state_byte_limit":@81,
             @"memory":metrics,@"threads":rows};
         NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
         // Only this new session's eight slots are replaced. Existing diagnostics,

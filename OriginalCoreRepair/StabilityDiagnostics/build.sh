@@ -16,13 +16,15 @@ cat > "$framework/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>ManicAzaharStabilityRecorder</string>
 <key>CFBundleIdentifier</key><string>org.manicemu.azahar-stability-recorder</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>MinimumOSVersion</key><string>15.0</string>
 </dict></plist>
 PLIST
 git rev-parse HEAD > "$framework/SOURCE"
 testdir="$build/native-self-test"
 mkdir -p "$testdir"
+xcrun clang -arch arm64 -Wall -Wextra -Werror metadata_self_test.c -o "$testdir/MetadataSelfTest"
+"$testdir/MetadataSelfTest" > "$testdir/metadata-self-test.json"
 xcrun clang -arch arm64 -fobjc-arc -Wall -Wextra -Werror -Wno-unused-parameter \
   -DMANIC_STABILITY_SELF_TEST=1 ManicAzaharStabilityRecorder.m self_test.c \
   -framework Foundation -o "$testdir/StabilitySelfTest"
