@@ -59,11 +59,22 @@ static bool configureReplay(void) {
         ![snapshots isKindOfClass:NSArray.class]||snapshots.count>64)return false;
     for(id item in events){
         if(![item isKindOfClass:NSDictionary.class])return false;
-        for(NSString *key in @[@"first_call",@"duration",@"button"])
+        for(NSString *key in @[@"first_call",@"duration"])
             if(![item[key] isKindOfClass:NSNumber.class])return false;
-        double first=[item[@"first_call"] doubleValue],duration=[item[@"duration"] doubleValue],button=[item[@"button"] doubleValue];
-        if(!isfinite(first)||!isfinite(duration)||!isfinite(button)||first!=floor(first)||duration!=floor(duration)||button!=floor(button)||
-            first<1||duration<1||first+duration>calls.doubleValue+1||button<0||button>15)return false;
+        double first=[item[@"first_call"] doubleValue],duration=[item[@"duration"] doubleValue];
+        if(!isfinite(first)||!isfinite(duration)||first!=floor(first)||duration!=floor(duration)||
+            first<1||duration<1||first+duration>calls.doubleValue+1)return false;
+        if(item[@"button"]){
+            if(![item[@"button"] isKindOfClass:NSNumber.class])return false;
+            double button=[item[@"button"] doubleValue];
+            if(!isfinite(button)||button!=floor(button)||button<0||button>15)return false;
+        } else {
+            for(NSString *key in @[@"analog_index",@"analog_axis",@"value"])
+                if(![item[key] isKindOfClass:NSNumber.class])return false;
+            double stick=[item[@"analog_index"] doubleValue],axis=[item[@"analog_axis"] doubleValue],level=[item[@"value"] doubleValue];
+            if(!isfinite(stick)||!isfinite(axis)||!isfinite(level)||stick!=floor(stick)||axis!=floor(axis)||level!=floor(level)||
+                stick<0||stick>1||axis<0||axis>1||level<-32768||level>32767)return false;
+        }
     }
     for(id item in snapshots)
         if(![item isKindOfClass:NSNumber.class]||!isfinite([item doubleValue])||[item doubleValue]!=[item unsignedIntValue]||
@@ -175,14 +186,19 @@ static size_t audioBatch(const int16_t *samples,size_t count){audioSamples+=coun
 static void poll(void){}
 static int16_t input(unsigned port,unsigned device,unsigned index,unsigned id) {
     // A short Select press after execution has started; no save interaction.
-    if(port!=0||device!=1)return 0;
+    if(port!=0)return 0;
     if(replayEvents){
         for(NSDictionary *event in replayEvents){
             unsigned first=[event[@"first_call"] unsignedIntValue],duration=[event[@"duration"] unsignedIntValue];
-            if(id==[event[@"button"] unsignedIntValue]&&runCalls>=first&&runCalls-first<duration)return 1;
+            if(runCalls>=first&&runCalls-first<duration){
+                if(device==1&&event[@"button"]&&id==[event[@"button"] unsignedIntValue])return 1;
+                if(device==5&&!event[@"button"]&&index==[event[@"analog_index"] unsignedIntValue]&&id==[event[@"analog_axis"] unsignedIntValue])
+                    return [event[@"value"] shortValue];
+            }
         }
         return 0;
     }
+    if(device!=1)return 0;
     // Vapecord displays its own first-run notice before entering the menu loop.
     // Acknowledge it, then open, close and reopen the menu without selecting codes.
     if(id==8)return runCalls>=1200&&runCalls<1206;
