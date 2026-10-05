@@ -31,7 +31,9 @@ replace('''void Wifi::USTimer(u32 param)
         if((ComStatus & 2) && TXCurSlot==1 && TXSlots[1].CurPhase==14){
             ProcessTX(&TXSlots[1],1);ScheduleTimer(false);return;
         }
-        if(IsMPClient && !ComStatus && !RXTimestamp && USTimestamp>=NextSync){
+        if(IsMPClient && !ComStatus && !RXTimestamp && USTimestamp>=NextSync &&
+           !(IOPORT(W_PowerState) & (1<<9)) && (IOPORT(W_RXCnt) & 0x8000) &&
+           IOPORT(W_RXBufBegin)!=IOPORT(W_RXBufEnd)){
             if(!CheckRX(2)){ScheduleTimer(false);return;}
         }
     }
