@@ -12,11 +12,12 @@ static void waitUntil(std::function<bool()> condition){
     throw std::runtime_error("bounded synthetic networking timeout");
 }
 static NSDictionary *trial(bool plain){
-    rfProbePlain=plain;std::mutex mutex;__block NSDictionary *setupA=nil,*setupB=nil;unsigned arrivals=0,validClocks=0;
+    rfProbePlain=plain;std::mutex mutex;NSDictionary *setupA=nil,*setupB=nil;unsigned arrivals=0,validClocks=0;
+    auto setup=[&](bool side,NSDictionary *metadata){std::lock_guard<std::mutex> guard(mutex);if(side)setupA=metadata;else setupB=metadata;};
     auto received=[&](uint64_t ip,uint64_t callback){std::lock_guard<std::mutex> guard(mutex);arrivals++;validClocks+=ip&&callback>=ip;};
-    MDSLocalRF *a=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){(void)nonce;std::lock_guard<std::mutex> guard(mutex);setupA=metadata;}
+    MDSLocalRF *a=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){(void)nonce;setup(true,metadata);}
         receive:^(NSString *nonce,NSData *data,uint64_t ip,uint64_t callback){(void)nonce;(void)data;received(ip,callback);}];
-    MDSLocalRF *b=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){(void)nonce;std::lock_guard<std::mutex> guard(mutex);setupB=metadata;}
+    MDSLocalRF *b=[[MDSLocalRF alloc]initWithSetup:^(NSString *nonce,NSDictionary *metadata){(void)nonce;setup(false,metadata);}
         receive:^(NSString *nonce,NSData *data,uint64_t ip,uint64_t callback){(void)nonce;(void)data;received(ip,callback);}];
     [a add:@"B"];[b add:@"A"];waitUntil([&]{std::lock_guard<std::mutex> guard(mutex);return setupA&&setupB;});
     [a connect:@"B" metadata:setupB];[b connect:@"A" metadata:setupA];
