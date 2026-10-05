@@ -46,7 +46,7 @@ u16 AsyncReceiveReplies(u8* packets,u64 timestamp,u16 aidmask) {
                 trace.payloadmask=state.replies.payloads();trace.answeredmask=state.replies.answered();
                 trace.reason=uint32_t(state.replies.lastResult());retro::environment(DiagnosticEnvironment,&trace);
             }
-            if(state.replies.complete())break;
+            if(state.replies.complete() || count+1>=256)break;
             packet=MelonDsDs::Core.MpNextPacket();
         }
     }
