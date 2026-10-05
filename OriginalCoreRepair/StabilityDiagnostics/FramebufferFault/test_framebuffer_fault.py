@@ -45,7 +45,7 @@ def execute(binary,address,width,height,pixel_stride,fmt,cache_valid,active,righ
     result={'pc':None,'log_calls':0,'log_stop_calls':0,'real_zero_geometry_guard':False,'instruction_count':0}
     def hook(cpu,pc,size,data):
         result['instruction_count']+=1
-        if pc in (0xe00000,patch.TRAP,patch.ZERO_ADDRESS_TRAP,patch.INVALID_SURFACE_TRAP):
+        if pc in (0xe00000,patch.ZERO_ADDRESS_TRAP,patch.INVALID_SURFACE_TRAP) or (pc==patch.TRAP and binary[pc:pc+4]==patch.words(0xd4200020)):
             result['pc']=pc;cpu.emu_stop()
         elif pc==0xa23e68:
             params=cpu.reg_read(UC_ARM64_REG_X1)
@@ -74,7 +74,7 @@ def execute(binary,address,width,height,pixel_stride,fmt,cache_valid,active,righ
     assert result['pc']!=None
     if failure:
         expected=patch.ZERO_ADDRESS_TRAP if not address else patch.INVALID_SURFACE_TRAP
-        assert result['pc'] in (patch.TRAP,expected)
+        assert result['pc']==(patch.TRAP if binary[patch.TRAP:patch.TRAP+4]==patch.words(0xd4200020) else expected)
         assert result['log_calls']==result['log_stop_calls']==1
         assert machine.reg_read(UC_ARM64_REG_SP)==sp-0x40 # original lambda frame
         if result['pc']!=patch.TRAP:
