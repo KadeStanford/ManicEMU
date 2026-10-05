@@ -183,6 +183,10 @@ static void tests(){@autoreleasepool{
         check(@"real encrypted UDP bilateral sends admitted",[rfA send:rfPacket peer:@"B"]&&[rfB send:rfPacket peer:@"A"]);
         waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==2;});
         check(@"real DTLS preserves bilateral datagrams",!rfWrong&&[[rfA metrics][@"received"] unsignedIntValue]==1&&[[rfB metrics][@"received"] unsignedIntValue]==1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(9100));
+        check(@"established DTLS survives handshake timers",[rfA send:rfPacket peer:@"B"]&&[rfB send:rfPacket peer:@"A"]);
+        waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==4;});
+        check(@"real bilateral RF continues beyond handshake deadline",!rfWrong&&[[rfA metrics][@"received"] unsignedIntValue]==2&&[[rfB metrics][@"received"] unsignedIntValue]==2);
         check(@"unknown direct RF peer falls back",![rfA send:rfPacket peer:@"C"]);
         [rfA remove:@"B"];[rfB remove:@"A"];
         check(@"direct RF removal prevents old-session sends",![rfA send:rfPacket peer:@"B"]&&![rfB send:rfPacket peer:@"A"]);

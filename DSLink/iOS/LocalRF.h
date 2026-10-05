@@ -149,10 +149,6 @@ static nw_parameters_t rfParameters(NSData *key){
             MDSLocalRF *owner=weak;if(!owner)return;std::lock_guard<std::mutex> guard(owner->_mutex);
             if(!established&&!peer.stopped){nw_connection_cancel(connection);[peer.incoming removeObject:connection];}
         });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),_queue,^{
-            MDSLocalRF *strong=weak;if(!strong)return;std::lock_guard<std::mutex> guard(strong->_mutex);
-            if(!peer.stopped&&peer.outgoing!=connection)nw_connection_cancel(connection);
-        });
     });nw_listener_start(listener);
 }
 -(void)connect:(NSString*)nonce metadata:(NSDictionary*)metadata{
@@ -178,6 +174,10 @@ static nw_parameters_t rfParameters(NSData *key){
                 if(state!=nw_connection_state_cancelled){strong->_failures++;nw_connection_cancel(connection);}
             }
         });nw_connection_start(connection);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8*NSEC_PER_SEC),_queue,^{
+            MDSLocalRF *strong=weak;if(!strong)return;std::lock_guard<std::mutex> guard(strong->_mutex);
+            if(!peer.stopped&&peer.outgoing!=connection)nw_connection_cancel(connection);
+        });
     }
 }
 -(BOOL)send:(NSData*)data peer:(NSString*)nonce{
