@@ -1,7 +1,7 @@
 name: DS local wireless candidate
 on:
   push:
-    branches: [feature/ds-local-wireless, fix/ds-v010-delivery-pacing]
+    branches: [feature/ds-local-wireless, fix/ds-v010-delivery-pacing, test/ds-bounded-reply-recovery]
     paths: ['DSLink/**', '.github/workflows/ds-local-wireless.yml']
   workflow_dispatch:
 permissions:
@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   desktop-protocol:
+    if: github.ref != 'refs/heads/test/ds-bounded-reply-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,6 +40,7 @@ jobs:
             ds-protocol-build/Testing/Temporary/LastTest.log
             ds-protocol-build/native_wait_functions.json
   ios-core:
+    if: github.ref != 'refs/heads/test/ds-bounded-reply-recovery'
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -67,6 +69,7 @@ jobs:
             DSLink/build/*.framework
             DSLink/build/build-manifest.json
   ios-simulator:
+    if: github.ref != 'refs/heads/test/ds-bounded-reply-recovery'
     runs-on: macos-15
     timeout-minutes: 15
     steps:

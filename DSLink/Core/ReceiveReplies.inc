@@ -25,12 +25,18 @@ u16 Platform::MP_RecvReplies(u8* packets, u64 timestamp, u16 aidmask, void*) {
         trace.reason = uint32_t(replies.lastResult());
         retro::environment(manicds::DiagnosticEnvironment,&trace);
     };
-    manicds::ReceiveDeadline budget(25);
+    // Timing experiment: retain this outstanding native transaction through
+    // bounded delivery tails. Each queue wait still has its existing 25ms cap;
+    // accepting a reply never changes its timestamp, association or payload.
+    manicds::ReceiveDeadline budget(125);
     while (!replies.complete()) {
         const auto remaining = budget.nextWaitMicros(25000);
         if (!remaining) break;
         auto packet = MelonDsDs::Core.MpNextPacketBlock(remaining);
-        if (!packet.has_value()) break;
+        if (!packet.has_value()) {
+            if (!MelonDsDs::Core.MpActive()) break;
+            continue;
+        }
         const auto& p = *packet;
         if (p.PacketType() != MelonDsDs::Packet::Type::Reply) continue;
         accept(p);
