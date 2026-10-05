@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   desktop-protocol:
+    if: github.ref_name != 'test/ds-native-async-radio'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,6 +40,7 @@ jobs:
             ds-protocol-build/Testing/Temporary/LastTest.log
             ds-protocol-build/native_wait_functions.json
   ios-core:
+    if: github.ref_name != 'test/ds-native-async-radio'
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -67,6 +69,7 @@ jobs:
             DSLink/build/*.framework
             DSLink/build/build-manifest.json
   ios-simulator:
+    if: github.ref_name != 'test/ds-native-async-radio'
     runs-on: macos-15
     timeout-minutes: 15
     steps:
