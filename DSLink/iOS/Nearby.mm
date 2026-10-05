@@ -549,9 +549,9 @@ void MDS_gameUnloading(){
 -(void)receiveRadio:(NSData*)data nonce:(NSString*)nonce generation:(uint64_t)generation ipTime:(uint64_t)received callbackTime:(uint64_t)callback{
     if(data.length<73||data.length>RadioFragments::MaxMessage)return;
     const uint64_t roomEntry=rfClockNanoseconds();
-    {std::lock_guard<std::mutex> guard(lock);if(generation!=g.epoch||!g.room||![_wirePeers.allValues containsObject:nonce])return;
+    {std::lock_guard<std::mutex> guard(lock);const uint64_t acquired=rfClockNanoseconds();
+        if(generation!=g.epoch||!g.room||![_wirePeers.allValues containsObject:nonce])return;
         Nonce source;if(!readNonce(nonce,source))return;
-        const uint64_t acquired=rfClockNanoseconds();
         const uint64_t roomWait=roomEntry&&acquired>=roomEntry?acquired-roomEntry:0;
         const uint64_t callbackWait=callback&&acquired>=callback?acquired-callback:0;
         g.rfRoomLockMax=std::max(g.rfRoomLockMax,roomWait);g.rfCallbackToRoomMax=std::max(g.rfCallbackToRoomMax,callbackWait);
