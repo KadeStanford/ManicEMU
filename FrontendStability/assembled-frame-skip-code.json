@@ -1,0 +1,118 @@
+{
+  "0x247a60": {
+    "assembly": "ldr w12, [x10, #0xd10]",
+    "bytes": "4c114db9"
+  },
+  "0x247a64": {
+    "assembly": "ldr x11, [x9, #0xcf0]",
+    "bytes": "2b7946f9"
+  },
+  "0x247a68": {
+    "assembly": "sub x13, x23, x11",
+    "bytes": "ed020bcb"
+  },
+  "0x247a6c": {
+    "assembly": "ldrh w11, [sp, #0x9fa]",
+    "bytes": "ebf75379"
+  },
+  "0x247a70": {
+    "assembly": "mov w14, #0xffff",
+    "bytes": "eeff9f52"
+  },
+  "0x247a74": {
+    "assembly": "cmp x13, x14",
+    "bytes": "bf010eeb"
+  },
+  "0x247a78": {
+    "assembly": "csel w13, w13, w14, ls",
+    "bytes": "ad918e1a"
+  },
+  "0x247a7c": {
+    "assembly": "ldrsb w15, [x10, #0xd14]",
+    "bytes": "4f51f439"
+  },
+  "0x247a80": {
+    "assembly": "cbz w15, #0x247a9c",
+    "bytes": "ef000034"
+  },
+  "0x247a84": {
+    "assembly": "cmp w15, #0",
+    "bytes": "ff010071"
+  },
+  "0x247a88": {
+    "assembly": "csinc w15, w15, wzr, ge",
+    "bytes": "efa59f1a"
+  },
+  "0x247a8c": {
+    "assembly": "strb w15, [x10, #0xd14]",
+    "bytes": "4f513439"
+  },
+  "0x247a90": {
+    "assembly": "b #0x247ad4",
+    "bytes": "11000014"
+  },
+  "0x247a9c": {
+    "assembly": "mov w15, #0xff",
+    "bytes": "ef1f8052"
+  },
+  "0x247aa0": {
+    "assembly": "strb w15, [x10, #0xd14]",
+    "bytes": "4f513439"
+  },
+  "0x247aa4": {
+    "assembly": "mov w14, w12",
+    "bytes": "ee030c2a"
+  },
+  "0x247aa8": {
+    "assembly": "str w14, [x10, #0xd10]",
+    "bytes": "4e110db9"
+  },
+  "0x247aac": {
+    "assembly": "subs w14, w14, w11",
+    "bytes": "ce010b6b"
+  },
+  "0x247ab0": {
+    "assembly": "cset w28, ge",
+    "bytes": "fcb79f1a"
+  },
+  "0x247ab4": {
+    "assembly": "b.lt #0x2478b0",
+    "bytes": "ebefff54"
+  },
+  "0x247ab8": {
+    "assembly": "sub w12, w11, w13",
+    "bytes": "6c010d4b"
+  },
+  "0x247abc": {
+    "assembly": "cmp w12, w13",
+    "bytes": "9f010d6b"
+  },
+  "0x247ac0": {
+    "assembly": "csel w12, wzr, w13, lt",
+    "bytes": "ecb38d1a"
+  },
+  "0x247ac4": {
+    "assembly": "sub w12, w14, w12",
+    "bytes": "cc010c4b"
+  },
+  "0x247ac8": {
+    "assembly": "cmp w12, w11",
+    "bytes": "9f010b6b"
+  },
+  "0x247acc": {
+    "assembly": "csel w11, wzr, w12, hi",
+    "bytes": "eb838c1a"
+  },
+  "0x247ad0": {
+    "assembly": "b #0x2478a8",
+    "bytes": "76ffff17"
+  },
+  "0x247ad4": {
+    "assembly": "add w14, w12, w13",
+    "bytes": "8e010d0b"
+  },
+  "0x247ad8": {
+    "assembly": "b #0x247aa8",
+    "bytes": "f4ffff17"
+  }
+}

@@ -9,6 +9,7 @@ unrelated instructions remain untouched. No executable code cave is used.
 import argparse, hashlib, json, pathlib
 
 INPUT_SHA256 = '0488c5edaa165b25ad29b0194150d868d3a4c66245277f17c26c2c7155d62ec8'
+OUTPUT_SHA256 = '6d48094ad63a399ade8872308e1f504cd0db30fe38865ba66eef8d9287db2474'
 START, END = 0x247a60, 0x247adc
 PROTECTED = (0x247a94, 0x247a98)
 
@@ -54,10 +55,13 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 def assemble_block():
-    from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
-    assembler = Ks(KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN)
-    return {address: bytes(assembler.asm(instruction, address)[0])
-            for address, instruction in ASSEMBLY.items()}
+    # Generated with Keystone 0.9.2 and checked through actual ARM64 execution.
+    # Simulator independently compiles ASSEMBLY using Apple's ARM64 assembler.
+    fixture=json.loads(pathlib.Path(__file__).with_name('assembled-frame-skip-code.json').read_text())
+    assert set(map(lambda address:int(address,16),fixture))==set(ASSEMBLY)
+    for address,instruction in ASSEMBLY.items():
+        assert fixture[hex(address)]['assembly']==instruction
+    return {int(address,16):bytes.fromhex(entry['bytes']) for address,entry in fixture.items()}
 
 def repair(data):
     if sha(data) != INPUT_SHA256:
@@ -70,6 +74,7 @@ def repair(data):
     for address in PROTECTED:
         assert patched[address:address+4] == data[address:address+4]
     assert patched[:START] == data[:START] and patched[END:] == data[END:]
+    assert sha(patched)==OUTPUT_SHA256
     return bytes(patched)
 
 def main():

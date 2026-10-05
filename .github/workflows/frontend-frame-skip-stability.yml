@@ -17,7 +17,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/frame-gate-tools"
           echo "$RUNNER_TEMP/frame-gate-tools/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/frame-gate-tools/bin/python" -m pip install 'keystone-engine==0.9.2' 'capstone==5.0.9' 'unicorn==2.1.4'
+          "$RUNNER_TEMP/frame-gate-tools/bin/python" -m pip install 'capstone==5.0.9' 'unicorn==2.1.4'
       - name: Execute shipped and corrected ARM64 gates
         run: python3 FrontendStability/test_frame_skip_elapsed.py --output FrontendStability/build/native-frame-skip-regression.json
       - name: Execute relocated native timing gates on iPhone Simulator
