@@ -96,12 +96,13 @@ static nw_parameters_t rfParameters(NSData *key){
         sec_protocol_options_set_min_tls_protocol_version(security,tls_protocol_version_DTLSv12);
         sec_protocol_options_set_max_tls_protocol_version(security,tls_protocol_version_DTLSv12);
     },NW_PARAMETERS_DEFAULT_CONFIGURATION);
-    // Each RF exchange gates the emulated CPU, with a genuine 25ms reply
-    // deadline. Best-effort delivery can retain small commands beyond that
-    // deadline even when the dispatch queue is interactive and has no backlog.
-    // Apply the public latency-sensitive data policy to both listener and
-    // outgoing DTLS paths; retain authentic bytes, deadlines and encryption.
-    if(parameters)nw_parameters_set_service_class(parameters,nw_service_class_responsive_data);
+    // This dedicated connection carries only short native RF exchanges,
+    // never saves, media or bulk transfers. Each command/reply gates the CPU
+    // and has a 25ms deadline. Responsive data is medium-delay-tolerant;
+    // Apple's signaling class describes short, delay/loss-sensitive bursts.
+    // Request that policy on both listener and outgoing DTLS paths. It is a
+    // network scheduling hint, not a latency guarantee or an extended wait.
+    if(parameters)nw_parameters_set_service_class(parameters,nw_service_class_signaling);
     if(parameters){nw_protocol_stack_t stack=nw_parameters_copy_default_protocol_stack(parameters);
         nw_protocol_options_t ip=nw_protocol_stack_copy_internet_protocol(stack);
         if(ip)nw_ip_options_set_calculate_receive_time(ip,true);

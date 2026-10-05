@@ -181,7 +181,7 @@ static void tests(){@autoreleasepool{
     try{
         // Exercise Network.framework DTLS itself, not a mocked sendData call.
         NSData *policyKey=[NSMutableData dataWithLength:32];nw_parameters_t policy=rfParameters(policyKey);
-        check(@"DS RF parameters request responsive data service",policy&&nw_parameters_get_service_class(policy)==nw_service_class_responsive_data);
+        check(@"DS RF parameters request short deadline-sensitive signaling service",policy&&nw_parameters_get_service_class(policy)==nw_service_class_signaling);
         std::mutex rfMutex;unsigned rfArrivals=0,rfKernelTimes=0,rfCallbackTimes=0;bool rfWrong=false;
         MDSLocalRF *rfA=nil,*rfB=nil;NSDictionary *setupA=nil,*setupB=nil;
         auto setup=[&](bool side,NSString *nonce,NSDictionary *metadata){
@@ -435,7 +435,7 @@ static void tests(){@autoreleasepool{
                 waitUntil([]{return diagnosticJobs.load()==0;});
                 NSURL *capture=[docs URLByAppendingPathComponent:@"ManicDSDiagnostics/current.json"];
                 NSDictionary *record=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:capture] options:0 error:nil];
-                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==6&&[record[@"candidate"] isEqual:@"DS-v0.10-R4"]&&[record[@"trace"] count]==2&&[record[@"lan_discovery"] count]==3);
+                check(@"private diagnostic snapshot writes bounded versioned trace",[record[@"format"] unsignedIntValue]==6&&[record[@"candidate"] isEqual:@"DS-v0.10-R5"]&&[record[@"trace"] count]==2&&[record[@"lan_discovery"] count]==3);
                 NSString *pinned=[NSString stringWithFormat:@"ManicDSDiagnostics/capture-%02u-incomplete.json",g.diagnosticSession];
                 check(@"incomplete exchange remains pinned after room recovery",[NSData dataWithContentsOfURL:[docs URLByAppendingPathComponent:pinned]]!=nil&&g.lastIncomplete->size()==2);
                 check(@"slow frame snapshot and recorder cost recorded",g.lastSlow->size()==2&&g.frameOver50==1&&g.writerFailures==0);
