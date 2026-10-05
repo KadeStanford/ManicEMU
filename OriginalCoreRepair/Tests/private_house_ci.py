@@ -4,18 +4,43 @@ ROOT=pathlib.Path(os.environ.get('RUNNER_TEMP','INVALID_RUNNER_TEMP'))/'azahar-p
 TRUSTED={'oaisdmntprcentralus.blob.core.windows.net','oaisdmntprsouthcentralus.blob.core.windows.net'}
 
 def config():
-    try:return json.loads(os.environ['PRIVATE_INPUTS'])
+    try:
+        base=json.loads(os.environ['PRIVATE_INPUTS'])
+        fresh=os.environ.get('PRIVATE_HOUSE_TRANSFERS')
+        if not fresh:return base
+        fresh=json.loads(fresh);records=fresh['transfers'];references=fresh['approved_library_ids']
+        if len(records)!=5:raise ValueError('Exact approved transfer set required')
+        if len(references)!=5 or len(set(references))!=5:raise ValueError('Exact approved reference set required')
+        by_id={i['library_file_id']:i for i in records}
+        if len(by_id)!=5:raise ValueError('Duplicate transfer identities')
+        if len(base['parts'])!=3:raise ValueError('Existing game part count changed')
+        for reference,item in zip(references[:3],base['parts']):
+            record=by_id.pop(reference)
+            if record['size_bytes']!=item['bytes']:raise ValueError('Existing part size changed')
+            item['url']=record['download_url'];item['headers']=record.get('headers') or {}
+        plugin=by_id.pop(references[3])
+        if plugin['size_bytes']!=base['plugin']['bytes']:raise ValueError('Existing plugin size changed')
+        base['plugin']['url']=plugin['download_url'];base['plugin']['headers']=plugin.get('headers') or {}
+        save=by_id.pop(references[4])
+        if by_id:raise ValueError('Unapproved extra transfers')
+        if save['file_name']!='azahar-house-replay-temporary-save.zip' or save['size_bytes']!=2293576:raise ValueError('Unexpected normal save copy')
+        save_hash=fresh['save_sha256']
+        if len(save_hash)!=64 or any(c not in '0123456789abcdef' for c in save_hash):raise ValueError('Expected save digest required')
+        base['save']={'url':save['download_url'],'bytes':2293576,'sha256':save_hash,'headers':save.get('headers') or {}}
+        return base
     except Exception:raise RuntimeError('Approved private input configuration unavailable') from None
 
-def download(item,target):
+def download(item,target,normal_save_copy=False):
     try:
         url=urllib.parse.urlsplit(item['url'])
-        if url.scheme!='https' or url.hostname not in TRUSTED:raise ValueError('Unexpected transfer service')
+        allowed=TRUSTED|({'oaisdmntprkoreacentral.blob.core.windows.net'} if normal_save_copy else set())
+        if url.scheme!='https' or url.hostname not in allowed:raise ValueError('Unexpected transfer service')
         size=int(item['bytes'])
         if not 0<size<=400*1024*1024:raise ValueError('Unexpected private input size')
         count=0;digest=hashlib.sha256()
-        with urllib.request.urlopen(item['url'],timeout=60) as response,target.open('xb') as dst:
-            if urllib.parse.urlsplit(response.geturl()).hostname not in TRUSTED:raise ValueError('Unexpected redirect service')
+        request=urllib.request.Request(item['url'],headers=item.get('headers') or {})
+        with urllib.request.urlopen(request,timeout=60) as response,target.open('xb') as dst:
+            if urllib.parse.urlsplit(response.geturl()).hostname not in allowed:raise ValueError('Unexpected redirect service')
             while chunk:=response.read(4*1024*1024):
                 count+=len(chunk)
                 if count>size:raise ValueError('Private transfer exceeds declared size')
@@ -35,7 +60,7 @@ def fetch():
             part.unlink()
     with (inputs/'game.cxi').open('rb') as f:
         if hashlib.file_digest(f,'sha256').hexdigest()!=c['game_sha256']:raise RuntimeError('Game copy hash mismatch')
-    download(c['save'],inputs/'normal-title-save.zip');download(c['plugin'],inputs/'plugin.zip')
+    download(c['save'],inputs/'normal-title-save.zip',normal_save_copy=True);download(c['plugin'],inputs/'plugin.zip')
     destination=inputs/'plugin-content';destination.mkdir()
     try:
         with zipfile.ZipFile(inputs/'plugin.zip') as z:
@@ -83,6 +108,7 @@ def seal():
     with zipfile.ZipFile(archive,'x',zipfile.ZIP_DEFLATED) as z:
         for p in records:
             if p.is_file() and not p.is_symlink():z.write(p,str(p.relative_to(ROOT)))
+    if archive.stat().st_size>8*1024*1024:raise RuntimeError('Encrypted evidence upload size cap exceeded; raw evidence is not uploaded')
     password=config()['evidence_password']
     if not isinstance(password,str) or len(password)<20:raise RuntimeError('Existing private evidence password is insufficient')
     cipher=ROOT/'private-evidence.cipher';env=os.environ.copy();env.pop('PRIVATE_INPUTS',None);env['AZAHAR_EVIDENCE_PASSWORD']=password

@@ -30,6 +30,7 @@ jobs:
       - name: Stage only approved private game plugin and normal-save copies
         env:
           PRIVATE_INPUTS: ${{ secrets.MANIC_PRIVATE_RUNTIME_INPUTS }}
+          PRIVATE_HOUSE_TRANSFERS: ${{ secrets.MANIC_PRIVATE_HOUSE_TRANSFERS }}
         run: python3 OriginalCoreRepair/Tests/private_house_ci.py fetch
       - name: Build the isolated native Apple harness
         run: |
