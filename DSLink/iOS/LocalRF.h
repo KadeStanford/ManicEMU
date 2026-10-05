@@ -13,6 +13,7 @@
 static bool rfProbePlain=false;
 static std::mutex rfProbeMutex;
 static NSMutableArray *rfProbeReceives;
+static NSMutableArray *rfProbeParameters;
 
 static uint64_t rfClockNanoseconds(){
     timespec now{};if(clock_gettime(CLOCK_MONOTONIC_RAW,&now))return 0;
@@ -99,7 +100,10 @@ static nw_parameters_t rfParameters(NSData *key){
     if(parameters)nw_parameters_set_service_class(parameters,nw_service_class_responsive_data);
     if(parameters){nw_protocol_stack_t stack=nw_parameters_copy_default_protocol_stack(parameters);
         nw_protocol_options_t ip=nw_protocol_stack_copy_internet_protocol(stack);
-        if(ip)nw_ip_options_set_calculate_receive_time(ip,true);
+        if(ip){nw_ip_options_set_version(ip,nw_ip_version_4);nw_ip_options_set_calculate_receive_time(ip,true);}
+        std::lock_guard<std::mutex> guard(rfProbeMutex);if(!rfProbeParameters)rfProbeParameters=[NSMutableArray new];
+        if(rfProbeParameters.count<16)[rfProbeParameters addObject:@{@"plain":@(rfProbePlain),@"ip_options_present":@(ip!=nullptr),
+            @"ip_definition":@(ip&&nw_protocol_definition_is_equal(nw_protocol_options_copy_definition(ip),nw_protocol_copy_ip_definition()))}];
     }
     return parameters;
 }

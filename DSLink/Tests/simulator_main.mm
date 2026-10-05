@@ -200,7 +200,7 @@ static void tests(){@autoreleasepool{
         [rfA send:rfPacket peer:@"B"];[rfB send:rfPacket peer:@"A"];
         waitUntil([&]{std::lock_guard<std::mutex> guard(rfMutex);return rfArrivals==2;});
         NSMutableDictionary *probe=[rfTimingProbe mutableCopy];probe[@"plain_A"]=[rfA metrics];probe[@"plain_B"]=[rfB metrics];
-        {std::lock_guard<std::mutex> guard(rfProbeMutex);probe[@"receive_contexts"]=[rfProbeReceives copy];}rfTimingProbe=probe;
+        {std::lock_guard<std::mutex> guard(rfProbeMutex);probe[@"receive_contexts"]=[rfProbeReceives copy];probe[@"parameters"]=[rfProbeParameters copy];}rfTimingProbe=probe;
         [rfA stop];[rfB stop];
         throw std::runtime_error("intentional isolated metadata probe; no IPA");
         waitUntil([&]{return [[rfA metrics][@"send_completion_samples"] unsignedIntValue]==2&&[[rfB metrics][@"send_completion_samples"] unsignedIntValue]==2;});
