@@ -1,5 +1,8 @@
 name: Isolated Azahar private house replay
 on:
+  push:
+    branches: [recovery/azahar-stability-20261004]
+    paths: [OriginalCoreRepair/private-house-replay-request.json]
   workflow_dispatch:
     inputs:
       replay_json:
@@ -55,7 +58,8 @@ jobs:
           root="$RUNNER_TEMP/azahar-private-house"
           python3 - <<'PY'
           import json,os,pathlib
-          r=json.loads(os.environ['REPLAY_JSON'])
+          text=os.environ.get('REPLAY_JSON')
+          r=json.loads(text) if text else json.loads(pathlib.Path('OriginalCoreRepair/private-house-replay-request.json').read_text())
           text=json.dumps(r)
           assert len(text)<=262144
           (pathlib.Path(os.environ['RUNNER_TEMP'])/'azahar-private-house/replay.json').write_text(text)
