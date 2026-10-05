@@ -1,1 +1,1 @@
-{"request":1,"purpose":"Compile actual separate Core Select source and verify selection, persistence and switch-back model paths","private_inputs":false,"phone_install":false,"mac_jobs":1}
+{"request":2,"purpose":"Corrected actual selector contract, native backend identity/cache/harness checks and unsigned app source compile in one job","private_inputs":false,"phone_install":false,"mac_jobs":1}
