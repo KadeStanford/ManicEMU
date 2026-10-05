@@ -30,9 +30,13 @@ class CoreSelectionView: BaseView {
             selectedIndex = index
         }
         
+        var detail = R.string.localizable.switchEmulationCoreDetail(detailString)
+        if firstGame.gameType == ._3ds {
+            detail += "\nAzahar FastInterp uses separate save states. In-game saves stay in the same 3DS folder; switch back to Azahar to use its existing states."
+        }
         OptionsSheetView.show(icon: GameOption.switchCore.icon,
                                title: R.string.localizable.switchEmulationCore(),
-                               detail: R.string.localizable.switchEmulationCoreDetail(detailString),
+                               detail: detail,
                                options: options,
                                selectedIndex: selectedIndex,
                                completion: { index in

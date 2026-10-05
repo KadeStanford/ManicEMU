@@ -320,6 +320,10 @@ class PlayViewController: GameViewController {
         super.init()
         Log.debug("⚠️ \(ObjectIdentifier(self)) init")
         loadSaveState = saveState
+        if game.gameType == ._3ds, let saveState,
+           ((saveState.getExtraInt(key: ExtraKey.saveStateCore.rawValue) ?? 0) == 2) != game.isAzaharFastInterp {
+            loadSaveState = nil
+        }
         modalPresentationStyle = .fullScreen
         delegate = self
         self.game = DeltaCore.Game(fileURL: game.romUrl, type: game.gameType)
@@ -1098,7 +1102,11 @@ extension PlayViewController {
             } else if let stateData {
                 state.stateData = CreamAsset.create(objectID: state.name, propName: "stateData", data: stateData)
             }
-            let autoSaveStates = self.manicGame.gameSaveStates.where({ $0.type == .autoSaveState }).sorted(by: \GameSaveState.date)
+            // Retain the other interpreter's existing auto-states when switching cores.
+            let autoSaveStates = self.manicGame.gameSaveStates.where({ $0.type == .autoSaveState })
+                .filter({ self.manicGame.gameType != ._3ds ||
+                    (($0.getExtraInt(key: ExtraKey.saveStateCore.rawValue) ?? 0) == 2) == self.manicGame.isAzaharFastInterp })
+                .sorted(by: { $0.date < $1.date })
             Game.change { realm in
                 //自动保存的数量最多只能保存AutoSaveGameCount个
                 if autoSaveStates.count >= R.Numbers.AutoSaveGameCount {
@@ -1173,6 +1181,11 @@ extension PlayViewController {
         }
         
         if let state = state ?? manicGame.gameSaveStates.last {
+            if manicGame.gameType == ._3ds,
+               ((state.getExtraInt(key: ExtraKey.saveStateCore.rawValue) ?? 0) == 2) != manicGame.isAzaharFastInterp {
+                UIView.makeToast(message: "This save state uses a different 3DS core. Switch back to that core, or continue from an in-game save.")
+                return
+            }
             if manicGame.isCitra3DS {
                 if let citraCore {
                     let slotFromName = UInt32(state.name.deletingPathExtension.pathExtension)
@@ -1933,7 +1946,7 @@ extension PlayViewController {
             } else if manicGame.gameType == ._3ds {
                 ThreeDS.isAzaharCore = manicGame.isAzahar3DS
                 if manicGame.isAzahar3DS {
-                    updateLibretroCoreConfigs(core: .Azahar, configs: [
+                    updateLibretroCoreConfigs(core: manicGame.libretroCore ?? .Azahar, configs: [
                         .citra_use_cpu_jit: "disabled",
                         .citra_use_default_aes_key: manicGame.isAzaharArticBase || manicGame.isArticBaseHomeMenu || manicGame.is3DSHomeMenuGame ? "enabled" : "disabled",
                         .citra_required_online_lle_modules: manicGame.isArticBaseHomeMenu ? "enabled" : "disabled",
@@ -2232,12 +2245,12 @@ extension PlayViewController {
             } else if manicGame.gameType == ._3ds {
                 ThreeDS.isAzaharCore = manicGame.isAzahar3DS
                 if manicGame.isAzahar3DS {
-                    let enableJIT = LibretroCore.jitAvailable() && manicGame.jit
+                    let enableJIT = !manicGame.isAzaharFastInterp && LibretroCore.jitAvailable() && manicGame.jit
                     if enableJIT {
                         setupUniversalScript(gameType: ._3ds)
                     }
                     let enableLLE = (manicGame.isArticBaseHomeMenu || (manicGame.getExtraInt(key: ExtraKey.emulationAccuracy.rawValue) ?? 0 == 1)) ? true : false
-                    updateLibretroCoreConfigs(core: .Azahar, configs: [
+                    updateLibretroCoreConfigs(core: manicGame.libretroCore ?? .Azahar, configs: [
                         .citra_use_cpu_jit: enableJIT ? "enabled" : "disabled",
                         .citra_use_default_aes_key: manicGame.isAzaharArticBase || manicGame.isArticBaseHomeMenu || manicGame.is3DSHomeMenuGame ? "enabled" : "disabled",
                         .citra_required_online_lle_modules: enableLLE ? "enabled" : "disabled",

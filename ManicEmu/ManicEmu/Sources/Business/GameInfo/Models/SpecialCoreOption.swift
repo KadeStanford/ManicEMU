@@ -128,6 +128,8 @@ enum SpecialCoreOption: String {
     case mame_cheats_enable
     //isAzahar3DS
     case citra_use_cpu_jit
+    case citra_use_fastinterp
+    case citra_use_shader_jit
     case citra_use_default_aes_key
     case citra_required_online_lle_modules
     case citra_touch_touchscreen
@@ -364,7 +366,7 @@ enum SpecialCoreOption: String {
                 .citra_large_screen_proportion,
                 .citra_custom_layout_config,
                 .citra_motion_rotation,
-            ]
+            ] + (game.isAzaharFastInterp ? [.citra_use_fastinterp, .citra_use_shader_jit] : [])
         } else if game.gameType == .doom {
             return [.prboom_resolution]
         } else if game.gameType == .dos {
@@ -481,6 +483,11 @@ enum SpecialCoreOption: String {
                 .citra_touch_touchscreen: "enabled",
                 .citra_input_type: "frontend",
             ]
+            if game.isAzaharFastInterp {
+                result[.citra_use_fastinterp] = "enabled"
+                result[.citra_use_cpu_jit] = "disabled"
+                result[.citra_use_shader_jit] = "disabled"
+            }
         } else if game.gameType == .a2600 {
             result = [.stella_crop_hoverscan: "enabled"]
         } else if game.gameType == .a5200 {

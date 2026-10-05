@@ -542,6 +542,8 @@ class Game: Object, ObjectUpdatable {
             }
         } else if gameType == ._3ds, defaultCore == 1 {
             return .Azahar
+        } else if gameType == ._3ds, defaultCore == 2 {
+            return .AzaharFastInterp
         } else if gameType == .a2600 {
             return .Stella
         } else if gameType == .a5200 {
@@ -653,6 +655,8 @@ class Game: Object, ObjectUpdatable {
             }
         } else if gameType == ._3ds, defaultCore == 1 {
             return Bundle.main.path(forResource: "azahar.libretro", ofType: "framework", inDirectory: "Frameworks")
+        } else if gameType == ._3ds, defaultCore == 2 {
+            return Bundle.main.path(forResource: "azahar-fastinterp.libretro", ofType: "framework", inDirectory: "Frameworks")
         } else if gameType == .a2600 {
             return Bundle.main.path(forResource: "stella.libretro", ofType: "framework", inDirectory: "Frameworks")
         } else if gameType == .a5200 {
@@ -962,7 +966,11 @@ class Game: Object, ObjectUpdatable {
     }
     
     var isAzahar3DS: Bool {
-        return gameType == ._3ds && defaultCore == 1
+        return gameType == ._3ds && (defaultCore == 1 || defaultCore == 2)
+    }
+
+    var isAzaharFastInterp: Bool {
+        return gameType == ._3ds && defaultCore == 2
     }
     
     var isJGenesisCore: Bool {
@@ -1194,7 +1202,7 @@ class Game: Object, ObjectUpdatable {
             }
             //SS J2me的存档不切换
             let newSaveUrl = gameSaveUrl
-            if gameType != .ss, gameType != .j2me, gameType != .flash, FileManager.default.fileExists(atPath: oldSaveUrl.path) {
+            if oldSaveUrl != newSaveUrl, gameType != .ss, gameType != .j2me, gameType != .flash, FileManager.default.fileExists(atPath: oldSaveUrl.path) {
                 try? FileManager.safeMoveItem(at: oldSaveUrl, to: newSaveUrl)
             }
             //处理DS的存档
@@ -1262,6 +1270,7 @@ class Game: Object, ObjectUpdatable {
     }
     
     var supportJit: Bool {
+        if isAzaharFastInterp { return false }
         if (isCitra3DS && !Settings.defalut.threeDSAdvancedSettingMode) ||
             isAzahar3DS ||
             gameType == .psp ||

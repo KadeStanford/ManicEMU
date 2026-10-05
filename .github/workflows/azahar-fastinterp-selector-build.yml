@@ -1,0 +1,63 @@
+name: FastInterp Core Select source app integration
+on:
+  push:
+    branches: [recovery/stability-owner-20261005]
+    paths: [FastInterp/app-build-request.json]
+permissions:
+  contents: read
+jobs:
+  selector-app:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: true, submodules: recursive}
+      - name: Select installed Xcode 26 and verify actual registry/model contract
+        run: |
+          set -euo pipefail
+          mkdir -p deliverables
+          python3 - <<'PY'
+          import os,pathlib,re
+          choices=[]
+          for p in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+              nums=tuple(int(x) for x in re.findall(r'\d+',p.name))
+              choices.append((nums,p))
+          if not choices:raise RuntimeError('An installed Xcode 26 toolchain is required')
+          selected=max(choices)[1]/'Contents/Developer'
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('DEVELOPER_DIR='+str(selected)+'\n')
+          PY
+      - name: Compile and execute actual Core Select model fragments
+        run: |
+          set -euo pipefail
+          xcodebuild -version > deliverables/toolchain.txt
+          uname -m >> deliverables/toolchain.txt
+          python3 FastInterp/Tests/selection_contract.py > deliverables/selector-contract.txt 2>&1
+          # This public baseline image is an embed-phase compiler fixture only.
+          # It is never delivered as the new FastInterp core.
+          cp Cores/azahar.libretro.framework/azahar.libretro Cores/azahar-fastinterp.libretro.framework/azahar-fastinterp.libretro
+      - name: Build unsigned app source with explicit separate Core Select option
+        run: |
+          set -euo pipefail
+          xcodebuild -project ManicEmu/ManicEmu.xcodeproj -scheme ManicEmuSideload \
+            -configuration Release -skipPackagePluginValidation \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/manic-derived" \
+            CODE_SIGNING_ALLOWED=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO \
+            OTHER_LDFLAGS='$(inherited) -Wl,-headerpad,4096' build > deliverables/app-build.log 2>&1
+          app="$RUNNER_TEMP/manic-derived/Build/Products/Release-iphoneos/ManicEmuSideload.app"
+          test -s "$app/ManicEmuSideload"
+          cp "$app/ManicEmuSideload" deliverables/ManicEmuSideload
+          cp "$app/Info.plist" deliverables/source-app-Info.plist
+          shasum -a 256 "$app/ManicEmuSideload" > deliverables/source-app-sha256.txt
+          otool -L "$app/ManicEmuSideload" > deliverables/source-app-dependencies.txt
+          echo '{"core_select_source_compiled":true,"separate_core_binary_included":false,"IPA_ready":false,"baseline_frameworks_require_preservation_audit":true}' > deliverables/app-build-coverage.json
+      - name: Summarize public-source compiler failures
+        if: failure()
+        run: |
+          grep -E 'error:|fatal error:|BUILD FAILED|Error Domain' deliverables/*.txt deliverables/*.log | tail -30 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fastinterp-selector-source-${{ github.run_id }}
+          path: deliverables/
+          retention-days: 1
+

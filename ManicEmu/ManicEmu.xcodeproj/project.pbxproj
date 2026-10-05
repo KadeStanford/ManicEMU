@@ -269,6 +269,7 @@
 		578E20A32FD1B94E00A2749A /* DNSPageView in Frameworks */ = {isa = PBXBuildFile; productRef = 578E20A22FD1B94E00A2749A /* DNSPageView */; };
 		578E20AA2FD1C40700A2749A /* ProHUD in Frameworks */ = {isa = PBXBuildFile; productRef = 578E20A92FD1C40700A2749A /* ProHUD */; };
 		578E22F42FD1EE7500A2749A /* azahar.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 578E22F12FD1EE6600A2749A /* azahar.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		F10605260000000000000002 /* azahar-fastinterp.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F10605260000000000000001 /* azahar-fastinterp.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		578E23032FD27DA800A2749A /* CloudServiceKit in Frameworks */ = {isa = PBXBuildFile; productRef = 578E23022FD27DA800A2749A /* CloudServiceKit */; };
 		578E23202FD288C600A2749A /* Closures in Frameworks */ = {isa = PBXBuildFile; productRef = 578E231F2FD288C600A2749A /* Closures */; };
 		578E23872FD2981800A2749A /* GCDWebUploader in Frameworks */ = {isa = PBXBuildFile; productRef = 578E23862FD2981800A2749A /* GCDWebUploader */; };
@@ -777,6 +778,7 @@
 		57909565303C7D9100A53656 /* Citra.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 57C75AB02FD5575D0093A2B3 /* Citra.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57909566303C7D9100A53656 /* Libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 57BFBE172DD32F7700AABF98 /* Libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57909567303C7D9100A53656 /* azahar.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 578E22F12FD1EE6600A2749A /* azahar.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		F10605260000000000000003 /* azahar-fastinterp.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F10605260000000000000001 /* azahar-fastinterp.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57909568303C7D9100A53656 /* pcsx.rearmed.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 572918892F8B9F6400985D2C /* pcsx.rearmed.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57909569303C7D9100A53656 /* snes9x.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 5729188A2F8B9F6400985D2C /* snes9x.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		5790956A303C7D9100A53656 /* dosbox.pure.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 578452BE2F6A7F380020A88F /* dosbox.pure.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -1313,6 +1315,7 @@
 		57CDCF502FD5CBD3005BA4C8 /* Citra.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 57C75AB02FD5575D0093A2B3 /* Citra.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57CDCF512FD5CBD3005BA4C8 /* Libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 57BFBE172DD32F7700AABF98 /* Libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57CDCF522FD5CBD3005BA4C8 /* azahar.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 578E22F12FD1EE6600A2749A /* azahar.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		F10605260000000000000004 /* azahar-fastinterp.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F10605260000000000000001 /* azahar-fastinterp.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57CDCF532FD5CBD3005BA4C8 /* pcsx.rearmed.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 572918892F8B9F6400985D2C /* pcsx.rearmed.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57CDCF542FD5CBD3005BA4C8 /* snes9x.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 5729188A2F8B9F6400985D2C /* snes9x.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		57CDCF562FD5CBD3005BA4C8 /* dosbox.pure.libretro.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 578452BE2F6A7F380020A88F /* dosbox.pure.libretro.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -1741,6 +1744,7 @@
 				57909565303C7D9100A53656 /* Citra.framework in Embed Frameworks */,
 				57909566303C7D9100A53656 /* Libretro.framework in Embed Frameworks */,
 				57909567303C7D9100A53656 /* azahar.libretro.framework in Embed Frameworks */,
+				F10605260000000000000003 /* azahar-fastinterp.libretro.framework in Embed Frameworks */,
 				57909568303C7D9100A53656 /* pcsx.rearmed.libretro.framework in Embed Frameworks */,
 				57909569303C7D9100A53656 /* snes9x.libretro.framework in Embed Frameworks */,
 				5790956A303C7D9100A53656 /* dosbox.pure.libretro.framework in Embed Frameworks */,
@@ -1806,6 +1810,7 @@
 				57CDCF502FD5CBD3005BA4C8 /* Citra.framework in Embed Frameworks */,
 				57CDCF512FD5CBD3005BA4C8 /* Libretro.framework in Embed Frameworks */,
 				57CDCF522FD5CBD3005BA4C8 /* azahar.libretro.framework in Embed Frameworks */,
+				F10605260000000000000004 /* azahar-fastinterp.libretro.framework in Embed Frameworks */,
 				57CDCF532FD5CBD3005BA4C8 /* pcsx.rearmed.libretro.framework in Embed Frameworks */,
 				57CDCF542FD5CBD3005BA4C8 /* snes9x.libretro.framework in Embed Frameworks */,
 				57CDCF562FD5CBD3005BA4C8 /* dosbox.pure.libretro.framework in Embed Frameworks */,
@@ -1860,6 +1865,7 @@
 				57C75AB12FD557640093A2B3 /* Citra.framework in Embed Frameworks */,
 				57C75A072FD498480093A2B3 /* Libretro.framework in Embed Frameworks */,
 				578E22F42FD1EE7500A2749A /* azahar.libretro.framework in Embed Frameworks */,
+				F10605260000000000000002 /* azahar-fastinterp.libretro.framework in Embed Frameworks */,
 				572918D52F8B9F7A00985D2C /* pcsx.rearmed.libretro.framework in Embed Frameworks */,
 				572918D32F8B9F7200985D2C /* snes9x.libretro.framework in Embed Frameworks */,
 				578452C02F6A7F500020A88F /* dosbox.pure.libretro.framework in Embed Frameworks */,
@@ -2177,6 +2183,7 @@
 		578452B92F6A79340020A88F /* DOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DOS.swift; sourceTree = "<group>"; };
 		578452BE2F6A7F380020A88F /* dosbox.pure.libretro.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = dosbox.pure.libretro.framework; path = ../Cores/dosbox.pure.libretro.framework; sourceTree = SOURCE_ROOT; };
 		578E22F12FD1EE6600A2749A /* azahar.libretro.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = azahar.libretro.framework; path = ../Cores/azahar.libretro.framework; sourceTree = SOURCE_ROOT; };
+		F10605260000000000000001 /* azahar-fastinterp.libretro.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = azahar-fastinterp.libretro.framework; path = ../Cores/azahar-fastinterp.libretro.framework; sourceTree = SOURCE_ROOT; };
 		578E24202FD33FFC00A2749A /* EmulatorBridgingBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorBridgingBase.swift; sourceTree = "<group>"; };
 		578E26872FD408BC00A2749A /* Exported.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Exported.swift; sourceTree = "<group>"; };
 		578E4B4F2F8A2AA50027E6D0 /* GlobalCoreSwitchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalCoreSwitchView.swift; sourceTree = "<group>"; };
@@ -12733,6 +12740,7 @@
 				9770068F58CC4F29B21DE396 /* dolphin.libretro.framework */,
 				25F38CF54CA347238295BE77 /* eka2l1.libretro.framework */,
 				578E22F12FD1EE6600A2749A /* azahar.libretro.framework */,
+				F10605260000000000000001 /* azahar-fastinterp.libretro.framework */,
 				572918892F8B9F6400985D2C /* pcsx.rearmed.libretro.framework */,
 				5729188A2F8B9F6400985D2C /* snes9x.libretro.framework */,
 				578452BE2F6A7F380020A88F /* dosbox.pure.libretro.framework */,

@@ -570,7 +570,8 @@ extension GameType {
             return [EmulationCore.MAME.name, EmulationCore.FinalBurnNeo.name]
 #endif
         } else if self == ._3ds {
-            return [EmulationCore.Citra.name, EmulationCore.Azahar.name]
+            // Append only: stored Citra/Azahar numeric indices remain valid.
+            return [EmulationCore.Citra.name, EmulationCore.Azahar.name, EmulationCore.AzaharFastInterp.name]
         } else if self == ._32x {
 #if SIDE_LOAD
             return [EmulationCore.PicoDrive.name, EmulationCore.JGenesis.name]

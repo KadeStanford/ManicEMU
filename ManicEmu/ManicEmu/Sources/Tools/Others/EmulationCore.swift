@@ -31,6 +31,7 @@ enum EmulationCore: CaseIterable {
          FinalBurnNeo,
          Citra,
          Azahar,
+         AzaharFastInterp,
          JGenesis,
          DeSmuME,
          Stella,
@@ -105,6 +106,8 @@ enum EmulationCore: CaseIterable {
             "Citra"
         case .Azahar:
             "Azahar"
+        case .AzaharFastInterp:
+            "Azahar FastInterp"
         case .JGenesis:
             "JGenesis"
         case .DeSmuME:
@@ -196,7 +199,7 @@ enum EmulationCore: CaseIterable {
             return [.psp]
         case .MAME, .FinalBurnNeo:
             return [.arcade]
-        case .Citra, .Azahar:
+        case .Citra, .Azahar, .AzaharFastInterp:
             return [._3ds]
         case .JGenesis:
             return [._32x, .mcd]
