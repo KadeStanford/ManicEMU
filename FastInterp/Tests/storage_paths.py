@@ -2,7 +2,7 @@
 
 Only validates data-directory routing, never game startup or plugin execution.
 """
-import argparse,json,os,pathlib,subprocess,tempfile
+import argparse,json,os,pathlib,subprocess,sys,tempfile
 p=argparse.ArgumentParser()
 p.add_argument('--source',required=True)
 p.add_argument('--compiler',required=True)
@@ -19,8 +19,10 @@ prefix=r'''
 #include <string>
 #include <iostream>
 #include <stdexcept>
-#define LOG_INFO(...) ((void)0)
-#define LOG_ERROR(...) ((void)0)
+enum { Frontend=0 };
+template <typename... T> void discard_log(T&&...) {}
+#define LOG_INFO(...) discard_log(__VA_ARGS__)
+#define LOG_ERROR(...) discard_log(__VA_ARGS__)
 namespace Settings { struct { bool use_virtual_sd; } values; }
 namespace config { constexpr auto enabled="enabled"; namespace storage {
 constexpr auto use_virtual_sd="sd"; constexpr auto use_libretro_save_path="location";
@@ -84,6 +86,9 @@ with tempfile.TemporaryDirectory(prefix='manic-storage-') as d:
     for platform in ['ios','non-ios']:
         exe=tmp/(platform+'.exe')
         cmd=[a.compiler,'-std=c++20','-Wall','-Wextra','-Werror',str(cpp),'-o',str(exe)]
+        if sys.platform=='darwin':
+            sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
+            cmd[1:1]=['-isysroot',sdk]
         if platform=='ios':cmd.insert(1,'-DIOS')
         compile_result=subprocess.run(cmd,capture_output=True,text=True)
         row={'platform':platform,'compiled':compile_result.returncode==0,'compiler_exit_code':compile_result.returncode}
