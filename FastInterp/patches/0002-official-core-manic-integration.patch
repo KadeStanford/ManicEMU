@@ -702,10 +702,10 @@ index 000000000..3fe904cab
 +
 +} // namespace LibRetro::Camera
 diff --git a/src/citra_libretro/citra_libretro.cpp b/src/citra_libretro/citra_libretro.cpp
-index 8a65f9da8..aad9d0c20 100644
+index 8a65f9da8..126d6e3d7 100644
 --- a/src/citra_libretro/citra_libretro.cpp
 +++ b/src/citra_libretro/citra_libretro.cpp
-@@ -29,6 +29,15 @@
+@@ -29,11 +29,21 @@
  #include "video_core/video_core.h"
  
  #include "citra_libretro/citra_libretro.h"
@@ -721,7 +721,13 @@ index 8a65f9da8..aad9d0c20 100644
  #include "citra_libretro/core_settings.h"
  #include "citra_libretro/environment.h"
  #include "citra_libretro/input/input_factory.h"
-@@ -66,6 +75,8 @@ public:
+ 
+ #include "common/arch.h"
++#include "common/file_util.h"
+ #if CITRA_ARCH(x86_64)
+ #include "common/x64/cpu_detect.h"
+ #endif
+@@ -66,6 +76,8 @@ public:
  };
  
  CitraLibRetro* emu_instance;
@@ -730,7 +736,7 @@ index 8a65f9da8..aad9d0c20 100644
  
  void retro_init() {
      emu_instance = new CitraLibRetro();
-@@ -86,6 +97,8 @@ void retro_init() {
+@@ -86,6 +98,8 @@ void retro_init() {
      Core::System::GetInstance().RegisterImageInterface(
          std::make_shared<Frontend::ImageInterface>());
  
@@ -739,7 +745,7 @@ index 8a65f9da8..aad9d0c20 100644
      LibRetro::Input::Init();
  }
  
-@@ -404,6 +417,14 @@ static bool do_load_game() {
+@@ -404,6 +418,14 @@ static bool do_load_game() {
          return false;
      }
  
@@ -754,7 +760,7 @@ index 8a65f9da8..aad9d0c20 100644
      u64 program_id{};
      Core::System::GetInstance().GetAppLoader().ReadProgramId(program_id);
      Core::System::GetInstance().GPU().ApplyPerProgramSettings(program_id);
-@@ -516,6 +537,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+@@ -516,6 +538,7 @@ bool retro_load_game(const struct retro_game_info* info) {
  
      // If using HW rendering, don't actually load the game here. azahar wants
      // the graphics context ready and available before calling System::Load.
@@ -762,7 +768,7 @@ index 8a65f9da8..aad9d0c20 100644
      LibRetro::settings.file_path = info->path;
  
      // Early validation: check that the ROM can be loaded before committing to
-@@ -634,6 +656,7 @@ bool retro_load_game(const struct retro_game_info* info) {
+@@ -634,6 +657,7 @@ bool retro_load_game(const struct retro_game_info* info) {
  
  void retro_unload_game() {
      LOG_DEBUG(Frontend, "Unloading game...");
@@ -770,7 +776,7 @@ index 8a65f9da8..aad9d0c20 100644
      Core::System::GetInstance().Shutdown();
  }
  
-@@ -750,3 +773,145 @@ size_t retro_get_memory_size(unsigned id) {
+@@ -750,3 +774,157 @@ size_t retro_get_memory_size(unsigned id) {
  void retro_cheat_reset() {}
  
  void retro_cheat_set(unsigned index, bool enabled, const char* code) {}
@@ -916,8 +922,20 @@ index 8a65f9da8..aad9d0c20 100644
 +extern "C" RETRO_API bool retro_azahar_fastinterp_required() {
 +    return LibRetro::IsFastInterpVariant();
 +}
++
++// Read-only runtime routing query for integration checks. Call after content
++// settings have been parsed; this does not start emulation or load a plugin.
++extern "C" RETRO_API const char* retro_azahar_storage_path(unsigned which) {
++    switch (which) {
++    case 0: return FileUtil::GetUserPath(FileUtil::UserPath::UserDir).c_str();
++    case 1: return FileUtil::GetUserPath(FileUtil::UserPath::SDMCDir).c_str();
++    case 2: return FileUtil::GetUserPath(FileUtil::UserPath::NANDDir).c_str();
++    case 3: return FileUtil::GetUserPath(FileUtil::UserPath::LoadDir).c_str();
++    default: return nullptr;
++    }
++}
 diff --git a/src/citra_libretro/core_settings.cpp b/src/citra_libretro/core_settings.cpp
-index 45d48aab5..46a440ec3 100644
+index 45d48aab5..ec2fd2dc0 100644
 --- a/src/citra_libretro/core_settings.cpp
 +++ b/src/citra_libretro/core_settings.cpp
 @@ -3,6 +3,9 @@
@@ -998,7 +1016,7 @@ index 45d48aab5..46a440ec3 100644
                                                                config::enabled) == config::enabled;
  
      // Configure the file storage location
-+#ifdef IOS
++#if defined(IOS) || defined(MANIC_TEST_IOS_STORAGE)
 +    // Manic owns the existing 3DS tree, including NAND, saves and 3GX assets.
 +    // A fresh variant config or the upstream "Azahar Default" option must not
 +    // redirect these files into an independent Azahar/macOS data directory.
@@ -1014,7 +1032,7 @@ index 45d48aab5..46a440ec3 100644
              if (!target_dir.ends_with("/"))
                  target_dir += "/";
  
-+#ifdef IOS
++#if defined(IOS) || defined(MANIC_TEST_IOS_STORAGE)
 +            if (!target_dir.ends_with("3DS/") && !target_dir.ends_with("3ds/"))
 +                target_dir += "3DS/";
 +#else

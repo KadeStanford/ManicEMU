@@ -61,7 +61,7 @@ jobs:
             retro_azahar_set_keyboard_callback retro_azahar_keyboard_input retro_azahar_install_cia \
             retro_azahar_extension_version retro_azahar_load_amiibo \
             retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo retro_azahar_cpu_backend \
-            retro_azahar_fastinterp_required; do
+            retro_azahar_fastinterp_required retro_azahar_storage_path; do
             nm -gU "$core" | grep -F "_$s" > /dev/null
           done
           strings "$core" | grep -F 'FastInterp ARM interpreter created for core' > /dev/null
@@ -73,6 +73,12 @@ jobs:
           otool -l "$core" >> deliverables/iphoneos-abi.txt
           otool -L "$core" >> deliverables/iphoneos-abi.txt
           shasum -a 256 "$core" > deliverables/iphoneos-sha256.txt
+      - name: Run actual storage parser regression on Apple ARM64
+        run: |
+          set -euo pipefail
+          python3 manic-source/FastInterp/Tests/storage_paths.py \
+            --source azahar-source/src/citra_libretro/core_settings.cpp \
+            --compiler "$(xcrun -f clang++)" --output deliverables/storage-parser.json
       - name: Compile native ARM64 core with identical interpreter source
         run: |
           set -euo pipefail
@@ -80,6 +86,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
             -DCMAKE_BUILD_TYPE=Release -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON \
             -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_TESTS=OFF \
+            -DCMAKE_CXX_FLAGS=-DMANIC_TEST_IOS_STORAGE=1 \
             > deliverables/configure-native.log 2>&1
           cmake --build build-native --target citra_libretro --parallel 3 \
             > deliverables/build-native.log 2>&1
@@ -110,6 +117,9 @@ jobs:
                             'separate_variant_required':True,'distinct_library_name':True,
                             'private_game_run':False,'phone_scene_verified':False}))
           PY
+          python3 manic-source/FastInterp/Tests/compiled_storage.py \
+            --core build-native/bin/Release/azahar-fastinterp.libretro \
+            --output deliverables/compiled-storage-routing.json
       - name: Run actual interpreter cache regression on Apple ARM64
         run: |
           set -euo pipefail

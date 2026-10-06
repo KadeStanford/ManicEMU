@@ -34,7 +34,7 @@ def validate_core(core):
                 '_retro_azahar_install_cia', '_retro_azahar_extension_version',
                 '_retro_azahar_load_amiibo', '_retro_azahar_is_searching_amiibo',
                 '_retro_azahar_remove_amiibo', '_retro_azahar_cpu_backend',
-                '_retro_azahar_fastinterp_required'}
+                '_retro_azahar_fastinterp_required', '_retro_azahar_storage_path'}
     missing = required - dependency.exports(thin(core))
     if missing: raise ValueError('Missing required core ABI: ' + str(sorted(missing)))
     if b'Azahar FastInterp' not in core or b'FastInterp ARM interpreter created for core' not in core:
