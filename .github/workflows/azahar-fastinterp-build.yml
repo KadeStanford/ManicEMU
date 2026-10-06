@@ -1,13 +1,20 @@
-name: Isolated full FastInterp iOS and native build
+name: FastInterp data-path corrective core and integration
 on:
-  push:
-    branches: [recovery/stability-owner-20261005]
-    paths: [FastInterp/build-request.json]
   workflow_dispatch:
+    inputs:
+      target:
+        description: Required target to build
+        type: choice
+        options: [both, ios, native]
+        default: both
 permissions:
   contents: read
 jobs:
-  fastinterp-build:
+  corrective:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(inputs.target == 'ios' && '["ios"]' || inputs.target == 'native' && '["native"]' || '["ios","native"]') }}
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -20,130 +27,11 @@ jobs:
           path: azahar-source
           lfs: false
           submodules: recursive
-      - name: Select installed Xcode 26 toolchain
-        run: |
-          python3 - <<'PY'
-          import os,pathlib,re
-          choices=[]
-          for p in pathlib.Path('/Applications').glob('Xcode_26*.app'):
-              choices.append((tuple(int(x) for x in re.findall(r'\d+',p.name)),p))
-          if not choices:raise RuntimeError('Installed Xcode 26 required')
-          selected=max(choices)[1]/'Contents/Developer'
-          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('DEVELOPER_DIR='+str(selected)+'\n')
-          PY
-      - name: Apply full interpreter and audited Manic integration source
-        run: |
-          set -euo pipefail
-          git -C azahar-source apply ../manic-source/FastInterp/patches/0002-official-core-manic-integration.patch
-          git -C azahar-source apply ../manic-source/CorePatches/Azahar/0006-vulkan-string-format-ios15.patch
-          test -f azahar-source/src/core/arm/fastinterp/handlers/thumb32.inc
-          grep -q 'HAVE_FASTINTERP' azahar-source/src/core/CMakeLists.txt
-          grep -q 'CanUseJIT' azahar-source/src/citra_libretro/core_settings.cpp
-          mkdir -p deliverables
-          cp manic-source/FastInterp/SOURCE-PROVENANCE.json deliverables/
-          xcodebuild -version
-          uname -m
-      - name: Compile full iPhoneOS ARM64 Vulkan libretro core
-        run: |
-          set -euo pipefail
-          cmake -S azahar-source -B build-ios -G Xcode \
-            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
-            -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON -DENABLE_OPENGL=OFF \
-            -DENABLE_LTO=OFF -DENABLE_TESTS=OFF > deliverables/configure-ios.log 2>&1
-          cmake --build build-ios --target citra_libretro --config Release --parallel 3 \
-            -- CODE_SIGNING_ALLOWED=NO > deliverables/build-ios.log 2>&1
-          core=build-ios/bin/Release/azahar_libretro.dylib
-          test -s "$core"
-          install_name_tool -id '@rpath/azahar.libretro.framework/azahar.libretro' "$core"
-          for s in retro_api_version retro_run retro_serialize retro_unserialize \
-            retro_azahar_set_keyboard_callback retro_azahar_keyboard_input retro_azahar_install_cia \
-            retro_azahar_extension_version retro_azahar_load_amiibo \
-            retro_azahar_is_searching_amiibo retro_azahar_remove_amiibo retro_azahar_cpu_backend \
-            retro_azahar_fastinterp_required retro_azahar_storage_path; do
-            nm -gU "$core" | grep -F "_$s" > /dev/null
-          done
-          strings "$core" | grep -F 'FastInterp ARM interpreter created for core' > /dev/null
-          cp "$core" deliverables/azahar-fastinterp-iphoneos.dylib
-          cp "$core" deliverables/azahar-fastinterp.libretro
-          install_name_tool -id '@rpath/azahar-fastinterp.libretro.framework/azahar-fastinterp.libretro' deliverables/azahar-fastinterp.libretro
-          shasum -a 256 deliverables/azahar-fastinterp.libretro > deliverables/fastinterp-framework-sha256.txt
-          file "$core" > deliverables/iphoneos-abi.txt
-          otool -l "$core" >> deliverables/iphoneos-abi.txt
-          otool -L "$core" >> deliverables/iphoneos-abi.txt
-          shasum -a 256 "$core" > deliverables/iphoneos-sha256.txt
-      - name: Run actual storage parser regression on Apple ARM64
-        run: |
-          set -euo pipefail
-          python3 manic-source/FastInterp/Tests/storage_paths.py \
-            --source azahar-source/src/citra_libretro/core_settings.cpp \
-            --compiler "$(xcrun -f clang++)" --output deliverables/storage-parser.json
-      - name: Compile native ARM64 core with identical interpreter source
-        run: |
-          set -euo pipefail
-          cmake -S azahar-source -B build-native -G Ninja \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DCMAKE_BUILD_TYPE=Release -DENABLE_LIBRETRO=ON -DENABLE_VULKAN=ON \
-            -DENABLE_OPENGL=OFF -DENABLE_LTO=OFF -DENABLE_TESTS=OFF \
-            -DCMAKE_CXX_FLAGS=-DMANIC_TEST_IOS_STORAGE=1 \
-            > deliverables/configure-native.log 2>&1
-          cmake --build build-native --target citra_libretro --parallel 3 \
-            > deliverables/build-native.log 2>&1
-          core=build-native/bin/Release/azahar_libretro.dylib
-          test -s "$core"
-          cp "$core" deliverables/azahar-fastinterp-macos.dylib
-          shasum -a 256 "$core" > deliverables/native-sha256.txt
-          python3 - <<'PY'
-          import ctypes,json,pathlib,shutil
-          c=ctypes.CDLL('build-native/bin/Release/azahar_libretro.dylib')
-          c.retro_api_version.restype=ctypes.c_uint
-          c.retro_azahar_extension_version.restype=ctypes.c_uint
-          assert c.retro_api_version()==1
-          assert c.retro_azahar_extension_version()==1
-          assert c.retro_azahar_cpu_backend()==0
-          assert c.retro_azahar_fastinterp_required()==0
-          variant=pathlib.Path('build-native/bin/Release/azahar-fastinterp.libretro')
-          shutil.copyfile('build-native/bin/Release/azahar_libretro.dylib',variant)
-          v=ctypes.CDLL(str(variant))
-          assert v.retro_azahar_fastinterp_required()==1
-          class Info(ctypes.Structure):
-              _fields_=[('name',ctypes.c_char_p),('version',ctypes.c_char_p),('extensions',ctypes.c_char_p),('fullpath',ctypes.c_bool),('block_extract',ctypes.c_bool)]
-          info=Info();v.retro_get_system_info(ctypes.byref(info))
-          assert info.name==b'Azahar FastInterp'
-          info=Info();c.retro_get_system_info(ctypes.byref(info))
-          assert info.name==b'Azahar'
-          print(json.dumps({'native_dylib_load':True,'libretro_api':1,'manic_extension_api':1,
-                            'separate_variant_required':True,'distinct_library_name':True,
-                            'private_game_run':False,'phone_scene_verified':False}))
-          PY
-          python3 manic-source/FastInterp/Tests/compiled_storage.py \
-            --core build-native/bin/Release/azahar-fastinterp.libretro \
-            --output deliverables/compiled-storage-routing.json
-      - name: Run actual interpreter cache regression on Apple ARM64
-        run: |
-          set -euo pipefail
-          xcrun clang++ -std=c++20 -arch arm64 -O2 -I azahar-source/src \
-            manic-source/FastInterp/Tests/boundaries.cpp -o deliverables/FastInterpBoundaries
-          deliverables/FastInterpBoundaries > deliverables/boundaries.txt
-          xcrun clang -arch arm64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Werror \
-            -Wno-unused-parameter -DMANIC_GAME_MACOS=1 -DMANIC_GAME_VULKAN=1 \
-            -I azahar-source/externals/vulkan-headers/include \
-            -I manic-source/OriginalCoreRepair/Tests/vendor \
-            -I manic-source/OriginalCoreRepair/Tests \
-            manic-source/FastInterp/Tests/game_compare.m \
-            -framework AppKit -framework Foundation -framework CoreGraphics \
-            -o deliverables/GameCompare
-      - name: Summarize public-source build failures
-        if: failure()
-        run: |
-          for log in deliverables/*.log; do
-            echo "$(basename "$log")"
-            grep -E 'error:|CMake Error|FAILED:|fatal error:' "$log" | tail -30 || true
-          done
+      - name: Build corrected core and run target integration gates
+        run: python3 manic-source/FastInterp/Tests/corrective_ci.py --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fastinterp-source-build-${{ github.run_id }}
+          name: fastinterp-corrective-${{ github.run_id }}-${{ matrix.target }}
           path: deliverables/
           retention-days: 1

@@ -119,7 +119,7 @@
   "game_scene_verified": false,
   "physical_performance_verified": false,
   "preferred_build_source": "azahar-emu/azahar@98932aeeb7d81ba08715a3e6eff57d47c2d1a65d",
-  "preferred_integration_patch_sha256": "3edea7e71dd9f39f91edd3de685cea99fcc762ce013be6ec04ddbfe61e14ac61",
+  "preferred_integration_patch_sha256": "39de5bf054a3ff44bcbdd4d942b1513fab0fb5e3a3f7d1c13a8811546698b9f1",
   "legacy_public_backport_selection": "compiler/ABI feasibility control only; historical boot failure prevents promotion",
   "preferred_interpreter_source_unchanged": true,
   "preferred_extensions": [
@@ -134,7 +134,7 @@
     "Separate azahar-fastinterp.libretro image enforces FastInterp and disables CPU/shader JIT; mismatched actual CPU rejects game load",
     "iOS storage routes to the existing Manic 3DS tree; upstream Azahar suffix is retained only outside iOS"
   ],
-  "preferred_source_commit": "aac9b016ab1a38126b6562fb1e1050776262698a",
+  "preferred_source_commit": "9e7ab08fcd2a50576aa0910525e888d4178d9981",
   "preferred_interpreter_files": [
     {
       "path": "src/core/arm/fastinterp/fastinterp.cpp",

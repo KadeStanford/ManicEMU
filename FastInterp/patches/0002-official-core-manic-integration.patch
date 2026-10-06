@@ -1113,10 +1113,10 @@ index d321f9531..aef0087a2 100644
  /// Sets the environmental variables used for settings.
  bool SetVariables(const retro_variable vars[]);
 diff --git a/src/citra_libretro/libretro.osx.def b/src/citra_libretro/libretro.osx.def
-index 53a556a60..c6e957787 100644
+index 53a556a60..82515b61a 100644
 --- a/src/citra_libretro/libretro.osx.def
 +++ b/src/citra_libretro/libretro.osx.def
-@@ -25,3 +25,19 @@ _retro_unload_game
+@@ -25,3 +25,20 @@ _retro_unload_game
  _retro_get_region
  _retro_get_memory_data
  _retro_get_memory_size
@@ -1136,6 +1136,7 @@ index 53a556a60..c6e957787 100644
 +_retro_azahar_remove_amiibo
 +_retro_azahar_cpu_backend
 +_retro_azahar_fastinterp_required
++_retro_azahar_storage_path
 diff --git a/src/citra_libretro/manic_keyboard_abi.h b/src/citra_libretro/manic_keyboard_abi.h
 new file mode 100644
 index 000000000..5be496cfc
