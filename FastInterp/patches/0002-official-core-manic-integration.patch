@@ -917,7 +917,7 @@ index 8a65f9da8..aad9d0c20 100644
 +    return LibRetro::IsFastInterpVariant();
 +}
 diff --git a/src/citra_libretro/core_settings.cpp b/src/citra_libretro/core_settings.cpp
-index 45d48aab5..f13c2202c 100644
+index 45d48aab5..46a440ec3 100644
 --- a/src/citra_libretro/core_settings.cpp
 +++ b/src/citra_libretro/core_settings.cpp
 @@ -3,6 +3,9 @@
@@ -994,7 +994,36 @@ index 45d48aab5..f13c2202c 100644
  
      Settings::values.shaders_accurate_mul =
          LibRetro::FetchVariable(config::graphics::shaders_accurate_mul, config::enabled) ==
-@@ -1155,6 +1181,13 @@ void ParseCoreOptions(void) {
+@@ -1074,8 +1100,15 @@ static void ParseStorageOptions(void) {
+                                                               config::enabled) == config::enabled;
+ 
+     // Configure the file storage location
++#ifdef IOS
++    // Manic owns the existing 3DS tree, including NAND, saves and 3GX assets.
++    // A fresh variant config or the upstream "Azahar Default" option must not
++    // redirect these files into an independent Azahar/macOS data directory.
++    const bool use_libretro_saves = true;
++#else
+     auto use_libretro_saves = LibRetro::FetchVariable(config::storage::use_libretro_save_path,
+                                                       "LibRetro Default") == "LibRetro Default";
++#endif
+ 
+     if (use_libretro_saves) {
+         auto target_dir = LibRetro::GetSaveDir();
+@@ -1088,7 +1121,12 @@ static void ParseStorageOptions(void) {
+             if (!target_dir.ends_with("/"))
+                 target_dir += "/";
+ 
++#ifdef IOS
++            if (!target_dir.ends_with("3DS/") && !target_dir.ends_with("3ds/"))
++                target_dir += "3DS/";
++#else
+             target_dir += "Azahar/";
++#endif
+ 
+             // Ensure that this new dir exists
+             if (!FileUtil::CreateDir(target_dir)) {
+@@ -1155,6 +1193,13 @@ void ParseCoreOptions(void) {
      // Override default values that aren't user-selectable and aren't correct for the core
      Settings::values.enable_audio_stretching = false;
      Settings::values.frame_limit = 0;
