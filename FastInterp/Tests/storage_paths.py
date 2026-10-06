@@ -25,7 +25,7 @@ template <typename... T> void discard_log(T&&...) {}
 #define LOG_ERROR(...) discard_log(__VA_ARGS__)
 namespace Settings { struct { bool use_virtual_sd; } values; }
 namespace config { constexpr auto enabled="enabled"; namespace storage {
-constexpr auto use_virtual_sd="sd"; constexpr auto use_libretro_save_path="location";
+constexpr auto use_virtual_sd="sd"; [[maybe_unused]] constexpr auto use_libretro_save_path="location";
 } }
 std::string save_dir,system_dir,location,result,created;
 bool create_ok=true;
